@@ -1,6 +1,7 @@
 import { EdgeType } from "../src/domain.mjs";
 import { participants, statuses, edges, notes } from "../src/fixtures.mjs";
 import { RelationshipContext, relationshipContext, visibilityDecision } from "../src/visibility.mjs";
+import { prependLocalPost, renderContextSummary, renderFeed as renderSocialFeed, renderHome, toggleReaction } from "./feed.mjs";
 
 const fixtureData = Object.freeze({ participants, statuses, edges, notes });
 const validStatuses = new Set(["limited", "full", "operator"]);
@@ -60,15 +61,8 @@ export function renderProfile({ viewer, viewerStatus, subjectId = viewer?.id, pa
   return `<article class="profile-card"><div class="avatar avatar-large" aria-hidden="true">${subject.displayName[0]}</div><h1>${subject.displayName}</h1><span class="badge badge-${subjectStatus}">${subjectStatus}</span><p class="key">${shortKey(subject.publicKey)}</p><dl><div><dt>Relationship</dt><dd>${context}</dd></div><div><dt>Direct friend</dt><dd>${direct}</dd></div></dl><section class="trust-section"><h2>Sponsor-trust</h2><p>${trust}</p><p class="notice">Sponsor-trust is external provenance and remains separate from friendship.</p></section><p class="notice">Displayed role/status is externally derived and is not legal identity.</p></article>`;
 }
 
-export function renderFeed({ viewer, viewerStatus, participants, edges, notes }) {
-  const byId = new Map(participants.map((person) => [person.id, person]));
-  return notes.map((note) => {
-    const author = byId.get(note.authorId);
-    if (!viewer || !author) return restrictedCard("Content restricted", "This item is unavailable under the social visibility policy.");
-    const context = relationshipContext(viewer.id, author.id, edges);
-    if (!visibilityDecision({ viewerStatus, context, policy: "social" }).visible) return restrictedCard("Content restricted", "This item is unavailable under the social visibility policy.");
-    return `<article class="card"><span class="badge">${context}</span><p>${note.body}</p><a class="author" href="${profileRoute(author.id)}">${author.displayName} · ${shortKey(author.publicKey)}</a></article>`;
-  }).join("");
+export function renderFeed({ viewer, viewerStatus, participants, edges, notes, statuses: access = fixtureData.statuses }) {
+  return renderSocialFeed({ viewer, viewerStatus, participants, edges, notes, statuses: access });
 }
 
 export function renderConnections({ viewer, viewerStatus, participants, edges }) {
@@ -108,13 +102,13 @@ export function renderNavigation(route, viewerId, className = "nav-links") {
   }).join("")}</nav>`;
 }
 
-export function renderPage(route, viewerId, data = fixtureData) {
+export function renderPage(route, viewerId, data = fixtureData, ui = Object.freeze({})) {
   const viewer = resolveViewer(viewerId, data);
   const viewerStatus = viewer && validStatuses.has(data.statuses[viewer.id]) ? data.statuses[viewer.id] : undefined;
   const common = { viewer, viewerStatus, ...data };
   const headings = { home: "Home", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", profile: "Participant Profile", trust: "Trust" };
   let content;
-  if (route.page === "home") content = renderFeed(common);
+  if (route.page === "home") return `<section class="page home-page">${renderHome(common, ui.reactions)}</section>`;
   else if (route.page === "circle") content = `<section><h2>Direct friends</h2>${renderConnections(common)}</section><section><h2>Friend-of-friend reach</h2>${renderDiscovery(common)}</section><section><h2>Sponsor-trust relationships</h2>${renderTrust(common)}</section>`;
   else if (route.page === "friends") content = renderConnections(common);
   else if (route.page === "discovery") content = renderDiscovery(common);
@@ -124,29 +118,49 @@ export function renderPage(route, viewerId, data = fixtureData) {
   return `<section class="page"><p class="eyebrow">HODLXXI Social</p><h1>${headings[route.page]}</h1>${content}</section>`;
 }
 
-export function renderShell(viewerId, data = fixtureData, route = parseRoute("#/home")) {
+export function renderShell(viewerId, data = fixtureData, route = parseRoute("#/home"), ui = Object.freeze({})) {
   const viewer = resolveViewer(viewerId, data);
   const viewerStatus = viewer && validStatuses.has(data.statuses[viewer.id]) ? data.statuses[viewer.id] : undefined;
   const common = { viewer, viewerStatus, ...data };
-  return Object.freeze({ viewerId: viewer?.id, viewerStatus, profile: renderProfile(common), feed: renderFeed(common), connections: renderConnections(common), discovery: renderDiscovery(common), trust: renderTrust(common), page: renderPage(route, viewerId, data), navigation: renderNavigation(route, viewerId) });
+  return Object.freeze({ viewerId: viewer?.id, viewerStatus, profile: renderProfile(common), feed: renderSocialFeed(common, ui.reactions), connections: renderConnections(common), discovery: renderDiscovery(common), trust: renderTrust(common), page: renderPage(route, viewerId, data, ui), navigation: renderNavigation(route, viewerId) });
 }
 
 export function renderApp(root, data = fixtureData, browser = globalThis.window) {
   const selector = root.querySelector("#viewer-select");
   selector.innerHTML = data.participants.map((person) => `<option value="${person.id}">${person.displayName} · ${data.statuses[person.id]}</option>`).join("");
   let viewerId = data.participants[1]?.id ?? data.participants[0]?.id;
+  let localNotes = [];
+  let reactions = Object.freeze({});
   const paint = () => {
     const route = parseRoute(browser?.location?.hash || "#/home");
-    const shell = renderShell(viewerId, data, route);
+    const activeData = { ...data, notes: [...localNotes, ...data.notes] };
+    const shell = renderShell(viewerId, activeData, route, { reactions });
     root.querySelector("#desktop-navigation").innerHTML = renderNavigation(route, viewerId);
     root.querySelector("#mobile-navigation").innerHTML = renderNavigation(route, viewerId, "mobile-nav");
     root.querySelector("#app-page").innerHTML = shell.page;
     root.querySelector("#context-profile").innerHTML = renderProfile({ viewer: resolveViewer(viewerId, data), viewerStatus: shell.viewerStatus, subjectId: viewerId, ...data });
+    root.querySelector("#context-profile").parentElement.querySelector(".context-summary")?.remove();
+    root.querySelector("#context-profile").insertAdjacentHTML("afterend", renderContextSummary({ viewer: resolveViewer(viewerId, data), viewerStatus: shell.viewerStatus, ...activeData }));
     root.querySelector("#access-mode").textContent = shell.viewerStatus ? `${shell.viewerStatus} access · read-only external assertion` : "Restricted · status unavailable";
     root.body?.setAttribute("data-access", shell.viewerStatus ?? "restricted");
   };
   selector.value = viewerId;
   selector.addEventListener("change", (event) => { viewerId = selectViewer(viewerId, event.target.value, data); selector.value = viewerId; paint(); });
+  root.addEventListener("submit", (event) => {
+    if (event.target.id !== "local-composer") return;
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const viewer = resolveViewer(viewerId, data);
+    const created = prependLocalPost(localNotes, { viewer, viewerStatus: data.statuses[viewer?.id], participants: data.participants, statuses: data.statuses, audience: formData.get("audience"), body: formData.get("body") });
+    if (created.length > localNotes.length) localNotes = created;
+    paint();
+  });
+  root.addEventListener("click", (event) => {
+    const button = event.target.closest?.('[data-action="react"]');
+    if (!button) return;
+    reactions = toggleReaction(reactions, button.dataset.note);
+    paint();
+  });
   browser?.addEventListener?.("hashchange", paint);
   paint();
 }

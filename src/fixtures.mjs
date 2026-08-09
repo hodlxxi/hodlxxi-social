@@ -18,6 +18,12 @@ export const edges = Object.freeze([
   relationship(EdgeType.SPONSOR_TRUST, keys.ada, keys.dia)
 ]);
 export const notes = Object.freeze([
-  Object.freeze({ id: "synthetic-note-1", authorId: keys.ben, body: "Building a social layer where trust and friendship stay distinct.", createdAt: 1 }),
-  Object.freeze({ id: "synthetic-note-2", authorId: keys.cy, body: "Limited access still supports direct human connection.", createdAt: 2 })
+  Object.freeze({ id: "synthetic-note-1", authorId: keys.ben, audience: "PUBLIC", body: "Building a social layer where trust and friendship stay distinct.", timestamp: "Today · 09:42", reactions: 21, comments: 2, reposts: 4, media: "Local network map · synthetic preview", replies: Object.freeze([
+    Object.freeze({ id: "synthetic-reply-1", authorId: keys.ada, body: "Clear boundaries make social context more useful." }),
+    Object.freeze({ id: "synthetic-reply-2", authorId: keys.cy, body: "And visibility still follows the viewer policy." })
+  ]) }),
+  Object.freeze({ id: "synthetic-note-2", authorId: keys.cy, audience: "FRIENDS", body: "Limited access still supports direct human connection.", timestamp: "Yesterday · 16:18", reactions: 8, comments: 0, reposts: 1, replies: Object.freeze([]) }),
+  Object.freeze({ id: "synthetic-note-3", authorId: keys.ada, audience: "FULL_NETWORK", body: "A small offline demo can still be honest about what is local and what is externally derived.", timestamp: "Friday · 11:05", reactions: 34, comments: 1, reposts: 6, media: "Local activity chart · demo data", replies: Object.freeze([
+    Object.freeze({ id: "synthetic-reply-3", authorId: keys.ben, body: "No live-network claim needed." })
+  ]) })
 ]);

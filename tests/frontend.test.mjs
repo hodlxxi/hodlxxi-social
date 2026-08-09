@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { AccessStatus, EdgeType, relationship } from "../src/domain.mjs";
 import { edges, keys, notes, participants, statuses } from "../src/fixtures.mjs";
 import { parseRoute, profileAccess, profileRoute, renderConnections, renderDiscovery, renderNavigation, renderPage, renderShell, routeFor, selectViewer, shortKey } from "../web/app.mjs";
+import { Audience, audienceDecision, prependLocalPost, renderComposer, renderContextSummary, renderFeed as renderSocialFeed, toggleReaction, visibleFeed } from "../web/feed.mjs";
 
 const data = Object.freeze({ participants, statuses, edges, notes });
 const viewer = participants.find((person) => person.id === keys.ada);
@@ -215,4 +216,96 @@ test("frontend cannot grant an externally-derived elevated status", () => {
   for (const requested of ["full", "operator", "not-a-fixture-key"]) selectViewer(keys.cy, requested, data);
   assert.deepEqual(statuses, snapshot);
   assert.equal(renderShell(keys.cy, data).viewerStatus, AccessStatus.LIMITED);
+});
+
+test("Home renders the local composer before a rich synthetic feed", () => {
+  const html = renderPage(parseRoute("#/home"), keys.ada, data);
+  assert.ok(html.indexOf('id="local-composer"') < html.indexOf('class="feed-stack"'));
+  for (const phrase of ["Post locally", "PUBLIC", "FULL NETWORK", "FRIENDS", "Comments", "Reposts", "Bookmark locally", "synthetic fixture", "Visible local replies"]) assert.match(html, new RegExp(phrase, "i"));
+  assert.match(html, /badge-(full|operator)/);
+  assert.match(html, /Local network map/);
+});
+
+test("composer fails closed for an unknown viewer or status", () => {
+  const unknownViewer = renderComposer({ viewer: undefined, viewerStatus: AccessStatus.FULL, ...data });
+  const unknownStatus = renderComposer({ viewer, viewerStatus: "unknown", ...data });
+  const wellFormedUnknown = renderComposer({ viewer: { id: "e".repeat(64), displayName: "Hidden" }, viewerStatus: AccessStatus.FULL, ...data });
+  const malformedUnknown = renderComposer({ viewer: { id: "malformed", displayName: "Hidden" }, viewerStatus: AccessStatus.FULL, ...data });
+  for (const html of [unknownViewer, unknownStatus, wellFormedUnknown, malformedUnknown]) {
+    assert.match(html, /Composer unavailable/);
+    assert.doesNotMatch(html, /textarea|Post locally|Ada|aaaaaaaa/i);
+  }
+});
+
+test("local post insertion is immutable and preserves viewer identity without status fields", () => {
+  const before = [...notes];
+  const inserted = prependLocalPost(before, { viewer, viewerStatus: AccessStatus.OPERATOR, participants, statuses, audience: Audience.FRIENDS, body: "  Local only  " });
+  assert.equal(inserted.length, before.length + 1);
+  assert.equal(inserted[0].authorId, viewer.id);
+  assert.equal(inserted[0].body, "Local only");
+  assert.equal(inserted[0].local, true);
+  assert.equal("viewerStatus" in inserted[0], false);
+  assert.deepEqual(before, [...notes]);
+  assert.equal(Object.isFrozen(inserted), true);
+  assert.equal(prependLocalPost(before, { viewer, viewerStatus: AccessStatus.OPERATOR, participants, statuses, audience: "UNKNOWN", body: "denied" }).length, before.length);
+  for (const id of ["e".repeat(64), "malformed"]) assert.equal(prependLocalPost(before, { viewer: { id, displayName: "Hidden" }, viewerStatus: AccessStatus.FULL, participants, statuses, audience: Audience.PUBLIC, body: "denied" }).length, before.length);
+});
+
+test("audience decisions are deterministic and unknown values fail closed", () => {
+  assert.equal(audienceDecision({ audience: Audience.PUBLIC, viewerStatus: AccessStatus.LIMITED, context: "direct" }).visible, true);
+  assert.equal(audienceDecision({ audience: Audience.FULL_NETWORK, viewerStatus: AccessStatus.LIMITED, context: "direct" }).visible, false);
+  assert.equal(audienceDecision({ audience: Audience.FRIENDS, viewerStatus: AccessStatus.FULL, context: "friend-of-friend" }).visible, false);
+  assert.equal(audienceDecision({ audience: "UNKNOWN", viewerStatus: AccessStatus.FULL, context: "direct" }).visible, false);
+});
+
+test("feed audiences and canonical identity visibility compose without leaks", () => {
+  const limitedData = { ...data, statuses: { ...statuses, [keys.ada]: AccessStatus.LIMITED } };
+  const limitedCommon = { viewer, viewerStatus: AccessStatus.LIMITED, ...limitedData };
+  const fullCommon = { viewer, viewerStatus: AccessStatus.FULL, ...data, statuses: { ...statuses, [keys.ada]: AccessStatus.FULL } };
+  const limitedHtml = renderSocialFeed(limitedCommon);
+  const fullHtml = renderSocialFeed(fullCommon);
+  assert.match(limitedHtml, /Ben · synthetic/);
+  for (const hidden of [friendOfFriend.displayName, friendOfFriend.publicKey, notes[1].id, "synthetic-reply-2"]) assert.equal(limitedHtml.includes(hidden), false);
+  assert.match(fullHtml, /Ben · synthetic/);
+  assert.match(fullHtml, /Ada · synthetic/);
+  assert.match(fullHtml, /Cy · synthetic/);
+  assert.equal(visibleFeed(fullCommon).some((note) => note.authorId === keys.cy), false);
+  assert.equal(visibleFeed({ ...fullCommon, viewer: undefined }).length, 0);
+  for (const id of ["e".repeat(64), "malformed"]) assert.doesNotThrow(() => assert.equal(visibleFeed({ ...fullCommon, viewer: { id, displayName: "Hidden" } }).length, 0));
+});
+
+test("feed excludes authors whose external status is missing or invalid", () => {
+  for (const value of [undefined, "unknown"]) {
+    const alteredStatuses = { ...statuses, [keys.ben]: value };
+    const html = renderSocialFeed({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, statuses: alteredStatuses, edges, notes });
+    assert.equal(html.includes(directFriend.displayName), false);
+    assert.equal(html.includes(notes[0].id), false);
+    assert.doesNotMatch(html, /badge-unknown/);
+  }
+});
+
+test("visible feed authors link only to permitted canonical profile routes", () => {
+  const fullData = { ...data, statuses: { ...statuses, [keys.ada]: AccessStatus.FULL } };
+  const html = renderSocialFeed({ viewer, viewerStatus: AccessStatus.FULL, ...fullData });
+  assert.match(html, new RegExp(profileRoute(keys.ben).replaceAll("/", "\\/")));
+  assert.match(html, new RegExp(profileRoute(keys.ada).replaceAll("/", "\\/")));
+  assert.match(html, new RegExp(profileRoute(keys.cy).replaceAll("/", "\\/")));
+  assert.equal(visibleFeed({ viewer, viewerStatus: AccessStatus.FULL, ...fullData }).some((note) => note.authorId === keys.cy), false);
+});
+
+test("reaction state is immutable local UI state", () => {
+  const state = Object.freeze({});
+  const active = toggleReaction(state, notes[0].id);
+  const inactive = toggleReaction(active, notes[0].id);
+  assert.deepEqual(state, {});
+  assert.equal(active[notes[0].id], true);
+  assert.equal(inactive[notes[0].id], false);
+});
+
+test("context rail labels all activity as external or synthetic rather than live", () => {
+  const html = renderContextSummary({ viewer, viewerStatus: AccessStatus.OPERATOR, ...data });
+  assert.match(html, /externally derived/i);
+  assert.match(html, /Synthetic fixture posts/);
+  assert.match(html, /Not live network activity or a trust score/);
+  assert.doesNotMatch(html, /active users|live users/i);
 });
