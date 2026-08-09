@@ -1,8 +1,12 @@
 # Architecture
 
-## Implemented through V1.2
+## Implemented through V1.3
 
-The dependency direction is `web UI → Social data service → explicit adapter contract → SyntheticSocialAdapter`. Canonical identity, access, visibility, and Nostr validation remain in `src/domain.mjs`, `src/visibility.mjs`, and `src/nostr.mjs`; adapters do not import rendering code.
+The dependency direction is `explicitly selected sources → source validation and normalization → composition root → Social data service → visibility/access projection → web UI`. Canonical identity, access, visibility, and Nostr validation remain in `src/domain.mjs`, `src/visibility.mjs`, and `src/nostr.mjs`; adapters do not import rendering code.
+
+`createComposedSocialDataService({ socialAdapter, authorityAdapter, now })` is the single V1.3 construction seam. The caller must inject the social source and may separately inject an authority source. The composition root only forwards those owned inputs to the existing service. It has no registry, generic merge, capability union, transport, source discovery, environment/hostname/URL inspection, or fallback selection. The deterministic browser application explicitly selects `SyntheticSocialAdapter` and the local fixture-backed `HodlxxiAuthorityReadAdapter`.
+
+Domain ownership is fixed rather than inferred from argument or adapter ordering. Participants, profiles, feed, follows, friendship, sponsor-trust edges, groups, messages, and notifications belong to the social adapter. External Limited/Full/Operator assertions belong only to the HODLXXI authority adapter. Synthetic status-like state, Nostr metadata or follows, friendship, and sponsor trust cannot overwrite or elevate authority. Raw Nostr and runtime payloads remain inside their source-specific boundaries; only normalized Social records reach the service snapshot and UI.
 
 The adapter declares a closed capability list. The service checks that declaration before each small read operation, rejects malformed adapter results, and normalizes accepted values into immutable participants, typed relationship edges, posts, groups, conversations, notifications, and external-access records. An implemented method does not imply a capability. Missing capabilities fail explicitly.
 
@@ -16,6 +20,6 @@ Demo posts, reactions, messages, and notification read choices remain local ephe
 
 ## Not implemented
 
-A future deployment may inject production relay or runtime reads, but live production source selection is not implemented. Signing, publishing, DMs, encryption, NIP-07, NIP-44, NIP-59, private keys, production authentication, CRT issuance, covenant/Bitcoin-chain validation, sponsor or status mutation, HODLXXI writes, and deployment are also not implemented.
+A future deployment may inject production relay or runtime reads, but live relay selection, live HODLXXI runtime selection, environment-based configuration, and automatic production detection or network connection are not implemented. Authentication, signing, publishing, DMs, encryption, NIP-07, NIP-44, NIP-59, private keys, CRT issuance, covenant/Bitcoin-chain validation, sponsor or status mutation, HODLXXI writes, and production deployment are also not implemented.
 
 There is no active relay, built-in WebSocket or HTTP/RPC connector, production URL, database, persistence, environment-secret access, signing, publication, private-key handling, custody, Bitcoin spending, Lightning payment, status issuance, deployment authority, or dependency on Universal-Bitcoin-Identity-Layer.
