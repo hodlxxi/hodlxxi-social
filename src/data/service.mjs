@@ -18,7 +18,7 @@ const requireKnownIdentities = (identities, participantIds, label) => {
   if (identities.some((id) => !participantIds.has(id))) throw new TypeError(`${label} must reference canonical participants`);
 };
 
-export function createSocialDataService(adapter, { now = 100 } = {}) {
+export function createSocialDataService(adapter, { now = 100, authorityAdapter } = {}) {
   if (!Number.isFinite(now)) throw new TypeError("service time must be finite");
   return Object.freeze({
     load() {
@@ -49,7 +49,8 @@ export function createSocialDataService(adapter, { now = 100 } = {}) {
       const conversationIds = new Set(conversations.map(({ id }) => id));
       if (notifications.some(({ target }) => (target.type === "profile" && !participantIds.has(target.id)) || (target.type === "message" && !conversationIds.has(target.id)) || (target.type === "group" && !groupIds.has(target.id)))) throw new TypeError("notification targets must reference canonical records");
       const externalAssertions = Object.freeze(Object.fromEntries(participants.map(({ id }) => {
-        const raw = readFromAdapter(adapter, SocialCapability.READ_EXTERNAL_STATUS, "getExternalAccessAssertion", id);
+        let raw;
+        try { raw = readFromAdapter(authorityAdapter, SocialCapability.READ_EXTERNAL_AUTHORITY, "readAssertion", id); } catch {}
         return [id, normalizeExternalAssertion(id, raw, now)];
       })));
       const statuses = Object.freeze(Object.fromEntries(participants.map(({ id }) => [id, externalAssertions[id].valid ? externalAssertions[id].assertedStatus : AccessStatus.LIMITED])));

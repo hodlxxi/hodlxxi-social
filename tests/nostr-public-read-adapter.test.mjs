@@ -28,6 +28,8 @@ test("public adapter injects one constrained read and satisfies the Social servi
   assert.deepEqual(calls, [{ kinds: [0, 1] }]);
   assert.equal(Object.isFrozen(calls[0]), true);
   assert.equal(adapter.capabilities.includes(SocialCapability.READ_PUBLIC_NOSTR), true);
+  assert.equal(adapter.capabilities.includes(SocialCapability.READ_EXTERNAL_AUTHORITY), false);
+  assert.equal(adapter.readAssertion, undefined);
   assert.equal(data.currentViewerId, ada);
   assert.deepEqual(data.participants.map(({ id, displayName }) => [id, displayName]), [[ada, "Ada"], [ben, "Participant"]]);
   assert.deepEqual(data.notes.map(({ id, authorId, audience, body, timestamp, reactions, comments, reposts }) =>

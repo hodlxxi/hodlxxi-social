@@ -1,4 +1,6 @@
 import { EdgeType } from "../src/domain.mjs";
+import { assertions } from "../src/fixtures.mjs";
+import { HodlxxiAuthorityReadAdapter } from "../src/data/hodlxxi-authority-read-adapter.mjs";
 import { createSocialDataService } from "../src/data/service.mjs";
 import { SyntheticSocialAdapter } from "../src/data/synthetic-adapter.mjs";
 import { RelationshipContext, relationshipContext, visibilityDecision } from "../src/visibility.mjs";
@@ -13,7 +15,8 @@ import { renderLocalDiscovery } from "./discovery.mjs";
 import { escapeHtml, renderEmptyState, renderPageFrame, renderRestrictedState, renderStatusBadge, renderUnavailableState } from "./components.mjs";
 import { navigationModel, renderNavigation } from "./shell.mjs";
 
-const fixtureData = createSocialDataService(new SyntheticSocialAdapter()).load();
+const fixtureAuthority = new HodlxxiAuthorityReadAdapter({ readAssertion: (subject) => assertions[subject] });
+const fixtureData = createSocialDataService(new SyntheticSocialAdapter(), { authorityAdapter: fixtureAuthority }).load();
 const validStatuses = new Set(["limited", "full", "operator"]);
 const pageRoutes = Object.freeze({ home: "/home", search: "/search", discover: "/discover", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust" });
 export { navigationModel, renderNavigation };
