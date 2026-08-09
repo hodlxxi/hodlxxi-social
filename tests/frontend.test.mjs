@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { AccessStatus, EdgeType, relationship } from "../src/domain.mjs";
 import { edges, keys, notes, participants, statuses } from "../src/fixtures.mjs";
-import { renderConnections, renderDiscovery, renderShell, selectViewer, shortKey } from "../web/app.mjs";
+import { parseRoute, profileAccess, profileRoute, renderConnections, renderDiscovery, renderNavigation, renderPage, renderShell, routeFor, selectViewer, shortKey } from "../web/app.mjs";
 
 const data = Object.freeze({ participants, statuses, edges, notes });
 const viewer = participants.find((person) => person.id === keys.ada);
@@ -79,7 +79,7 @@ test("unknown or missing status fails closed without participant identity", () =
   const malformedData = { ...data, statuses: { ...statuses, [keys.ada]: "unknown" } };
   const shell = renderShell(keys.ada, malformedData);
   assert.equal(shell.viewerStatus, undefined);
-  assert.match(shell.profile, /Viewer unavailable/);
+  assert.match(shell.profile, /Profile restricted/);
   assert.doesNotMatch(shell.profile, /Ada|aaaaaaaa|operator/i);
   for (const html of [shell.feed, shell.discovery, shell.trust]) {
     for (const person of participants) {
@@ -111,7 +111,9 @@ test("friendship and sponsor-trust remain separate frontend surfaces", () => {
 
 test("frontend exposes interactive surfaces and required non-claims", async () => {
   const html = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
-  for (const phrase of ["Synthetic participant", "Home feed", "Participant profile", "Direct connections", "Friends of friends", "Sponsor-trust", "Limited participants", "Friendship does not prove covenant trust", "not legal identity", "does not hold funds or control private keys", "does not promise profit or investment return"]) assert.match(html, new RegExp(phrase, "i"));
+  const app = await readFile(new URL("../web/app.mjs", import.meta.url), "utf8");
+  for (const phrase of ["Synthetic participant", "Friendship does not prove covenant trust", "not legal identity", "does not hold funds or control private keys", "does not promise profit or investment return"]) assert.match(html, new RegExp(phrase, "i"));
+  for (const phrase of ["Home", "My Circle", "Participant Profile", "Direct friends", "Friends of Friends", "Sponsor-trust"]) assert.match(app, new RegExp(phrase, "i"));
   assert.doesNotMatch(html, /password|localStorage|cookie/i);
 });
 
@@ -126,4 +128,91 @@ test("frontend is responsive and presents all access modes", async () => {
   assert.match(css, /@media/);
   assert.match(css, /grid-template-columns/);
   for (const status of Object.values(AccessStatus)) assert.match(css, new RegExp(`data-access=\\"${status}\\"`));
+});
+
+test("hash routes select every required local surface", () => {
+  const cases = [["#/home", "home"], ["#/circle", "circle"], ["#/friends", "friends"], ["#/friends-of-friends", "discovery"], [profileRoute(keys.ben), "profile"], ["#/trust", "trust"]];
+  for (const [hash, page] of cases) {
+    const route = parseRoute(hash);
+    assert.equal(route.page, page);
+    assert.match(renderPage(route, keys.ben, data), new RegExp(page === "discovery" ? "Friends of Friends" : page, "i"));
+  }
+  assert.equal(routeFor("home", keys.ben), "#/home");
+  assert.equal(routeFor("profile", keys.ben), profileRoute(keys.ben));
+});
+
+test("unknown and malformed routes fail safely", () => {
+  for (const hash of ["#/unknown", "#/profile/not-a-key", "#/profile/" ]) {
+    const route = parseRoute(hash);
+    assert.equal(route.page, "not-found");
+    const html = renderPage(route, keys.ada, data);
+    assert.match(html, /Page unavailable|Route not found/);
+    for (const person of participants) assert.equal(html.includes(person.publicKey), false);
+  }
+});
+
+test("direct friend profile route renders permitted identity and relationship", () => {
+  const html = renderPage(parseRoute(profileRoute(keys.ada)), keys.ben, data);
+  assert.match(html, /Ada · synthetic/);
+  assert.match(html, new RegExp(shortKey(keys.ada)));
+  assert.match(html, /direct social friend/i);
+  assert.match(html, /Sponsor-trust/);
+  assert.match(html, /not legal identity/);
+});
+
+test("Full viewer can open a permitted friend-of-friend profile", () => {
+  const html = renderPage(parseRoute(profileRoute(keys.cy)), keys.ada, data);
+  assert.match(html, /Cy · synthetic/);
+  assert.match(html, /friend-of-friend/);
+  assert.match(html, /limited/);
+});
+
+test("Limited viewer direct profile URL cannot reveal denied friend-of-friend", () => {
+  const limitedData = { ...data, statuses: { ...statuses, [keys.ada]: AccessStatus.LIMITED } };
+  const html = renderPage(parseRoute(profileRoute(keys.cy)), keys.ada, limitedData);
+  assert.match(html, /Profile restricted/);
+  const denied = participants.find((person) => person.id === keys.cy);
+  for (const identity of [denied.displayName, denied.publicKey, shortKey(denied.publicKey), denied.displayName[0], "friend-of-friend"]) assert.equal(html.includes(identity), false);
+  assert.doesNotMatch(html, /class="avatar|badge-/);
+});
+
+test("unknown profile subject fails closed without stable identity", () => {
+  const unknown = "e".repeat(64);
+  const route = parseRoute(profileRoute(unknown));
+  const html = renderPage(route, keys.ada, data);
+  assert.match(html, /Profile restricted/);
+  assert.equal(html.includes(unknown), false);
+  assert.doesNotMatch(html, /class="avatar|badge-/);
+});
+
+test("profile access consumes canonical graph visibility", () => {
+  const full = profileAccess({ viewer, viewerStatus: AccessStatus.FULL, subjectId: keys.cy, participants, edges });
+  const limited = profileAccess({ viewer, viewerStatus: AccessStatus.LIMITED, subjectId: keys.cy, participants, edges });
+  assert.equal(full.visible, true);
+  assert.equal(full.context, "friend-of-friend");
+  assert.deepEqual(limited, { visible: false, reason: "restricted" });
+});
+
+test("viewer switching recomputes the active routed profile", () => {
+  const route = parseRoute(profileRoute(keys.cy));
+  const full = renderShell(keys.ada, data, route);
+  const direct = renderShell(keys.ben, data, route);
+  const self = renderShell(keys.cy, data, route);
+  assert.match(full.page, /friend-of-friend/);
+  assert.match(direct.page, /direct social friend/i);
+  assert.match(self.page, /<dd>self<\/dd>/);
+  assert.notEqual(full.navigation, direct.navigation);
+});
+
+test("navigation renders active state and all required destinations", () => {
+  const html = renderNavigation(parseRoute("#/circle"), keys.ben);
+  for (const label of ["Home", "My Circle", "Friends", "Friends of Friends", "Profile", "Trust"]) assert.match(html, new RegExp(label));
+  assert.match(html, /href="#\/circle" aria-current="page"/);
+});
+
+test("frontend cannot grant an externally-derived elevated status", () => {
+  const snapshot = structuredClone(statuses);
+  for (const requested of ["full", "operator", "not-a-fixture-key"]) selectViewer(keys.cy, requested, data);
+  assert.deepEqual(statuses, snapshot);
+  assert.equal(renderShell(keys.cy, data).viewerStatus, AccessStatus.LIMITED);
 });
