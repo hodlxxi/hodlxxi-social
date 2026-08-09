@@ -1,0 +1,11 @@
+{
+  "name": "hodlxxi-social-foundation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/domain.test.mjs tests/visibility.test.mjs tests/nostr.test.mjs tests/frontend.test.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
