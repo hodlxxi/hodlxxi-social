@@ -7,12 +7,14 @@ import { appendLocalMessage, initializeLocalMessages, renderMessages } from "./m
 import { renderGroups } from "./groups.mjs";
 import { initializeNotificationState, markAllNotificationsRead, markNotificationRead, renderNotifications, visibleUnreadCount } from "./notifications.mjs";
 import { renderActivity } from "./activity.mjs";
+import { normalizeQuery, parseSearchQuery, renderSearch } from "./search.mjs";
+import { renderLocalDiscovery } from "./discovery.mjs";
 
 const fixtureData = Object.freeze({ participants, statuses, edges, notes });
 const validStatuses = new Set(["limited", "full", "operator"]);
-const pageRoutes = Object.freeze({ home: "/home", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust" });
+const pageRoutes = Object.freeze({ home: "/home", search: "/search", discover: "/discover", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust" });
 const navigation = Object.freeze([
-  ["home", "Home"], ["circle", "My Circle"], ["friends", "Friends"],
+  ["home", "Home"], ["search", "Search"], ["discover", "Discover"], ["circle", "My Circle"], ["friends", "Friends"],
   ["discovery", "Friends of Friends"], ["messages", "Messages"], ["groups", "Groups"], ["notifications", "Notifications"], ["activity", "Activity"], ["profile", "Profile"], ["trust", "Trust"]
 ]);
 
@@ -22,6 +24,10 @@ export const profileRoute = (subjectId) => `#/profile/${subjectId}`;
 export function parseRoute(hash = "") {
   const value = typeof hash === "string" ? hash : "";
   const path = value.startsWith("#") ? value.slice(1) : value;
+  if (path === "/search" || path.startsWith("/search?")) {
+    const parsed = parseSearchQuery(path);
+    return Object.freeze({ page: "search", path: "/search", searchQuery: parsed.query, queryValid: parsed.valid });
+  }
   const page = Object.entries(pageRoutes).find(([, route]) => route === path)?.[0];
   if (page) return Object.freeze({ page, path });
   const match = path.match(/^\/profile\/([0-9a-fA-F]{64})$/);
@@ -114,9 +120,11 @@ export function renderPage(route, viewerId, data = fixtureData, ui = Object.free
   const viewer = resolveViewer(viewerId, data);
   const viewerStatus = viewer && validStatuses.has(data.statuses[viewer.id]) ? data.statuses[viewer.id] : undefined;
   const common = { viewer, viewerStatus, ...data };
-  const headings = { home: "Home", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", messages: "Messages", groups: "Groups", notifications: "Notifications", activity: "Activity", profile: "Participant Profile", trust: "Trust" };
+  const headings = { home: "Home", search: "Search", discover: "Discover", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", messages: "Messages", groups: "Groups", notifications: "Notifications", activity: "Activity", profile: "Participant Profile", trust: "Trust" };
   let content;
   if (route.page === "home") return `<section class="page home-page">${renderHome(common, ui.reactions)}</section>`;
+  else if (route.page === "search") content = renderSearch(common, route.searchQuery, route.queryValid);
+  else if (route.page === "discover") content = renderLocalDiscovery(common);
   else if (route.page === "circle") content = renderCircle(common);
   else if (route.page === "friends") content = renderConnections(common);
   else if (route.page === "discovery") content = renderDiscovery(common);
@@ -162,6 +170,13 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
   selector.value = viewerId;
   selector.addEventListener("change", (event) => { viewerId = selectViewer(viewerId, event.target.value, data); localMessages = initializeLocalMessages(); notificationState = initializeNotificationState(); selector.value = viewerId; paint(); });
   root.addEventListener("submit", (event) => {
+    if (event.target.id === "local-search") {
+      event.preventDefault();
+      const query = new FormData(event.target).get("q");
+      const normalized = normalizeQuery(query);
+      browser.location.hash = normalized ? `#/search?q=${encodeURIComponent(normalized)}` : "#/search";
+      return;
+    }
     if (event.target.id === "message-composer") {
       event.preventDefault();
       const formData = new FormData(event.target);
