@@ -1,15 +1,11 @@
 import { relationshipContext, visibilityDecision } from "../src/visibility.mjs";
 import { renderEmptyState, renderRestrictedState } from "./components.mjs";
 
-export const groups = Object.freeze([
-  Object.freeze({ id: "group-01", title: "Local Builders", description: "A synthetic space for product-shell notes.", memberIds: Object.freeze(["a".repeat(64), "b".repeat(64), "c".repeat(64)]), activity: "Today · Interface boundaries reviewed locally" }),
-  Object.freeze({ id: "group-02", title: "Design Study", description: "A local fixture for small-screen layout discussion.", memberIds: Object.freeze(["b".repeat(64), "d".repeat(64)]), activity: "Yesterday · Mobile spacing explored locally" })
-]);
-
 const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const restricted = () => renderRestrictedState("group");
 
-export function groupAccess({ groupId, viewer, viewerStatus, participants, edges, items = groups }) {
+export function groupAccess({ groupId, viewer, viewerStatus, participants, edges, groups = [] }) {
+  const items = groups;
   const group = items.find((item) => item.id === groupId);
   if (!group || !viewer || !group.memberIds.includes(viewer.id)) return Object.freeze({ visible: false, reason: "restricted" });
   const people = new Map(participants.map((person) => [person.id, person]));
@@ -24,7 +20,7 @@ export function groupAccess({ groupId, viewer, viewerStatus, participants, edges
 }
 
 export function visibleGroups(input) {
-  return Object.freeze((input.items ?? groups).map((group) => groupAccess({ ...input, groupId: group.id })).filter((result) => result.visible));
+  return Object.freeze((input.groups ?? []).map((group) => groupAccess({ ...input, groupId: group.id })).filter((result) => result.visible));
 }
 
 function renderMembers(access) {

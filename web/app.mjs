@@ -1,5 +1,6 @@
 import { EdgeType } from "../src/domain.mjs";
-import { participants, statuses, edges, notes } from "../src/fixtures.mjs";
+import { createSocialDataService } from "../src/data/service.mjs";
+import { SyntheticSocialAdapter } from "../src/data/synthetic-adapter.mjs";
 import { RelationshipContext, relationshipContext, visibilityDecision } from "../src/visibility.mjs";
 import { prependLocalPost, renderContextSummary, renderFeed as renderSocialFeed, renderHome, toggleReaction } from "./feed.mjs";
 import { renderCircle } from "./circle.mjs";
@@ -9,10 +10,10 @@ import { initializeNotificationState, markAllNotificationsRead, markNotification
 import { renderActivity } from "./activity.mjs";
 import { normalizeQuery, parseSearchQuery, renderSearch } from "./search.mjs";
 import { renderLocalDiscovery } from "./discovery.mjs";
-import { renderEmptyState, renderPageFrame, renderRestrictedState, renderStatusBadge, renderUnavailableState } from "./components.mjs";
+import { escapeHtml, renderEmptyState, renderPageFrame, renderRestrictedState, renderStatusBadge, renderUnavailableState } from "./components.mjs";
 import { navigationModel, renderNavigation } from "./shell.mjs";
 
-const fixtureData = Object.freeze({ participants, statuses, edges, notes });
+const fixtureData = createSocialDataService(new SyntheticSocialAdapter()).load();
 const validStatuses = new Set(["limited", "full", "operator"]);
 const pageRoutes = Object.freeze({ home: "/home", search: "/search", discover: "/discover", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust" });
 export { navigationModel, renderNavigation };
@@ -41,7 +42,7 @@ export function routeFor(page, viewerId) {
   return `#${pageRoutes[page] ?? "/not-found"}`;
 }
 
-const personCard = (person, detail) => `<a class="person person-link" href="${profileRoute(person.id)}"><div class="avatar" aria-hidden="true">${person.displayName[0]}</div><div><strong>${person.displayName}</strong><p class="meta">${detail}</p><p class="key">${shortKey(person.publicKey)}</p></div></a>`;
+const personCard = (person, detail) => `<a class="person person-link" href="${profileRoute(person.id)}"><div class="avatar" aria-hidden="true">${escapeHtml(person.displayName[0])}</div><div><strong>${escapeHtml(person.displayName)}</strong><p class="meta">${escapeHtml(detail)}</p><p class="key">${shortKey(person.publicKey)}</p></div></a>`;
 const restrictedDiscovery = () => renderRestrictedState("discovery");
 const noDiscovery = () => renderEmptyState("friend-discovery");
 const noConnections = () => renderEmptyState("connections");
@@ -69,7 +70,7 @@ export function renderProfile({ viewer, viewerStatus, subjectId = viewer?.id, pa
   const direct = context === RelationshipContext.DIRECT ? "Yes — direct social friend" : "No";
   const trustEdges = graph.filter((edge) => edge.type === EdgeType.SPONSOR_TRUST && (edge.from === subject.id || edge.to === subject.id));
   const trust = trustEdges.length ? `${trustEdges.length} external sponsor-trust relationship${trustEdges.length === 1 ? "" : "s"}` : "No fixture sponsor-trust relationships";
-  return `<article class="profile-card"><div class="avatar avatar-large" aria-hidden="true">${subject.displayName[0]}</div><h2>${subject.displayName}</h2>${renderStatusBadge(subjectStatus)}<p class="key">${shortKey(subject.publicKey)}</p><dl><div><dt>Relationship</dt><dd>${context}</dd></div><div><dt>Direct friend</dt><dd>${direct}</dd></div></dl><section class="trust-section"><h3>Sponsor-trust</h3><p>${trust}</p><p class="notice">Sponsor-trust is external provenance and remains separate from friendship.</p></section><p class="notice">Displayed role/status is externally derived and is not legal identity.</p></article>`;
+  return `<article class="profile-card"><div class="avatar avatar-large" aria-hidden="true">${escapeHtml(subject.displayName[0])}</div><h2>${escapeHtml(subject.displayName)}</h2>${renderStatusBadge(subjectStatus)}<p class="key">${shortKey(subject.publicKey)}</p><dl><div><dt>Relationship</dt><dd>${context}</dd></div><div><dt>Direct friend</dt><dd>${direct}</dd></div></dl><section class="trust-section"><h3>Sponsor-trust</h3><p>${trust}</p><p class="notice">Sponsor-trust is external provenance and remains separate from friendship.</p></section><p class="notice">Displayed role/status is externally derived and is not legal identity.</p></article>`;
 }
 
 export function renderFeed({ viewer, viewerStatus, participants, edges, notes, statuses: access = fixtureData.statuses }) {
@@ -137,12 +138,12 @@ export function renderShell(viewerId, data = fixtureData, route = parseRoute("#/
 
 export function renderApp(root, data = fixtureData, browser = globalThis.window) {
   const selector = root.querySelector("#viewer-select");
-  selector.innerHTML = data.participants.map((person) => `<option value="${person.id}">${person.displayName} · ${data.statuses[person.id]}</option>`).join("");
-  let viewerId = data.participants[1]?.id ?? data.participants[0]?.id;
+  selector.innerHTML = data.participants.map((person) => `<option value="${person.id}">${escapeHtml(person.displayName)} · ${data.statuses[person.id]}</option>`).join("");
+  let viewerId = resolveViewer(data.currentViewerId, data)?.id;
   let localNotes = [];
   let reactions = Object.freeze({});
-  let localMessages = initializeLocalMessages();
-  let notificationState = initializeNotificationState();
+  let localMessages = initializeLocalMessages(data.conversations);
+  let notificationState = initializeNotificationState(data.notifications);
   const paint = () => {
     const route = parseRoute(browser?.location?.hash || "#/home");
     const activeData = { ...data, notes: [...localNotes, ...data.notes] };
@@ -158,7 +159,7 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
     root.body?.setAttribute("data-access", shell.viewerStatus ?? "restricted");
   };
   selector.value = viewerId;
-  selector.addEventListener("change", (event) => { viewerId = selectViewer(viewerId, event.target.value, data); localMessages = initializeLocalMessages(); notificationState = initializeNotificationState(); selector.value = viewerId; paint(); });
+  selector.addEventListener("change", (event) => { viewerId = selectViewer(viewerId, event.target.value, data); localMessages = initializeLocalMessages(data.conversations); notificationState = initializeNotificationState(data.notifications); selector.value = viewerId; paint(); });
   root.addEventListener("submit", (event) => {
     if (event.target.id === "local-search") {
       event.preventDefault();
@@ -171,7 +172,7 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
       event.preventDefault();
       const formData = new FormData(event.target);
       const viewer = resolveViewer(viewerId, data);
-      localMessages = appendLocalMessage(localMessages, { conversationId: formData.get("conversation"), viewer, viewerStatus: data.statuses[viewer?.id], participants: data.participants, edges: data.edges, body: formData.get("body") });
+      localMessages = appendLocalMessage(localMessages, { conversationId: formData.get("conversation"), viewer, viewerStatus: data.statuses[viewer?.id], participants: data.participants, edges: data.edges, body: formData.get("body") }, data.conversations);
       paint();
       return;
     }

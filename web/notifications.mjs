@@ -3,20 +3,10 @@ import { conversationAccess } from "./messages.mjs";
 import { groupAccess } from "./groups.mjs";
 import { renderEmptyState, renderRestrictedState } from "./components.mjs";
 
-const freezeItems = (items) => Object.freeze(items.map((item) => Object.freeze({ ...item, target: Object.freeze({ ...item.target }) })));
-
-export const notifications = freezeItems([
-  { id: "local-notice-friend", actorId: "a".repeat(64), kind: "friend", action: "shared profile and social connection activity", targetLabel: "Profile", timestamp: "Today · 10:08", unread: true, target: { type: "profile", id: "a".repeat(64) } },
-  { id: "local-notice-reaction", actorId: "b".repeat(64), kind: "reaction", action: "reacted to a synthetic local post", targetLabel: "Home", timestamp: "Today · 09:54", unread: true, target: { type: "home" } },
-  { id: "local-notice-reply", actorId: "c".repeat(64), kind: "reply", action: "replied to a demo post", targetLabel: "Home", timestamp: "Yesterday · 16:22", unread: false, target: { type: "home" } },
-  { id: "local-notice-message", actorId: "a".repeat(64), kind: "message", action: "added a new local demo message", targetLabel: "Messages", timestamp: "Yesterday · 14:06", unread: true, target: { type: "message", id: "chat-01" } },
-  { id: "local-notice-group", actorId: "b".repeat(64), kind: "group", action: "added synthetic local group activity", targetLabel: "Local Builders", timestamp: "Friday · 11:18", unread: false, target: { type: "group", id: "group-01" } }
-]);
-
 const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const peopleById = (participants) => new Map(participants.map((person) => [person.id, person]));
 
-export function initializeNotificationState(items = notifications) {
+export function initializeNotificationState(items = []) {
   return Object.freeze(Object.fromEntries(items.map((item) => [item.id, Boolean(item.unread)])));
 }
 
@@ -59,19 +49,19 @@ export function safeNotificationRoute(item, input) {
   return undefined;
 }
 
-export function deriveNotifications(input, state = initializeNotificationState(input.items ?? notifications)) {
-  return Object.freeze((input.items ?? notifications).map((item) => {
+export function deriveNotifications(input, state = initializeNotificationState(input.notifications ?? [])) {
+  return Object.freeze((input.notifications ?? []).map((item) => {
     const access = actorAccess(item, input);
     if (!access.visible) return Object.freeze({ restricted: true });
     return Object.freeze({ ...item, actor: access.actor, unread: Boolean(state[item.id]), route: safeNotificationRoute(item, input) });
   }));
 }
 
-export function visibleUnreadCount(input, state = initializeNotificationState(input.items ?? notifications)) {
+export function visibleUnreadCount(input, state = initializeNotificationState(input.notifications ?? [])) {
   return deriveNotifications(input, state).filter((item) => !item.restricted && item.unread).length;
 }
 
-export function renderNotifications(input, state = initializeNotificationState(input.items ?? notifications)) {
+export function renderNotifications(input, state = initializeNotificationState(input.notifications ?? [])) {
   const items = deriveNotifications(input, state).map((item) => {
     if (item.restricted) return renderRestrictedState("notification");
     const target = item.route ? `<a class="notification-target" href="${escapeHtml(item.route)}">${escapeHtml(item.targetLabel)}</a>` : `<span class="notification-target disabled">Target unavailable</span>`;

@@ -2,21 +2,13 @@ import { relationshipContext, visibilityDecision } from "../src/visibility.mjs";
 import { renderEmptyState, renderRestrictedState } from "./components.mjs";
 
 const freezeMessages = (items) => Object.freeze(items.map((item) => Object.freeze({ ...item })));
-export const conversations = Object.freeze([
-  Object.freeze({ id: "chat-01", memberIds: Object.freeze(["a".repeat(64), "b".repeat(64)]), unreadFor: Object.freeze(["a".repeat(64)]), messages: freezeMessages([
-    { authorId: "b".repeat(64), body: "The local product shell is taking shape.", timestamp: "Today · 09:42" },
-    { authorId: "a".repeat(64), body: "Good. Messaging and covenant trust stay separate.", timestamp: "Today · 09:45" }
-  ]) }),
-  Object.freeze({ id: "chat-02", memberIds: Object.freeze(["a".repeat(64), "c".repeat(64)]), unreadFor: Object.freeze([]), messages: freezeMessages([
-    { authorId: "c".repeat(64), body: "Visibility still follows the current viewer policy.", timestamp: "Yesterday · 16:18" }
-  ]) })
-]);
 
 const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const byId = (participants) => new Map(participants.map((person) => [person.id, person]));
 const restricted = () => renderRestrictedState("conversation");
 
-export function conversationAccess({ conversationId, viewer, viewerStatus, participants, edges, items = conversations }) {
+export function conversationAccess({ conversationId, viewer, viewerStatus, participants, edges, conversations = [] }) {
+  const items = conversations;
   const conversation = items.find((item) => item.id === conversationId);
   if (!conversation || !viewer || !conversation.memberIds.includes(viewer.id)) return Object.freeze({ visible: false, reason: "restricted" });
   const people = byId(participants);
@@ -27,15 +19,15 @@ export function conversationAccess({ conversationId, viewer, viewerStatus, parti
 }
 
 export function visibleConversations(input) {
-  return Object.freeze((input.items ?? conversations).map((conversation) => conversationAccess({ ...input, conversationId: conversation.id })).filter((result) => result.visible));
+  return Object.freeze((input.conversations ?? []).map((conversation) => conversationAccess({ ...input, conversationId: conversation.id })).filter((result) => result.visible));
 }
 
-export function initializeLocalMessages(items = conversations) {
+export function initializeLocalMessages(items = []) {
   return Object.freeze(Object.fromEntries(items.map((conversation) => [conversation.id, freezeMessages(conversation.messages)])));
 }
 
-export function appendLocalMessage(state, { conversationId, viewer, viewerStatus, participants, edges, body, timestamp = "Now · local" }, items = conversations) {
-  const access = conversationAccess({ conversationId, viewer, viewerStatus, participants, edges, items });
+export function appendLocalMessage(state, { conversationId, viewer, viewerStatus, participants, edges, body, timestamp = "Now · local" }, items = []) {
+  const access = conversationAccess({ conversationId, viewer, viewerStatus, participants, edges, conversations: items });
   const text = typeof body === "string" ? body.trim() : "";
   if (!access.visible || !text || text.length > 500) return state;
   const current = Array.isArray(state?.[conversationId]) ? state[conversationId] : access.conversation.messages;
@@ -67,7 +59,7 @@ function renderTranscript(access, viewer, state) {
   }).join("");
 }
 
-export function renderMessages(input, selectedId, state = initializeLocalMessages(input.items ?? conversations)) {
+export function renderMessages(input, selectedId, state = initializeLocalMessages(input.conversations ?? [])) {
   const list = renderList(input, selectedId);
   let detail = renderEmptyState("conversation-selection");
   if (selectedId) {
