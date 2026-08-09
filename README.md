@@ -1,4 +1,4 @@
-# HODLXXI Social V1.3
+# HODLXXI Social V1.4
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
@@ -10,7 +10,11 @@ V1.2 adds a separate `HodlxxiAuthorityReadAdapter`. Its only capability is `READ
 
 V1.3 adds a small deterministic composition root. `createComposedSocialDataService({ socialAdapter, authorityAdapter, now })` requires the caller to select the social source explicitly and keeps authority as a separate optional input. It delegates normalization and access projection to the existing Social data service; it does not merge adapter objects, discover sources, inspect environment or browser state, or become a source of truth. The application explicitly composes its deterministic synthetic source with the local fixture authority source. Valid authority provenance and evidence survive composition, while absent or invalid authority remains fail-closed at Limited without discarding usable social data.
 
-Both read adapters are protocol seams, not production connectivity or authentication. Live relay selection, live HODLXXI runtime selection, environment-based configuration, authentication, signing, publishing, DMs, encryption, NIP-07, private-key access, HODLXXI authentication, CRT issuance, covenant or chain validation, sponsor/status mutation, writes to HODLXXI, production deployment, and automatic network connection are not implemented. The current viewer remains explicitly injected local state and does not establish key ownership.
+V1.4 adds `WebSocketNostrReadTransport`, a dependency-free, explicitly constructed public-read transport. A caller must supply a validated `wss://` relay URL and may inject the WebSocket factory for its runtime. Each `read(filter)` opens one bounded socket, sends one Nostr `REQ`, collects only matching `EVENT` frames until `EOSE` or the configured event limit, sends `CLOSE`, and cleans up. Connection, read, message-size, accumulated-data, and event-count bounds prevent unbounded listening. Offline tests use a deterministic fake WebSocket; canonical validation in `src/nostr.mjs` remains authoritative for every returned event.
+
+This transport is a controlled construction seam, not the application default. `SyntheticSocialAdapter` remains the active application adapter, no relay is selected automatically, and no connection occurs on page load. A live public read exists only when a caller explicitly constructs `WebSocketNostrReadTransport({ relayUrl })` and injects it into `NostrPublicReadAdapter.create({ transport, viewerId })`.
+
+Not implemented: default live mode, relay discovery, relay pools, reconnect, persistent subscriptions, publishing, signing, DMs, encryption, authentication, NIP-07, NIP-44, NIP-59, NIP-65, production relay selection, live HODLXXI runtime transport, environment-based configuration, private-key access, HODLXXI authentication, CRT issuance, covenant or chain validation, sponsor/status mutation, writes to HODLXXI, or production deployment. The current viewer remains explicitly injected local state and does not establish key ownership.
 
 Open `web/index.html` through any static file server, then use the grouped desktop navigation or the mobile primary and More navigation for Home, Search, Discover, My Circle, Friends, Friends of Friends, Messages, Groups, Notifications, Activity, participant profiles, and Trust. Switch among synthetic participants to explore Limited, Full, and Operator views. The selector is a local demo control, not a login; viewer selection is in-memory only, recomputes route visibility, and cannot edit externally derived access status. Run `node --test` for deterministic Node built-in tests.
 
@@ -30,6 +34,6 @@ Notifications and Activity are synthetic local summaries, not live network telem
 - A displayed role or status is not legal identity.
 - Social does not hold funds or control private keys.
 - Participation does not promise profit or investment return.
-- This repository contains no custody, signing, publishing, live relay selection, database, Redis, Bitcoin RPC, LND, or deployment integration.
+- This repository contains no custody, signing, publishing, automatic or production relay selection, database, Redis, Bitcoin RPC, LND, or deployment integration.
 
 See [architecture](docs/architecture.md), [domain/access](docs/domain-access-model.md), [Nostr boundary](docs/nostr-boundary.md), and [graph/visibility](docs/social-graph-visibility.md).
