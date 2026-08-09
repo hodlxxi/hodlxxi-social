@@ -10,6 +10,8 @@ import { appendLocalMessage, conversationAccess, conversations, initializeLocalM
 import { groupAccess, groups, renderGroups } from "../web/groups.mjs";
 import { deriveNotifications, initializeNotificationState, markAllNotificationsRead, markNotificationRead, notifications, renderNotifications, safeNotificationRoute, unreadCount, visibleUnreadCount } from "../web/notifications.mjs";
 import { deriveActivity, renderActivity } from "../web/activity.mjs";
+import { normalizeQuery, parseSearchQuery, renderSearch, searchAll, searchGroups, searchPeople, searchPosts } from "../web/search.mjs";
+import { deriveDiscovery, renderLocalDiscovery } from "../web/discovery.mjs";
 
 const data = Object.freeze({ participants, statuses, edges, notes });
 const viewer = participants.find((person) => person.id === keys.ada);
@@ -557,4 +559,94 @@ test("Notifications and Activity styles preserve readable scroll-safe mobile nav
   for (const selector of [".nav-badge", ".notification-row.unread", ".notification-toolbar", ".activity-row"]) assert.match(css, new RegExp(selector.replace(".", "\\.")));
   assert.match(css, /@media\(max-width:720px\)[\s\S]*\.mobile-nav\{justify-content:flex-start;max-width:100vw\}/);
   assert.match(css, /\.mobile-nav\{position:fixed;bottom:0[\s\S]*overflow-x:auto/);
+});
+
+test("Search and Discover routes render without replacing Friends of Friends", () => {
+  for (const [hash, page, phrase] of [["#/search", "search", "Search this local demo"], ["#/search?q=Ada%20%C2%B7%20synthetic", "search", "Ada · synthetic"], ["#/discover", "discover", "Local synthetic discovery"], ["#/friends-of-friends", "discovery", "Friends of Friends"]]) {
+    const route = parseRoute(hash);
+    assert.equal(route.page, page);
+    assert.match(renderPage(route, keys.ada, data), new RegExp(phrase));
+  }
+  const navigationHtml = renderNavigation(parseRoute("#/search"), keys.ada);
+  for (const destination of ["Search", "Discover", "Friends of Friends"]) assert.match(navigationHtml, new RegExp(destination));
+});
+
+test("query normalization and route decoding fail safely", () => {
+  assert.equal(normalizeQuery("  ADA   · SYNTHETIC "), "ada · synthetic");
+  assert.deepEqual(parseSearchQuery("/search?q=Local%20Builders"), { query: "local builders", valid: true });
+  assert.deepEqual(parseSearchQuery("/search?q=%E0%A4%A"), { query: "", valid: false });
+  assert.deepEqual(parseSearchQuery(`/search?q=${keys.ada}`), { query: "", valid: false });
+  assert.equal(normalizeQuery(`notes ${keys.ada}`), "");
+  assert.equal(normalizeQuery(`${"ordinary ".repeat(20)}${keys.ada}`), "");
+  assert.deepEqual(parseSearchQuery(`/search?q=${encodeURIComponent(`notes ${keys.ada}`)}`), { query: "", valid: false });
+  const malformed = renderPage(parseRoute("#/search?q=%E0%A4%A"), keys.ada, data);
+  assert.match(malformed, /could not be read safely/);
+  assert.doesNotMatch(malformed, new RegExp(keys.ada));
+});
+
+test("participant search filters policy before names, key prefixes, counts, and routes", () => {
+  const full = { ...data, viewer, viewerStatus: AccessStatus.OPERATOR };
+  const limited = { ...full, viewerStatus: AccessStatus.LIMITED, statuses: { ...statuses, [viewer.id]: AccessStatus.LIMITED } };
+  assert.deepEqual(searchPeople(full, "Ada · synthetic").map((item) => item.id), [keys.ada]);
+  assert.deepEqual(searchPeople(full, keys.cy.slice(0, 10)).map((item) => item.id), [keys.cy]);
+  for (const query of ["Cy", "cY · SYN", keys.cy.slice(0, 10)]) assert.deepEqual(searchPeople(limited, query), []);
+  const before = searchAll(limited, "synthetic").people.length;
+  const extraDenied = { ...limited, participants: [...participants, { id: "e".repeat(64), publicKey: "e".repeat(64), displayName: "Synthetic hidden" }] };
+  assert.equal(searchAll(extraDenied, "synthetic").people.length, before);
+  const html = renderSearch(limited, "Cy");
+  for (const identity of [friendOfFriend.displayName, friendOfFriend.publicKey, shortKey(friendOfFriend.publicKey)]) assert.equal(html.includes(identity), false);
+  assert.match(html, /No local results/);
+});
+
+test("post and group search consume only canonical visible collections", () => {
+  const limited = { ...data, viewer, viewerStatus: AccessStatus.LIMITED, statuses: { ...statuses, [viewer.id]: AccessStatus.LIMITED } };
+  assert.deepEqual(searchPosts(limited, "social layer").map((item) => item.id), [notes[0].id]);
+  assert.deepEqual(searchPosts(limited, "Limited access").map((item) => item.id), []);
+  const deniedPostHtml = renderSearch(limited, "Limited access");
+  for (const value of [notes[1].id, notes[1].body, friendOfFriend.displayName]) assert.equal(deniedPostHtml.includes(value), false);
+  assert.deepEqual(searchGroups(limited, "Local Builders").map((item) => item.id), ["group-01"]);
+  assert.deepEqual(searchGroups(limited, "Design Study"), []);
+  assert.doesNotMatch(renderSearch(limited, "Design Study"), /group-02|synthetic members/);
+});
+
+test("search ranking is deterministic and viewer switching recomputes without authority mutation", () => {
+  const snapshot = structuredClone(statuses);
+  const common = { ...data, viewer, viewerStatus: AccessStatus.OPERATOR };
+  const first = searchPeople(common, "synthetic").map((item) => item.id);
+  const second = searchPeople({ ...common, participants: [...participants].reverse() }, "synthetic").map((item) => item.id);
+  assert.deepEqual(first, second);
+  assert.deepEqual(first, [keys.ada, keys.ben, keys.cy]);
+  const route = parseRoute("#/search?q=Cy");
+  assert.match(renderShell(keys.ada, data, route).page, /Cy · synthetic/);
+  assert.match(renderShell(keys.cy, data, route).page, /Cy · synthetic/);
+  const limitedAda = { ...data, statuses: { ...statuses, [keys.ada]: AccessStatus.LIMITED } };
+  assert.doesNotMatch(renderShell(keys.ada, limitedAda, route).page, /Cy · synthetic/);
+  assert.deepEqual(statuses, snapshot);
+});
+
+test("local Discovery respects canonical visibility and makes honest non-claims", () => {
+  const full = { ...data, viewer, viewerStatus: AccessStatus.OPERATOR };
+  const limited = { ...full, viewerStatus: AccessStatus.LIMITED, statuses: { ...statuses, [viewer.id]: AccessStatus.LIMITED } };
+  assert.deepEqual(deriveDiscovery(full).people.map((person) => person.id), [keys.cy]);
+  assert.deepEqual(deriveDiscovery(limited).people, []);
+  const html = renderLocalDiscovery(limited);
+  for (const identity of [friendOfFriend.displayName, friendOfFriend.publicKey, shortKey(friendOfFriend.publicKey)]) assert.equal(html.includes(identity), false);
+  for (const phrase of ["Local synthetic discovery", "not personalized ML", "live network trend", "popularity measure", "trust score", "cannot grant covenant status or authority"]) assert.match(html, new RegExp(phrase, "i"));
+});
+
+test("Discovery preserves canonical feed recency for multiple local posts", () => {
+  const localOne = Object.freeze({ ...notes[0], id: "local-1", authorId: keys.ada, body: "Older local post", timestamp: "Just now · local" });
+  const localTwo = Object.freeze({ ...notes[0], id: "local-2", authorId: keys.ada, body: "Newest local post", timestamp: "Just now · local" });
+  const common = { ...data, notes: [localTwo, localOne, ...notes], viewer, viewerStatus: AccessStatus.OPERATOR };
+  assert.deepEqual(deriveDiscovery(common).posts.map((post) => post.id), ["local-2", "local-1"]);
+  assert.match(renderLocalDiscovery(common), /Newest local post[\s\S]*Older local post/);
+});
+
+test("Search and Discovery sources avoid persistence, network, and authority paths", async () => {
+  const sources = await Promise.all(["search.mjs", "discovery.mjs"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8")));
+  for (const source of sources) assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB|document\.cookie|WebSocket|fetch\(|createNostrBoundary|deriveAccess|\.publish\(|Math\.random/i);
+  const css = await readFile(new URL("../web/styles.css", import.meta.url), "utf8");
+  for (const selector of [".search-bar", ".search-group", ".discovery-grid"]) assert.match(css, new RegExp(selector.replace(".", "\\.")));
+  assert.match(css, /@media\(max-width:720px\)[\s\S]*\.search-product[\s\S]*overflow:hidden/);
+  assert.match(css, /\.mobile-nav\{position:fixed;bottom:0/);
 });
