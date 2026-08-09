@@ -3,13 +3,15 @@ import { participants, statuses, edges, notes } from "../src/fixtures.mjs";
 import { RelationshipContext, relationshipContext, visibilityDecision } from "../src/visibility.mjs";
 import { prependLocalPost, renderContextSummary, renderFeed as renderSocialFeed, renderHome, toggleReaction } from "./feed.mjs";
 import { renderCircle } from "./circle.mjs";
+import { appendLocalMessage, initializeLocalMessages, renderMessages } from "./messages.mjs";
+import { renderGroups } from "./groups.mjs";
 
 const fixtureData = Object.freeze({ participants, statuses, edges, notes });
 const validStatuses = new Set(["limited", "full", "operator"]);
-const pageRoutes = Object.freeze({ home: "/home", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", trust: "/trust" });
+const pageRoutes = Object.freeze({ home: "/home", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", trust: "/trust" });
 const navigation = Object.freeze([
   ["home", "Home"], ["circle", "My Circle"], ["friends", "Friends"],
-  ["discovery", "Friends of Friends"], ["profile", "Profile"], ["trust", "Trust"]
+  ["discovery", "Friends of Friends"], ["messages", "Messages"], ["groups", "Groups"], ["profile", "Profile"], ["trust", "Trust"]
 ]);
 
 export const shortKey = (key) => `${key.slice(0, 8)}…${key.slice(-6)}`;
@@ -22,6 +24,8 @@ export function parseRoute(hash = "") {
   if (page) return Object.freeze({ page, path });
   const match = path.match(/^\/profile\/([0-9a-fA-F]{64})$/);
   if (match) return Object.freeze({ page: "profile", path, subjectId: match[1].toLowerCase() });
+  const localMatch = path.match(/^\/(messages|groups)\/([a-z0-9]+(?:-[a-z0-9]+)*)$/);
+  if (localMatch) return Object.freeze({ page: localMatch[1], path, localId: localMatch[2] });
   return Object.freeze({ page: "not-found", path: "/not-found" });
 }
 
@@ -107,12 +111,14 @@ export function renderPage(route, viewerId, data = fixtureData, ui = Object.free
   const viewer = resolveViewer(viewerId, data);
   const viewerStatus = viewer && validStatuses.has(data.statuses[viewer.id]) ? data.statuses[viewer.id] : undefined;
   const common = { viewer, viewerStatus, ...data };
-  const headings = { home: "Home", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", profile: "Participant Profile", trust: "Trust" };
+  const headings = { home: "Home", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", messages: "Messages", groups: "Groups", profile: "Participant Profile", trust: "Trust" };
   let content;
   if (route.page === "home") return `<section class="page home-page">${renderHome(common, ui.reactions)}</section>`;
   else if (route.page === "circle") content = renderCircle(common);
   else if (route.page === "friends") content = renderConnections(common);
   else if (route.page === "discovery") content = renderDiscovery(common);
+  else if (route.page === "messages") content = renderMessages(common, route.localId, ui.messages);
+  else if (route.page === "groups") content = renderGroups(common, route.localId);
   else if (route.page === "profile") content = renderProfile({ ...common, subjectId: route.subjectId ?? viewer?.id });
   else if (route.page === "trust") content = `<article class="card trust-copy"><p><strong>${viewerStatus ?? "Restricted"} access</strong> · read-only external assertion</p><p>Social consumes HODLXXI runtime/CRT trust assertions; it does not issue or upgrade them.</p><p>Friendship does not prove covenant trust. No trust score is calculated.</p></article>${renderTrust(common)}`;
   else return `<section class="page"><p class="eyebrow">Navigation</p><h1>Page unavailable</h1>${restrictedCard("Route not found", "Use the application navigation to choose a local surface.")}</section>`;
@@ -132,10 +138,11 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
   let viewerId = data.participants[1]?.id ?? data.participants[0]?.id;
   let localNotes = [];
   let reactions = Object.freeze({});
+  let localMessages = initializeLocalMessages();
   const paint = () => {
     const route = parseRoute(browser?.location?.hash || "#/home");
     const activeData = { ...data, notes: [...localNotes, ...data.notes] };
-    const shell = renderShell(viewerId, activeData, route, { reactions });
+    const shell = renderShell(viewerId, activeData, route, { reactions, messages: localMessages });
     root.querySelector("#desktop-navigation").innerHTML = renderNavigation(route, viewerId);
     root.querySelector("#mobile-navigation").innerHTML = renderNavigation(route, viewerId, "mobile-nav");
     root.querySelector("#app-page").innerHTML = shell.page;
@@ -146,8 +153,16 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
     root.body?.setAttribute("data-access", shell.viewerStatus ?? "restricted");
   };
   selector.value = viewerId;
-  selector.addEventListener("change", (event) => { viewerId = selectViewer(viewerId, event.target.value, data); selector.value = viewerId; paint(); });
+  selector.addEventListener("change", (event) => { viewerId = selectViewer(viewerId, event.target.value, data); localMessages = initializeLocalMessages(); selector.value = viewerId; paint(); });
   root.addEventListener("submit", (event) => {
+    if (event.target.id === "message-composer") {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      const viewer = resolveViewer(viewerId, data);
+      localMessages = appendLocalMessage(localMessages, { conversationId: formData.get("conversation"), viewer, viewerStatus: data.statuses[viewer?.id], participants: data.participants, edges: data.edges, body: formData.get("body") });
+      paint();
+      return;
+    }
     if (event.target.id !== "local-composer") return;
     event.preventDefault();
     const formData = new FormData(event.target);
