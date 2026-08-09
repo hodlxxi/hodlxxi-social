@@ -1,4 +1,5 @@
 import { relationshipContext, visibilityDecision } from "../src/visibility.mjs";
+import { renderEmptyState, renderRestrictedState } from "./components.mjs";
 
 const freezeMessages = (items) => Object.freeze(items.map((item) => Object.freeze({ ...item })));
 export const conversations = Object.freeze([
@@ -13,7 +14,7 @@ export const conversations = Object.freeze([
 
 const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const byId = (participants) => new Map(participants.map((person) => [person.id, person]));
-const restricted = (detail = "This local conversation is unavailable under the social visibility policy.") => `<article class="message-restricted"><strong>Conversation restricted</strong><p>${detail}</p></article>`;
+const restricted = () => renderRestrictedState("conversation");
 
 export function conversationAccess({ conversationId, viewer, viewerStatus, participants, edges, items = conversations }) {
   const conversation = items.find((item) => item.id === conversationId);
@@ -47,7 +48,7 @@ function conversationName(access, viewer) {
 
 function renderList(input, selectedId) {
   const available = visibleConversations(input);
-  if (!available.length) return restricted("No conversations are available for this viewer.");
+  if (!available.length) return renderEmptyState("conversations");
   return available.map((access) => {
     const unread = access.conversation.unreadFor.includes(input.viewer.id);
     const name = conversationName(access, input.viewer);
@@ -68,13 +69,15 @@ function renderTranscript(access, viewer, state) {
 
 export function renderMessages(input, selectedId, state = initializeLocalMessages(input.items ?? conversations)) {
   const list = renderList(input, selectedId);
-  let detail = `<section class="message-empty"><h2>Choose a conversation</h2><p>Select an accessible synthetic conversation from the local list.</p></section>`;
+  let detail = renderEmptyState("conversation-selection");
   if (selectedId) {
     const access = conversationAccess({ ...input, conversationId: selectedId });
     if (!access.visible) detail = restricted();
     else {
       const name = conversationName(access, input.viewer);
-      detail = `<section class="conversation-detail"><header><p class="eyebrow">Selected conversation</p><h2>${escapeHtml(name)}</h2><p class="meta">Current viewer: ${escapeHtml(input.viewer.displayName)}</p></header><div class="message-transcript">${renderTranscript(access, input.viewer, state)}</div><form id="message-composer" class="message-composer"><label for="message-body">Local demo message</label><textarea id="message-body" name="body" maxlength="500" required placeholder="Write an in-memory demo message"></textarea><input type="hidden" name="conversation" value="${access.conversation.id}"><button type="submit">Add locally</button></form></section>`;
+      const other = access.members.find((person) => person.id !== input.viewer.id);
+      const heading = other ? `<a class="person-link" href="#/profile/${other.id}">${escapeHtml(name)}</a>` : escapeHtml(name);
+      detail = `<section class="conversation-detail"><header><p class="eyebrow">Selected conversation</p><h2>${heading}</h2><p class="meta">Current viewer: ${escapeHtml(input.viewer.displayName)}</p></header><div class="message-transcript">${renderTranscript(access, input.viewer, state)}</div><form id="message-composer" class="message-composer"><label for="message-body">Local demo message</label><textarea id="message-body" name="body" maxlength="500" required placeholder="Write an in-memory demo message"></textarea><input type="hidden" name="conversation" value="${access.conversation.id}"><button type="submit">Add locally</button></form></section>`;
     }
   }
   return `<section class="messages-product"><div class="local-disclosure"><strong>Local demo messaging</strong><span>Messages are not transported and not encrypted. Nothing is delivered or persisted.</span></div><div class="split-surface"><aside class="surface-list" aria-label="Accessible local conversations">${list}</aside><div class="surface-detail">${detail}</div></div><p class="notice">Messaging activity is not trust or status and does not grant authentication or protocol authority.</p></section>`;

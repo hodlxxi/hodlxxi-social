@@ -1,4 +1,5 @@
 import { relationshipContext, visibilityDecision } from "../src/visibility.mjs";
+import { renderEmptyState, renderRestrictedState } from "./components.mjs";
 
 export const groups = Object.freeze([
   Object.freeze({ id: "group-01", title: "Local Builders", description: "A synthetic space for product-shell notes.", memberIds: Object.freeze(["a".repeat(64), "b".repeat(64), "c".repeat(64)]), activity: "Today · Interface boundaries reviewed locally" }),
@@ -6,7 +7,7 @@ export const groups = Object.freeze([
 ]);
 
 const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
-const restricted = (detail = "This local group is unavailable for the current viewer.") => `<article class="group-restricted"><strong>Group restricted</strong><p>${detail}</p></article>`;
+const restricted = () => renderRestrictedState("group");
 
 export function groupAccess({ groupId, viewer, viewerStatus, participants, edges, items = groups }) {
   const group = items.find((item) => item.id === groupId);
@@ -28,14 +29,14 @@ export function visibleGroups(input) {
 
 function renderMembers(access) {
   return access.members.map((member) => member.visible
-    ? `<li class="group-member"><span class="avatar" aria-hidden="true">${escapeHtml(member.person.displayName[0])}</span><strong>${escapeHtml(member.person.displayName)}</strong></li>`
+    ? `<li class="group-member"><span class="avatar" aria-hidden="true">${escapeHtml(member.person.displayName[0])}</span><a class="person-link" href="#/profile/${member.person.id}"><strong>${escapeHtml(member.person.displayName)}</strong></a></li>`
     : `<li class="group-member restricted-member"><strong>Restricted participant</strong><span>Identity unavailable under visibility policy</span></li>`).join("");
 }
 
 export function renderGroups(input, selectedId) {
   const available = visibleGroups(input);
-  const list = available.length ? available.map(({ group }) => `<a class="group-row${selectedId === group.id ? " selected" : ""}" href="#/groups/${group.id}"${selectedId === group.id ? ' aria-current="page"' : ""}><strong>${escapeHtml(group.title)}</strong><span>${group.memberIds.length} synthetic members</span><small>${escapeHtml(group.description)}</small></a>`).join("") : restricted("No local groups are available for this viewer.");
-  let detail = `<section class="group-empty"><h2>Choose a group</h2><p>Select an accessible synthetic group from the local list.</p></section>`;
+  const list = available.length ? available.map(({ group }) => `<a class="group-row${selectedId === group.id ? " selected" : ""}" href="#/groups/${group.id}"${selectedId === group.id ? ' aria-current="page"' : ""}><strong>${escapeHtml(group.title)}</strong><span>${group.memberIds.length} synthetic members</span><small>${escapeHtml(group.description)}</small></a>`).join("") : renderEmptyState("groups");
+  let detail = renderEmptyState("group-selection");
   if (selectedId) {
     const access = groupAccess({ ...input, groupId: selectedId });
     detail = access.visible ? `<section class="group-detail"><p class="eyebrow">Local group detail</p><h2>${escapeHtml(access.group.title)}</h2><p>${escapeHtml(access.group.description)}</p><dl><div><dt>Members</dt><dd>${access.group.memberIds.length} synthetic</dd></div><div><dt>Recent local activity</dt><dd>${escapeHtml(access.group.activity)}</dd></div></dl><h3>Visible members</h3><ul class="group-members">${renderMembers(access)}</ul></section>` : restricted();

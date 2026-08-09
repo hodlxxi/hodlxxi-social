@@ -1,6 +1,7 @@
 import { relationshipContext, visibilityDecision } from "../src/visibility.mjs";
 import { visibleFeed } from "./feed.mjs";
 import { visibleGroups } from "./groups.mjs";
+import { renderEmptyState, renderUnavailableState } from "./components.mjs";
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const shortKey = (key) => `${key.slice(0, 8)}…${key.slice(-6)}`;
@@ -81,9 +82,9 @@ function section(title, items, render) {
 export function renderSearch(input, queryValue, queryValid = true) {
   const results = searchAll(input, queryValue);
   const form = `<form id="local-search" class="search-bar"><label class="sr-only" for="search-query">Search local synthetic content</label><input id="search-query" name="q" value="${escapeHtml(results.query)}" maxlength="120" autocomplete="off" placeholder="Search people, posts, and groups"><button type="submit">Search</button>${results.query ? '<a href="#/search" aria-label="Clear search">Clear</a>' : ""}</form>`;
-  if (!queryValid) return `<section class="search-product">${form}<article class="search-state"><strong>Search query unavailable</strong><p>That local URL query could not be read safely. Try a plain, non-secret search.</p></article></section>`;
-  if (!results.query) return `<section class="search-product">${form}<article class="search-state"><strong>Search this local demo</strong><p>Find permitted participants, visible posts, and accessible synthetic groups. Search history is not stored.</p></article></section>`;
+  if (!queryValid) return `<section class="search-product">${form}${renderUnavailableState("search")}</section>`;
+  if (!results.query) return `<section class="search-product">${form}${renderEmptyState("search")}</section>`;
   const count = results.people.length + results.posts.length + results.groups.length;
-  if (!count) return `<section class="search-product">${form}<article class="search-state"><strong>No local results</strong><p>No permitted content matched this query.</p></article></section>`;
+  if (!count) return `<section class="search-product">${form}${renderEmptyState("search-results")}</section>`;
   return `<section class="search-product">${form}<p class="search-summary">${count} permitted local result${count === 1 ? "" : "s"}</p><div class="search-results">${section("People", results.people, ({ person }) => `<a class="search-card search-person" href="#/profile/${person.id}"><span class="avatar" aria-hidden="true">${escapeHtml(person.displayName[0])}</span><span><strong>${escapeHtml(person.displayName)}</strong><small>${shortKey(person.publicKey)}</small></span></a>`)}${section("Posts", results.posts, ({ post, author }) => `<a class="search-card" href="#/home"><strong>${escapeHtml(author.displayName)}</strong><p>${escapeHtml(post.body)}</p><small>${escapeHtml(post.timestamp)}</small></a>`)}${section("Groups", results.groups, ({ group }) => `<a class="search-card" href="#/groups/${group.id}"><strong>${escapeHtml(group.title)}</strong><p>${escapeHtml(group.description)}</p><small>Accessible synthetic group</small></a>`)}</div><p class="notice">Results use local fixture visibility only. They are not trust, reputation, or popularity rankings.</p></section>`;
 }

@@ -1,5 +1,6 @@
 import { AccessStatus, EdgeType } from "../src/domain.mjs";
 import { RelationshipContext, relationshipContext, visibilityDecision } from "../src/visibility.mjs";
+import { renderRestrictedState } from "./components.mjs";
 
 const statusValues = new Set(Object.values(AccessStatus));
 const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
@@ -67,7 +68,7 @@ function restrictedNode(node) {
 
 export function renderCircle({ viewer, viewerStatus, participants, edges }) {
   const graph = deriveCircleGraph({ viewer, viewerStatus, participants, edges });
-  if (!graph.available) return '<article class="circle-restricted restricted"><strong>Circle unavailable</strong><p class="meta">A valid synthetic viewer and access assertion are required.</p></article>';
+  if (!graph.available) return renderRestrictedState("circle");
   const trustMarkers = graph.trustEdges.filter((edge) => edge.restricted).map((edge) => `<g class="trust-marker" transform="translate(${edge.to.x} ${edge.to.y})" aria-label="Restricted sponsor-trust relation"><rect x="-54" y="-18" width="108" height="36" rx="18"/><text text-anchor="middle" y="5">Sponsor-trust</text></g>`).join("");
   const nodes = graph.nodes.map((node) => node.kind === "restricted" ? restrictedNode(node) : participantNode(node)).join("");
   const { direct, visibleReach, restrictedReach, sponsorTrust } = graph.summary;
