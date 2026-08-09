@@ -17,3 +17,13 @@ One read owns one WebSocket. It validates the public filter through the canonica
 The transport parses only the relay envelope. Returned event objects are still untrusted and must pass `NostrPublicReadAdapter` and `src/nostr.mjs` validation before minimized Social records exist. Relay data cannot provide `READ_EXTERNAL_AUTHORITY`, grant Full or Operator, replace HODLXXI/CRT assertions, or reach rendering as raw relay objects. Tests inject a deterministic fake WebSocket and make no live connection.
 
 Default live mode, relay discovery, relay pools, reconnect, persistent subscriptions, production relay selection, publishing, signing, DMs, encryption, authentication, NIP-07, NIP-44, NIP-59, NIP-65, and a live HODLXXI runtime transport are not implemented.
+
+## V1.5 developer-only manual probe
+
+`scripts/nostr-relay-probe.mjs` is a manual, one-shot developer harness. Every invocation requires a caller-supplied `wss://` relay and kind `0` or `1`; an optional canonical author key narrows the filter. The event limit is bounded from 1 through 10 and the timeout from 250 through 30000 milliseconds. No relay is built in, inferred from an environment or hostname, discovered, selected by the product, or persisted.
+
+The probe-local transport facade preserves the existing adapter contract while narrowing its actual request to the explicit single kind, optional author, and limit. The path is the existing `WebSocketNostrReadTransport`, then `NostrPublicReadAdapter`, then canonical `src/nostr.mjs` mapping. One invocation performs one read and exits. There is no reconnect, pool, daemon, background subscription, publishing, signing, private-key input, AUTH handling, encryption, DM support, or authority lookup.
+
+Human and explicit `--json` output contain only the relay, requested filter, bounded counts, completion reason, bounded elapsed time, and minimized normalized profile or note diagnostics. Raw frames, arbitrary relay fields, tags, signatures, and unknown metadata are not printed. Empty reads complete successfully as `zero-events`; argument, transport, timeout, malformed-result, and canonical-validation failures have deterministic nonzero categories. Automated tests inject the transport and adapter seams and do not connect to the internet.
+
+Successful probe output means “a public Nostr relay read succeeded and accepted events passed current validation.” It does not verify HODLXXI membership, Full or Operator status, CRT, identity ownership, relay trust, or content trust. It does not establish legal identity, covenant trust, or any HODLXXI authority.
