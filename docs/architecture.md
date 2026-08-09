@@ -1,6 +1,6 @@
 # Architecture
 
-## Implemented through V1.3
+## Implemented through V1.6
 
 The dependency direction is `explicitly selected sources → source validation and normalization → composition root → Social data service → visibility/access projection → web UI`. Canonical identity, access, visibility, and Nostr validation remain in `src/domain.mjs`, `src/visibility.mjs`, and `src/nostr.mjs`; adapters do not import rendering code.
 
@@ -18,8 +18,12 @@ CRT is a separately injected external read-only authority boundary. `HodlxxiAuth
 
 Demo posts, reactions, messages, and notification read choices remain local ephemeral browser state. `LOCAL_EPHEMERAL_WRITES` describes that product behavior only; it is not external publication.
 
+V1.6 adds only the explicit development dependency path `web/dev-live.html → web/dev-live.mjs → src/dev/live-social-composition.mjs → WebSocketNostrReadTransport → NostrPublicReadAdapter → composition root → SocialDataService`. The helper requires a caller-supplied relay, applies a maximum of 10 events and 5-second transport timeouts, injects no authority adapter, and returns one normalized snapshot. The browser renderer displays normalized note fields with text DOM operations and retains relay selection and results only in page memory. A manual action owns one read; failures and zero events are explicit, with no synthetic fallback, reconnect, polling, or background connection.
+
+The normal dependency path is unchanged: `web/index.html → web/app.mjs → SyntheticSocialAdapter plus fixture authority → composition root → SocialDataService`. It does not import the dev helper, WebSocket transport, or Nostr adapter, so opening the normal application cannot select or contact a relay. The two visible source badges on the dev page distinguish real public feed data from the unauthenticated local demo viewer and unavailable live authority.
+
 ## Not implemented
 
-A future deployment may inject production relay or runtime reads, but live relay selection, live HODLXXI runtime selection, environment-based configuration, and automatic production detection or network connection are not implemented. Authentication, signing, publishing, DMs, encryption, NIP-07, NIP-44, NIP-59, private keys, CRT issuance, covenant/Bitcoin-chain validation, sponsor or status mutation, HODLXXI writes, and production deployment are also not implemented.
+A future deployment may inject production relay or runtime reads, but production live mode, automatic source selection, relay discovery or pools, reconnect, persistent subscriptions, polling, personalized feeds, live HODLXXI runtime selection, environment-based configuration, and automatic production detection are not implemented. Authentication, signing, publishing, DMs, encryption, NIP-07, NIP-44, NIP-59, private keys, CRT issuance, covenant/Bitcoin-chain validation, sponsor or status mutation, HODLXXI writes, persistence, and production deployment are also not implemented.
 
-There is no active relay, built-in WebSocket or HTTP/RPC connector, production URL, database, persistence, environment-secret access, signing, publication, private-key handling, custody, Bitcoin spending, Lightning payment, status issuance, deployment authority, or dependency on Universal-Bitcoin-Identity-Layer.
+There is no built-in relay hostname, automatic connection, generic HTTP/RPC connector, production URL, database, persistence, environment-secret access, signing, publication, private-key handling, custody, Bitcoin spending, Lightning payment, status issuance, deployment authority, or dependency on Universal-Bitcoin-Identity-Layer. The bounded WebSocket reader is activated only by the explicit V1.5 probe or V1.6 development page.
