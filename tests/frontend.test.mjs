@@ -8,6 +8,8 @@ import { Audience, audienceDecision, prependLocalPost, renderComposer, renderCon
 import { deriveCircleGraph, renderCircle, ringLayout } from "../web/circle.mjs";
 import { appendLocalMessage, conversationAccess, conversations, initializeLocalMessages, renderMessages, visibleConversations } from "../web/messages.mjs";
 import { groupAccess, groups, renderGroups } from "../web/groups.mjs";
+import { deriveNotifications, initializeNotificationState, markAllNotificationsRead, markNotificationRead, notifications, renderNotifications, safeNotificationRoute, unreadCount, visibleUnreadCount } from "../web/notifications.mjs";
+import { deriveActivity, renderActivity } from "../web/activity.mjs";
 
 const data = Object.freeze({ participants, statuses, edges, notes });
 const viewer = participants.find((person) => person.id === keys.ada);
@@ -469,4 +471,90 @@ test("Messages and Groups responsive styles preserve mobile bottom navigation", 
   for (const selector of [".split-surface", ".conversation-row.selected", ".conversation-row.unread", ".message-transcript", ".message-composer", ".group-members"]) assert.match(css, new RegExp(selector.replace(".", "\\.")));
   assert.match(css, /@media\(max-width:720px\)[\s\S]*\.surface-list\{display:flex/);
   assert.match(css, /\.mobile-nav\{position:fixed;bottom:0/);
+});
+
+test("Notifications and Activity routes render and navigation carries unread state", () => {
+  const state = initializeNotificationState();
+  assert.equal(parseRoute("#/notifications").page, "notifications");
+  assert.equal(parseRoute("#/activity").page, "activity");
+  assert.match(renderPage(parseRoute("#/notifications"), keys.ada, data, { notificationState: state }), /Local demo notifications/);
+  assert.match(renderPage(parseRoute("#/activity"), keys.ada, data, { reactions: {} }), /Local synthetic activity/);
+  const desktop = renderNavigation(parseRoute("#/notifications"), keys.ada, "nav-links", unreadCount(state));
+  const mobile = renderNavigation(parseRoute("#/home"), keys.ada, "mobile-nav", unreadCount(state));
+  for (const html of [desktop, mobile]) {
+    assert.match(html, /Notifications/);
+    assert.match(html, /Activity/);
+    assert.match(html, /3 unread local notifications/);
+  }
+});
+
+test("notification read helpers are deterministic immutable local state", () => {
+  const initial = initializeNotificationState();
+  const reset = initializeNotificationState();
+  assert.notEqual(initial, reset);
+  assert.deepEqual(initial, reset);
+  assert.equal(unreadCount(initial), 3);
+  const oneRead = markNotificationRead(initial, "local-notice-friend");
+  assert.equal(unreadCount(oneRead), 2);
+  assert.equal(initial["local-notice-friend"], true);
+  const allRead = markAllNotificationsRead(oneRead);
+  assert.equal(unreadCount(allRead), 0);
+  assert.equal(unreadCount(initial), 3);
+  assert.deepEqual(notifications.map((item) => item.unread), [true, true, false, true, false]);
+});
+
+test("Limited notifications render denied identity generically with no route or metadata", () => {
+  const limited = { ...data, viewer, viewerStatus: AccessStatus.LIMITED };
+  const html = renderNotifications(limited, initializeNotificationState());
+  assert.match(html, /Restricted network activity/);
+  assert.equal((html.match(/Restricted network activity/g) ?? []).length, 1);
+  for (const leaked of [friendOfFriend.displayName, friendOfFriend.publicKey, "local-notice-reply"]) assert.equal(html.includes(leaked), false);
+  assert.doesNotMatch(html, />C<\/span>|aria-hidden="true">C</);
+  assert.doesNotMatch(html, new RegExp(`profile/${keys.cy}|data-notification=.[^\"]*reply|aria-label=.[^\"]*Cy|title=.[^\"]*Cy`, "i"));
+  const denied = notifications.find((item) => item.actorId === keys.cy);
+  assert.equal(safeNotificationRoute(denied, limited), undefined);
+  assert.deepEqual(deriveNotifications(limited).find((item) => item.restricted), { restricted: true });
+  const deniedUnread = Object.freeze({ ...initializeNotificationState(), "local-notice-reply": true });
+  assert.equal(unreadCount(deniedUnread), 4);
+  assert.equal(visibleUnreadCount(limited, deniedUnread), 3);
+  assert.match(renderNotifications(limited, deniedUnread), /3 unread locally/);
+});
+
+test("permitted profile, message, group, and Home notification targets are access-safe", () => {
+  const common = { ...data, viewer, viewerStatus: AccessStatus.OPERATOR };
+  const routes = Object.fromEntries(notifications.map((item) => [item.kind, safeNotificationRoute(item, common)]));
+  assert.equal(routes.friend, `#/profile/${keys.ada}`);
+  assert.equal(routes.reaction, "#/home");
+  assert.equal(routes.message, "#/messages/chat-01");
+  assert.equal(routes.group, "#/groups/group-01");
+  const limitedCy = { ...data, viewer: friendOfFriend, viewerStatus: AccessStatus.LIMITED };
+  const inaccessibleMessage = notifications.find((item) => item.kind === "message");
+  assert.equal(safeNotificationRoute(inaccessibleMessage, limitedCy), undefined);
+});
+
+test("Activity is viewer-scoped local summary with authority non-claims", () => {
+  const snapshot = structuredClone(statuses);
+  const common = { ...data, statuses: { ...statuses, [viewer.id]: AccessStatus.LIMITED }, viewer, viewerStatus: AccessStatus.LIMITED };
+  const derived = deriveActivity(common, { [notes[0].id]: true });
+  assert.deepEqual(derived.map((item) => item.label), ["Recent posts", "Your reactions", "Direct-friend activity", "Messages", "Groups"]);
+  assert.equal(derived.find((item) => item.label === "Your reactions").value, 1);
+  const deniedReaction = deriveActivity(common, { [notes[1].id]: true, "missing-post": true });
+  assert.equal(deniedReaction.find((item) => item.label === "Your reactions").value, 0);
+  const html = renderActivity(common, { [notes[0].id]: true });
+  for (const phrase of ["Local synthetic activity", "not live network telemetry", "not active-user, transaction, trust, or reputation scores", "cannot change externally derived CRT status", "grant Operator authority"]) assert.match(html, new RegExp(phrase, "i"));
+  assert.deepEqual(statuses, snapshot);
+});
+
+test("notification and activity sources avoid persistence, network, and authority mutation surfaces", async () => {
+  const sources = await Promise.all(["notifications.mjs", "activity.mjs"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8")));
+  for (const source of sources) assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB|document\.cookie|WebSocket|fetch\(|createNostrBoundary|deriveAccess|private.?key|\.publish\(/i);
+  const notificationHtml = renderNotifications({ ...data, viewer, viewerStatus: AccessStatus.OPERATOR });
+  for (const phrase of ["synthetic", "not live network telemetry", "do not prove covenant trust", "grant Full or Operator status", "externally derived and read-only"]) assert.match(notificationHtml, new RegExp(phrase, "i"));
+});
+
+test("Notifications and Activity styles preserve readable scroll-safe mobile navigation", async () => {
+  const css = await readFile(new URL("../web/styles.css", import.meta.url), "utf8");
+  for (const selector of [".nav-badge", ".notification-row.unread", ".notification-toolbar", ".activity-row"]) assert.match(css, new RegExp(selector.replace(".", "\\.")));
+  assert.match(css, /@media\(max-width:720px\)[\s\S]*\.mobile-nav\{justify-content:flex-start;max-width:100vw\}/);
+  assert.match(css, /\.mobile-nav\{position:fixed;bottom:0[\s\S]*overflow-x:auto/);
 });

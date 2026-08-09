@@ -5,13 +5,15 @@ import { prependLocalPost, renderContextSummary, renderFeed as renderSocialFeed,
 import { renderCircle } from "./circle.mjs";
 import { appendLocalMessage, initializeLocalMessages, renderMessages } from "./messages.mjs";
 import { renderGroups } from "./groups.mjs";
+import { initializeNotificationState, markAllNotificationsRead, markNotificationRead, renderNotifications, visibleUnreadCount } from "./notifications.mjs";
+import { renderActivity } from "./activity.mjs";
 
 const fixtureData = Object.freeze({ participants, statuses, edges, notes });
 const validStatuses = new Set(["limited", "full", "operator"]);
-const pageRoutes = Object.freeze({ home: "/home", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", trust: "/trust" });
+const pageRoutes = Object.freeze({ home: "/home", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust" });
 const navigation = Object.freeze([
   ["home", "Home"], ["circle", "My Circle"], ["friends", "Friends"],
-  ["discovery", "Friends of Friends"], ["messages", "Messages"], ["groups", "Groups"], ["profile", "Profile"], ["trust", "Trust"]
+  ["discovery", "Friends of Friends"], ["messages", "Messages"], ["groups", "Groups"], ["notifications", "Notifications"], ["activity", "Activity"], ["profile", "Profile"], ["trust", "Trust"]
 ]);
 
 export const shortKey = (key) => `${key.slice(0, 8)}…${key.slice(-6)}`;
@@ -100,10 +102,11 @@ export function renderTrust({ viewer, viewerStatus, participants, edges }) {
   }).join("");
 }
 
-export function renderNavigation(route, viewerId, className = "nav-links") {
+export function renderNavigation(route, viewerId, className = "nav-links", notificationUnread = 0) {
   return `<nav class="${className}" aria-label="${className === "mobile-nav" ? "Mobile" : "Primary"}">${navigation.map(([page, label]) => {
     const href = routeFor(page, viewerId);
-    return `<a href="${href}"${route.page === page ? ' aria-current="page"' : ""}>${label}</a>`;
+    const badge = page === "notifications" ? `<span class="nav-badge" aria-label="${notificationUnread} unread local notifications">${notificationUnread}</span>` : "";
+    return `<a href="${href}"${route.page === page ? ' aria-current="page"' : ""}>${label}${badge}</a>`;
   }).join("")}</nav>`;
 }
 
@@ -111,7 +114,7 @@ export function renderPage(route, viewerId, data = fixtureData, ui = Object.free
   const viewer = resolveViewer(viewerId, data);
   const viewerStatus = viewer && validStatuses.has(data.statuses[viewer.id]) ? data.statuses[viewer.id] : undefined;
   const common = { viewer, viewerStatus, ...data };
-  const headings = { home: "Home", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", messages: "Messages", groups: "Groups", profile: "Participant Profile", trust: "Trust" };
+  const headings = { home: "Home", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", messages: "Messages", groups: "Groups", notifications: "Notifications", activity: "Activity", profile: "Participant Profile", trust: "Trust" };
   let content;
   if (route.page === "home") return `<section class="page home-page">${renderHome(common, ui.reactions)}</section>`;
   else if (route.page === "circle") content = renderCircle(common);
@@ -119,6 +122,8 @@ export function renderPage(route, viewerId, data = fixtureData, ui = Object.free
   else if (route.page === "discovery") content = renderDiscovery(common);
   else if (route.page === "messages") content = renderMessages(common, route.localId, ui.messages);
   else if (route.page === "groups") content = renderGroups(common, route.localId);
+  else if (route.page === "notifications") content = renderNotifications(common, ui.notificationState);
+  else if (route.page === "activity") content = renderActivity(common, ui.reactions);
   else if (route.page === "profile") content = renderProfile({ ...common, subjectId: route.subjectId ?? viewer?.id });
   else if (route.page === "trust") content = `<article class="card trust-copy"><p><strong>${viewerStatus ?? "Restricted"} access</strong> · read-only external assertion</p><p>Social consumes HODLXXI runtime/CRT trust assertions; it does not issue or upgrade them.</p><p>Friendship does not prove covenant trust. No trust score is calculated.</p></article>${renderTrust(common)}`;
   else return `<section class="page"><p class="eyebrow">Navigation</p><h1>Page unavailable</h1>${restrictedCard("Route not found", "Use the application navigation to choose a local surface.")}</section>`;
@@ -129,7 +134,7 @@ export function renderShell(viewerId, data = fixtureData, route = parseRoute("#/
   const viewer = resolveViewer(viewerId, data);
   const viewerStatus = viewer && validStatuses.has(data.statuses[viewer.id]) ? data.statuses[viewer.id] : undefined;
   const common = { viewer, viewerStatus, ...data };
-  return Object.freeze({ viewerId: viewer?.id, viewerStatus, profile: renderProfile(common), feed: renderSocialFeed(common, ui.reactions), connections: renderConnections(common), discovery: renderDiscovery(common), trust: renderTrust(common), page: renderPage(route, viewerId, data, ui), navigation: renderNavigation(route, viewerId) });
+  return Object.freeze({ viewerId: viewer?.id, viewerStatus, profile: renderProfile(common), feed: renderSocialFeed(common, ui.reactions), connections: renderConnections(common), discovery: renderDiscovery(common), trust: renderTrust(common), page: renderPage(route, viewerId, data, ui), navigation: renderNavigation(route, viewerId, "nav-links", visibleUnreadCount(common, ui.notificationState)) });
 }
 
 export function renderApp(root, data = fixtureData, browser = globalThis.window) {
@@ -139,12 +144,14 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
   let localNotes = [];
   let reactions = Object.freeze({});
   let localMessages = initializeLocalMessages();
+  let notificationState = initializeNotificationState();
   const paint = () => {
     const route = parseRoute(browser?.location?.hash || "#/home");
     const activeData = { ...data, notes: [...localNotes, ...data.notes] };
-    const shell = renderShell(viewerId, activeData, route, { reactions, messages: localMessages });
-    root.querySelector("#desktop-navigation").innerHTML = renderNavigation(route, viewerId);
-    root.querySelector("#mobile-navigation").innerHTML = renderNavigation(route, viewerId, "mobile-nav");
+    const shell = renderShell(viewerId, activeData, route, { reactions, messages: localMessages, notificationState });
+    const unread = visibleUnreadCount({ viewer: resolveViewer(viewerId, activeData), viewerStatus: shell.viewerStatus, ...activeData }, notificationState);
+    root.querySelector("#desktop-navigation").innerHTML = renderNavigation(route, viewerId, "nav-links", unread);
+    root.querySelector("#mobile-navigation").innerHTML = renderNavigation(route, viewerId, "mobile-nav", unread);
     root.querySelector("#app-page").innerHTML = shell.page;
     root.querySelector("#context-profile").innerHTML = renderProfile({ viewer: resolveViewer(viewerId, data), viewerStatus: shell.viewerStatus, subjectId: viewerId, ...data });
     root.querySelector("#context-profile").parentElement.querySelector(".context-summary")?.remove();
@@ -153,7 +160,7 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
     root.body?.setAttribute("data-access", shell.viewerStatus ?? "restricted");
   };
   selector.value = viewerId;
-  selector.addEventListener("change", (event) => { viewerId = selectViewer(viewerId, event.target.value, data); localMessages = initializeLocalMessages(); selector.value = viewerId; paint(); });
+  selector.addEventListener("change", (event) => { viewerId = selectViewer(viewerId, event.target.value, data); localMessages = initializeLocalMessages(); notificationState = initializeNotificationState(); selector.value = viewerId; paint(); });
   root.addEventListener("submit", (event) => {
     if (event.target.id === "message-composer") {
       event.preventDefault();
@@ -172,6 +179,17 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
     paint();
   });
   root.addEventListener("click", (event) => {
+    const action = event.target.closest?.("[data-action]");
+    if (action?.dataset.action === "mark-notification-read") {
+      notificationState = markNotificationRead(notificationState, action.dataset.notification);
+      paint();
+      return;
+    }
+    if (action?.dataset.action === "mark-all-notifications-read") {
+      notificationState = markAllNotificationsRead(notificationState);
+      paint();
+      return;
+    }
     const button = event.target.closest?.('[data-action="react"]');
     if (!button) return;
     reactions = toggleReaction(reactions, button.dataset.note);
