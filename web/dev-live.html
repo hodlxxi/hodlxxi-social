@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>HODLXXI Social — Dev Live Preview</title><link rel="stylesheet" href="./styles.css"></head>
+<body class="dev-live-page">
+  <header class="topbar"><a class="brand" href="./index.html">HODLXXI <span>Social</span></a><div class="status"><i></i> Explicit development preview</div></header>
+  <main class="dev-live-shell">
+    <p class="eyebrow">Developer-only entrypoint</p>
+    <h1>Bounded public feed preview</h1>
+    <div class="dev-live-badges" aria-label="Source truth">
+      <strong class="badge dev-live-source">DEV / LIVE PUBLIC NOSTR DATA</strong>
+      <strong class="badge dev-live-demo">DEMO VIEWER / AUTHORITY NOT LIVE</strong>
+    </div>
+    <p class="notice">The viewer is a local demo identity. Public feed data may be real; authority is not derived from Nostr. This is not authentication, a followed or personalized feed, trusted content, membership, CRT validity, or verified identity.</p>
+    <form id="dev-live-form" class="dev-live-form">
+      <label for="relay-url">Explicit public relay URL</label>
+      <input id="relay-url" name="relay" type="url" inputmode="url" autocomplete="off" required placeholder="wss://…" aria-describedby="relay-help">
+      <label for="event-limit">Maximum events</label>
+      <input id="event-limit" name="limit" type="number" min="1" max="10" value="3" required>
+      <button type="submit">Read once</button>
+      <p id="relay-help" class="meta">No relay is selected or saved automatically. Each action opens one bounded read and then closes it.</p>
+    </form>
+    <section class="dev-live-state" aria-live="polite">
+      <h2>Read state</h2>
+      <p id="dev-live-status">Idle — enter a relay and choose Read once.</p>
+      <p>Selected relay: <span id="dev-live-relay">None</span></p>
+    </section>
+    <section aria-labelledby="dev-live-feed-heading">
+      <h2 id="dev-live-feed-heading">Accepted public notes</h2>
+      <div id="dev-live-feed" class="feed-stack"></div>
+    </section>
+  </main>
+  <footer>Development preview only. Live public Nostr data cannot grant Full or Operator status, CRT validity, sponsor trust, or covenant authority. Relay and results remain in page memory and reset on reload.</footer>
+  <script type="module" src="./dev-live.mjs"></script>
+</body></html>
