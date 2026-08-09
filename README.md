@@ -1,4 +1,4 @@
-# HODLXXI Social V1.4
+# HODLXXI Social V1.5
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
@@ -13,6 +13,22 @@ V1.3 adds a small deterministic composition root. `createComposedSocialDataServi
 V1.4 adds `WebSocketNostrReadTransport`, a dependency-free, explicitly constructed public-read transport. A caller must supply a validated `wss://` relay URL and may inject the WebSocket factory for its runtime. Each `read(filter)` opens one bounded socket, sends one Nostr `REQ`, collects only matching `EVENT` frames until `EOSE` or the configured event limit, sends `CLOSE`, and cleans up. Connection, read, message-size, accumulated-data, and event-count bounds prevent unbounded listening. Offline tests use a deterministic fake WebSocket; canonical validation in `src/nostr.mjs` remains authoritative for every returned event.
 
 This transport is a controlled construction seam, not the application default. `SyntheticSocialAdapter` remains the active application adapter, no relay is selected automatically, and no connection occurs on page load. A live public read exists only when a caller explicitly constructs `WebSocketNostrReadTransport({ relayUrl })` and injects it into `NostrPublicReadAdapter.create({ transport, viewerId })`.
+
+V1.5 adds a developer-only, one-shot public relay probe. It requires an explicit relay and supported kind on every invocation, applies conservative event and timeout bounds, passes returned events through `NostrPublicReadAdapter` and canonical Nostr validation, prints only bounded normalized diagnostics, and exits. It does not change the application adapter or UI.
+
+Run the manual probe after merge with a caller-selected public relay (the relay below is deliberately a placeholder):
+
+```text
+node scripts/nostr-relay-probe.mjs --relay <explicit-wss-relay> --kind <0-or-1> --limit 3 --timeout-ms 5000
+```
+
+Optional `--author <64-hex-public-key>` narrows the request further; `--json` selects sanitized JSON output. The event limit is 1–10 (default 3), and the timeout is 250–30000 milliseconds (default 5000). Exit codes are 2 for arguments or relay configuration, 3 for transport failure, 4 for timeout, 5 for malformed relay results, and 6 for canonical validation failure. A successful read with no events exits successfully with `zero-events`.
+
+Implemented now: a developer-only one-shot public relay probe, explicit relay URL, bounded single-kind filter, bounded output, the canonical Nostr validation pipeline, and deterministic exit behavior.
+
+Not implemented: product live mode, automatic relay selection, persistent relay configuration, relay discovery, relay pools, reconnect, subscriptions or background services, publishing, signing, DMs, encryption, authentication, HODLXXI authority lookup, or deployment.
+
+Successful probe output means “a public Nostr relay read succeeded and accepted events passed current validation.” It does not mean HODLXXI membership, Full or Operator status, CRT, identity ownership, relay trust, or content trust was verified.
 
 Not implemented: default live mode, relay discovery, relay pools, reconnect, persistent subscriptions, publishing, signing, DMs, encryption, authentication, NIP-07, NIP-44, NIP-59, NIP-65, production relay selection, live HODLXXI runtime transport, environment-based configuration, private-key access, HODLXXI authentication, CRT issuance, covenant or chain validation, sponsor/status mutation, writes to HODLXXI, or production deployment. The current viewer remains explicitly injected local state and does not establish key ownership.
 

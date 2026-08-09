@@ -84,10 +84,19 @@ test("constructor bounds and injection seams fail closed", () => {
   assert.throws(() => harness({ subscriptionIdFactory: () => "contains spaces" }).transport.read({ kinds: [1] }), TypeError);
 });
 
-test("missing platform WebSocket and malformed factory results fail explicitly", async () => {
-  const transport = new WebSocketNostrReadTransport({ relayUrl: "wss://relay.test" });
-  await assert.rejects(transport.read({ kinds: [1] }), /WebSocket is unavailable/);
-  await assert.rejects(harness({ webSocketFactory: () => ({}) }).transport.read({ kinds: [1] }), /WebSocket-compatible/);
+test("injected missing WebSocket and malformed factory results fail explicitly", async () => {
+  const unavailable = harness({
+    webSocketFactory: () => { throw new Error("WebSocket is unavailable; inject a WebSocket factory"); }
+  });
+  await assert.rejects(unavailable.transport.read({ kinds: [1] }), {
+    name: "Error",
+    message: "WebSocket is unavailable; inject a WebSocket factory"
+  });
+  assert.deepEqual(unavailable.sockets, []);
+  await assert.rejects(harness({ webSocketFactory: () => ({}) }).transport.read({ kinds: [1] }), {
+    name: "TypeError",
+    message: "WebSocket factory must return a WebSocket-compatible object"
+  });
 });
 
 test("REQ forwards the validated filter exactly and EOSE returns collected raw events", async () => {
