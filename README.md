@@ -1,10 +1,12 @@
-# HODLXXI Social V1
+# HODLXXI Social V1.1
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
 HODLXXI runtime/CRT remains the external authority for objective covenant status. Social consumes time-bounded assertions and falls back to Limited; it cannot grant Full or operator status. Social friendship and sponsor/covenant trust are separate relationships.
 
-SyntheticSocialAdapter is the only active V1 data adapter. Explicit capabilities cover current local reads and local ephemeral interactions; missing capabilities fail safely, and arbitrary adapter JSON is normalized before rendering. Future Nostr relay and HODLXXI/CRT integrations are injectable seams only. V1 performs no live reads, publication, signing, or runtime request.
+SyntheticSocialAdapter remains the active application adapter. V1.1 also implements an injectable `NostrPublicReadAdapter` boundary: an explicitly supplied read transport provides signed public kind `0` profiles and kind `1` notes, canonical Nostr mapping validates them, and only minimized Social records cross the service boundary. `READ_PUBLIC_NOSTR` is explicit, missing capabilities fail safely, and arbitrary relay JSON is never passed to rendering. No live relay is selected automatically.
+
+The public-read adapter is a protocol seam, not production connectivity or authentication. Live production relay selection, signing, publishing, DMs, encryption, NIP-07, private-key access, a live HODLXXI/CRT adapter, and production authentication are not implemented. The current viewer remains explicitly injected local state and does not establish key ownership.
 
 Open `web/index.html` through any static file server, then use the grouped desktop navigation or the mobile primary and More navigation for Home, Search, Discover, My Circle, Friends, Friends of Friends, Messages, Groups, Notifications, Activity, participant profiles, and Trust. Switch among synthetic participants to explore Limited, Full, and Operator views. The selector is a local demo control, not a login; viewer selection is in-memory only, recomputes route visibility, and cannot edit externally derived access status. Run `npm test` for deterministic Node built-in tests.
 
@@ -24,6 +26,6 @@ Notifications and Activity are synthetic local summaries, not live network telem
 - A displayed role or status is not legal identity.
 - Social does not hold funds or control private keys.
 - Participation does not promise profit or investment return.
-- This repository contains no custody, signing, live relay, database, Redis, Bitcoin RPC, LND, or deployment integration.
+- This repository contains no custody, signing, publishing, live relay selection, database, Redis, Bitcoin RPC, LND, or deployment integration.
 
 See [architecture](docs/architecture.md), [domain/access](docs/domain-access-model.md), [Nostr boundary](docs/nostr-boundary.md), and [graph/visibility](docs/social-graph-visibility.md).
