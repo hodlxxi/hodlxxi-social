@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run test suite
+        run: node --test
+
+      - name: Check domain module
+        run: node --check src/domain.mjs
+
+      - name: Check Nostr module
+        run: node --check src/nostr.mjs
+
+      - name: Check visibility module
+        run: node --check src/visibility.mjs
+
+      - name: Check frontend module
+        run: node --check web/app.mjs
+
+      - name: Check whitespace integrity
+        run: git diff --check
