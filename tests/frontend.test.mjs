@@ -5,6 +5,7 @@ import { AccessStatus, EdgeType, relationship } from "../src/domain.mjs";
 import { edges, keys, notes, participants, statuses } from "../src/fixtures.mjs";
 import { parseRoute, profileAccess, profileRoute, renderConnections, renderDiscovery, renderNavigation, renderPage, renderShell, routeFor, selectViewer, shortKey } from "../web/app.mjs";
 import { Audience, audienceDecision, prependLocalPost, renderComposer, renderContextSummary, renderFeed as renderSocialFeed, toggleReaction, visibleFeed } from "../web/feed.mjs";
+import { deriveCircleGraph, renderCircle, ringLayout } from "../web/circle.mjs";
 
 const data = Object.freeze({ participants, statuses, edges, notes });
 const viewer = participants.find((person) => person.id === keys.ada);
@@ -308,4 +309,80 @@ test("context rail labels all activity as external or synthetic rather than live
   assert.match(html, /Synthetic fixture posts/);
   assert.match(html, /Not live network activity or a trust score/);
   assert.doesNotMatch(html, /active users|live users/i);
+});
+
+test("circle graph places the viewer at center and social relationships on deterministic rings", () => {
+  const graph = deriveCircleGraph({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges });
+  assert.equal(graph.available, true);
+  assert.equal(graph.nodes[0].person.id, viewer.id);
+  assert.equal(graph.nodes[0].ring, "center");
+  assert.equal(graph.nodes.find((node) => node.person?.id === keys.ben).ring, "inner");
+  assert.equal(graph.nodes.find((node) => node.person?.id === keys.cy).ring, "outer");
+  assert.deepEqual(graph, deriveCircleGraph({ viewer, viewerStatus: AccessStatus.OPERATOR, participants: [...participants].reverse(), edges }));
+  assert.deepEqual(ringLayout([{ value: 1 }, { value: 2 }]), ringLayout([{ value: 1 }, { value: 2 }]));
+});
+
+test("Full and Operator circle graphs expose the same permitted friend-of-friend", () => {
+  for (const viewerStatus of [AccessStatus.FULL, AccessStatus.OPERATOR]) {
+    const html = renderCircle({ viewer, viewerStatus, participants, edges });
+    assert.match(html, /Cy · synthetic/);
+    assert.match(html, new RegExp(profileRoute(keys.cy).replaceAll("/", "\\/")));
+    assert.match(html, /circle-node-outer/);
+  }
+});
+
+test("Limited circle markup represents restricted reach without denied identity", () => {
+  const html = renderCircle({ viewer, viewerStatus: AccessStatus.LIMITED, participants, edges });
+  for (const identity of [friendOfFriend.displayName, friendOfFriend.publicKey, shortKey(friendOfFriend.publicKey), profileRoute(friendOfFriend.id)]) assert.equal(html.includes(identity), false);
+  assert.match(html, /Restricted reach/);
+  assert.match(html, /<dt>Restricted reach<\/dt><dd>1<\/dd>/);
+  assert.doesNotMatch(html, /circle-node-restricted[^>]*(?:href|data-)|Restricted reach[^<]*<\/text><a/);
+});
+
+test("sponsor-trust is a separate overlay and never creates circle reachability", () => {
+  const graph = deriveCircleGraph({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges });
+  assert.equal(graph.nodes.some((node) => node.person?.id === keys.dia), false);
+  assert.equal(graph.socialEdges.every((edge) => edge.type === "friend"), true);
+  assert.equal(graph.trustEdges.length, 1);
+  assert.equal(graph.trustEdges[0].type, "sponsor-trust");
+  assert.equal(graph.trustEdges[0].restricted, true);
+  const html = renderCircle({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges });
+  assert.match(html, /trust-edge/);
+  assert.match(html, /Sponsor-trust · external provenance/);
+  assert.doesNotMatch(html, /Dia · synthetic|dddddddd/);
+});
+
+test("permitted circle nodes navigate to profiles while restricted nodes do not", () => {
+  const html = renderCircle({ viewer, viewerStatus: AccessStatus.LIMITED, participants, edges });
+  assert.match(html, new RegExp(profileRoute(keys.ada).replaceAll("/", "\\/")));
+  assert.match(html, new RegExp(profileRoute(keys.ben).replaceAll("/", "\\/")));
+  assert.equal(html.includes(profileRoute(keys.cy)), false);
+  const routed = renderPage(parseRoute(profileRoute(keys.cy)), keys.ada, { ...data, statuses: { ...statuses, [keys.ada]: AccessStatus.LIMITED } });
+  assert.match(routed, /Profile restricted/);
+  assert.equal(routed.includes(friendOfFriend.displayName), false);
+});
+
+test("unknown circle viewers and statuses fail closed", () => {
+  for (const input of [{ viewer: undefined, viewerStatus: AccessStatus.FULL }, { viewer, viewerStatus: "unknown" }, { viewer: { id: "e".repeat(64), displayName: "Hidden" }, viewerStatus: AccessStatus.FULL }]) {
+    const html = renderCircle({ ...input, participants, edges });
+    assert.match(html, /Circle unavailable/);
+    for (const person of participants) assert.equal(html.includes(person.displayName), false);
+    assert.doesNotMatch(html, /<svg|href=/);
+  }
+});
+
+test("circle route recomputes for viewer changes and has accessible local-only copy", () => {
+  const route = parseRoute("#/circle");
+  const ada = renderShell(keys.ada, data, route).page;
+  const ben = renderShell(keys.ben, data, route).page;
+  assert.notEqual(ada, ben);
+  for (const phrase of ["My Circle social topology", "current participant is centered", "Synthetic fixture", "Not live network activity", "friendship does not prove covenant trust"]) assert.match(ada, new RegExp(phrase, "i"));
+  assert.match(ada, /aria-labelledby="circle-title circle-description"/);
+});
+
+test("circle styles constrain the graph on mobile without replacing bottom navigation", async () => {
+  const css = await readFile(new URL("../web/styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.circle-canvas\{[^}]*overflow:hidden/);
+  assert.match(css, /@media\(max-width:720px\)[\s\S]*\.circle-product\{width:100%;max-width:100%\}/);
+  assert.match(css, /\.mobile-nav\{position:fixed;bottom:0/);
 });

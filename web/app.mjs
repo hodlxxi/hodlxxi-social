@@ -2,6 +2,7 @@ import { EdgeType } from "../src/domain.mjs";
 import { participants, statuses, edges, notes } from "../src/fixtures.mjs";
 import { RelationshipContext, relationshipContext, visibilityDecision } from "../src/visibility.mjs";
 import { prependLocalPost, renderContextSummary, renderFeed as renderSocialFeed, renderHome, toggleReaction } from "./feed.mjs";
+import { renderCircle } from "./circle.mjs";
 
 const fixtureData = Object.freeze({ participants, statuses, edges, notes });
 const validStatuses = new Set(["limited", "full", "operator"]);
@@ -109,7 +110,7 @@ export function renderPage(route, viewerId, data = fixtureData, ui = Object.free
   const headings = { home: "Home", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", profile: "Participant Profile", trust: "Trust" };
   let content;
   if (route.page === "home") return `<section class="page home-page">${renderHome(common, ui.reactions)}</section>`;
-  else if (route.page === "circle") content = `<section><h2>Direct friends</h2>${renderConnections(common)}</section><section><h2>Friend-of-friend reach</h2>${renderDiscovery(common)}</section><section><h2>Sponsor-trust relationships</h2>${renderTrust(common)}</section>`;
+  else if (route.page === "circle") content = renderCircle(common);
   else if (route.page === "friends") content = renderConnections(common);
   else if (route.page === "discovery") content = renderDiscovery(common);
   else if (route.page === "profile") content = renderProfile({ ...common, subjectId: route.subjectId ?? viewer?.id });

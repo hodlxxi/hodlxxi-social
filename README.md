@@ -1,10 +1,12 @@
-# HODLXXI Social V0.3
+# HODLXXI Social V0.4
 
-An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V0.3 is a dependency-free, multi-surface product shell that works offline with synthetic fixtures.
+An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V0.4 is a dependency-free, multi-surface product shell that works offline with synthetic fixtures.
 
 HODLXXI runtime/CRT remains the external authority for objective covenant status. Social consumes time-bounded assertions and falls back to Limited; it cannot grant Full or operator status. Social friendship and sponsor/covenant trust are separate relationships.
 
 Open `web/index.html` through any static file server, then use the local hash navigation for Home, My Circle, Friends, Friends of Friends, participant profiles, and Trust. Switch among synthetic participants to explore Limited, Full, and Operator views. Viewer selection is in-memory only, recomputes route visibility, and cannot edit externally derived access status. Run `npm test` for deterministic Node built-in tests.
+
+My Circle is a deterministic local SVG visualization: the current participant is centered, direct friends form the inner ring, and policy-permitted friends of friends form the outer ring. Generic restricted reach reveals no participant identity. Sponsor-trust is shown as a separate provenance overlay and never creates social reachability. Counts are synthetic fixture summaries, not live network statistics or trust scores.
 
 Home includes a synthetic feed and an ephemeral local composer. Demo posts, reactions, and audience choices reset on reload and are never persisted, signed, sent, or published. `PUBLIC`, `FULL_NETWORK`, and `FRIENDS` are local presentation filters for this fixture shell; they are not cryptographic privacy guarantees or Nostr publication policy and never grant access status.
 
