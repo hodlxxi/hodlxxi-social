@@ -6,7 +6,7 @@ export const SocialCapability = Object.freeze({
   READ_GROUPS: "read-groups",
   READ_MESSAGES: "read-messages",
   READ_NOTIFICATIONS: "read-notifications",
-  READ_EXTERNAL_STATUS: "read-external-status",
+  READ_EXTERNAL_AUTHORITY: "read-external-authority",
   READ_PUBLIC_NOSTR: "read-public-nostr",
   LOCAL_EPHEMERAL_WRITES: "local-ephemeral-writes"
 });

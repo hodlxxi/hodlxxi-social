@@ -9,3 +9,5 @@ The three presentation/access states are:
 - **Operator**: covenant/operator-level assertion supplied by CRT; Social cannot grant it.
 
 Assertions are consumed, never authored by Social. A displayed role is not legal identity. Status changes do not arise from social activity, sponsorship, friendship, or manual application controls.
+
+V1.2 consumes assertions through a separately injected read-only HODLXXI/CRT adapter. A valid Limited assertion remains valid evidence with preserved provenance while its presentation stays Limited. Full and Operator presentation can arise only from current canonical `hodlxxi-crt` assertions. Missing transport, transport failure, malformed or unknown fields, unsupported versions or sources, mismatched subjects, invalid evidence, and expiry are invalid authority evidence and fail closed to Limited. This boundary does not authenticate viewers, issue CRT, validate covenants or chain state, mutate sponsors/status, or write to HODLXXI.

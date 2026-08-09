@@ -15,7 +15,6 @@ const capabilities = Object.freeze([
   SocialCapability.READ_GROUPS,
   SocialCapability.READ_MESSAGES,
   SocialCapability.READ_NOTIFICATIONS,
-  SocialCapability.READ_EXTERNAL_STATUS,
   SocialCapability.READ_PUBLIC_NOSTR
 ]);
 
@@ -80,5 +79,4 @@ export class NostrPublicReadAdapter {
   listGroups() { return EMPTY; }
   listConversations() { return EMPTY; }
   listNotifications() { return EMPTY; }
-  getExternalAccessAssertion() { return undefined; }
 }
