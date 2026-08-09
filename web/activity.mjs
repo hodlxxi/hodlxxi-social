@@ -2,6 +2,7 @@ import { RelationshipContext, relationshipContext, visibilityDecision } from "..
 import { visibleFeed } from "./feed.mjs";
 import { visibleConversations } from "./messages.mjs";
 import { visibleGroups } from "./groups.mjs";
+import { renderEmptyState } from "./components.mjs";
 
 const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 
@@ -25,5 +26,5 @@ export function deriveActivity(input, reactions = Object.freeze({})) {
 
 export function renderActivity(input, reactions = Object.freeze({})) {
   const rows = deriveActivity(input, reactions).map((item) => `<article class="activity-row"><span>${escapeHtml(item.value)}</span><div><strong>${escapeHtml(item.label)}</strong><p>${escapeHtml(item.detail)}</p></div></article>`).join("");
-  return `<section class="activity-product"><div class="local-disclosure"><strong>Local synthetic activity</strong><span>A private summary of this browser demo, not live network telemetry.</span></div><div class="activity-list">${rows || `<article class="activity-row"><div><strong>Activity unavailable</strong><p>No viewer-scoped local summary is available.</p></div></article>`}</div><p class="notice">Counts are local demo summaries, not active-user, transaction, trust, or reputation scores. Posts, reactions, friendship, messaging, and groups cannot change externally derived CRT status or grant Operator authority.</p></section>`;
+  return `<section class="activity-product"><div class="local-disclosure"><strong>Local synthetic activity</strong><span>A private summary of this browser demo, not live network telemetry.</span></div><div class="activity-list">${rows || renderEmptyState("activity")}</div><p class="notice">Counts are local demo summaries, not active-user, transaction, trust, or reputation scores. Posts, reactions, friendship, messaging, and groups cannot change externally derived CRT status or grant Operator authority.</p></section>`;
 }

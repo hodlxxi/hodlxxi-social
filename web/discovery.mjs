@@ -1,6 +1,7 @@
 import { RelationshipContext, relationshipContext, visibilityDecision } from "../src/visibility.mjs";
 import { visibleFeed } from "./feed.mjs";
 import { visibleGroups } from "./groups.mjs";
+import { renderEmptyState } from "./components.mjs";
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
@@ -21,6 +22,6 @@ export function renderLocalDiscovery(input) {
   const people = suggestions.people.map((person) => `<a class="discovery-card" href="#/profile/${person.id}"><strong>${escapeHtml(person.displayName)}</strong><span>Permitted friend of friend</span></a>`).join("");
   const posts = suggestions.posts.map((post) => `<a class="discovery-card" href="#/home"><strong>${escapeHtml(byId.get(post.authorId)?.displayName ?? "Visible participant")}</strong><span>${escapeHtml(post.body)}</span></a>`).join("");
   const groups = suggestions.groups.map((group) => `<a class="discovery-card" href="#/groups/${group.id}"><strong>${escapeHtml(group.title)}</strong><span>${escapeHtml(group.description)}</span></a>`).join("");
-  const empty = '<p class="search-none">No permitted local suggestions in this category.</p>';
+  const empty = renderEmptyState("discovery");
   return `<section class="discovery-product"><div class="local-disclosure"><strong>Local synthetic discovery</strong><span>Deterministic fixture suggestions for this viewer.</span></div><div class="discovery-grid"><section><h2>People in reach</h2>${people || empty}</section><section><h2>Accessible groups</h2>${groups || empty}</section><section><h2>Recent visible posts</h2>${posts || empty}</section></div><p class="notice">Discovery is not personalized ML, a live network trend, a popularity measure, or a trust score. Friendship and group membership cannot grant covenant status or authority.</p></section>`;
 }

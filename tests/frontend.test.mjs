@@ -12,6 +12,8 @@ import { deriveNotifications, initializeNotificationState, markAllNotificationsR
 import { deriveActivity, renderActivity } from "../web/activity.mjs";
 import { normalizeQuery, parseSearchQuery, renderSearch, searchAll, searchGroups, searchPeople, searchPosts } from "../web/search.mjs";
 import { deriveDiscovery, renderLocalDiscovery } from "../web/discovery.mjs";
+import { renderEmptyState, renderRestrictedState, renderStatusBadge, renderUnavailableState } from "../web/components.mjs";
+import { navigationModel, renderDesktopNavigation, renderMobileNavigation } from "../web/shell.mjs";
 
 const data = Object.freeze({ participants, statuses, edges, notes });
 const viewer = participants.find((person) => person.id === keys.ada);
@@ -119,7 +121,7 @@ test("friendship and sponsor-trust remain separate frontend surfaces", () => {
 
 test("frontend exposes interactive surfaces and required non-claims", async () => {
   const html = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
-  const app = await readFile(new URL("../web/app.mjs", import.meta.url), "utf8");
+  const app = await Promise.all(["app.mjs", "components.mjs"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8"))).then((sources) => sources.join("\n"));
   for (const phrase of ["Synthetic participant", "Friendship does not prove covenant trust", "not legal identity", "does not hold funds or control private keys", "does not promise profit or investment return"]) assert.match(html, new RegExp(phrase, "i"));
   for (const phrase of ["Home", "My Circle", "Participant Profile", "Direct friends", "Friends of Friends", "Sponsor-trust"]) assert.match(app, new RegExp(phrase, "i"));
   assert.doesNotMatch(html, /password|localStorage|cookie/i);
@@ -649,4 +651,60 @@ test("Search and Discovery sources avoid persistence, network, and authority pat
   for (const selector of [".search-bar", ".search-group", ".discovery-grid"]) assert.match(css, new RegExp(selector.replace(".", "\\.")));
   assert.match(css, /@media\(max-width:720px\)[\s\S]*\.search-product[\s\S]*overflow:hidden/);
   assert.match(css, /\.mobile-nav\{position:fixed;bottom:0/);
+});
+
+test("one grouped navigation model supplies complete desktop and deliberate mobile access", () => {
+  const pages = navigationModel.map(({ page }) => page);
+  assert.deepEqual(pages, ["home", "circle", "search", "discover", "friends", "discovery", "messages", "groups", "notifications", "activity", "profile", "trust"]);
+  assert.deepEqual(navigationModel.filter(({ mobile }) => mobile).map(({ page }) => page), ["home", "circle", "search", "messages", "profile"]);
+  assert.deepEqual([...new Set(navigationModel.map(({ group }) => group))], ["Core", "Social", "Updates", "Identity & trust"]);
+  const route = parseRoute("#/notifications");
+  const desktop = renderDesktopNavigation(route, keys.ada, 3);
+  const mobile = renderMobileNavigation(route, keys.ada, 3);
+  for (const entry of navigationModel) {
+    assert.match(desktop, new RegExp(`>${entry.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.match(mobile, new RegExp(`>${entry.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  }
+  assert.match(desktop, /href="#\/friends-of-friends"/);
+  assert.equal((mobile.match(/class="mobile-more"/g) ?? []).length, 1);
+  assert.match(mobile, /<summary aria-current="page">More/);
+  assert.match(desktop, /href="#\/notifications" aria-current="page"/);
+  assert.match(mobile, /3 unread local notifications/);
+});
+
+test("shared generic states cannot receive or reveal denied identity data", () => {
+  const denied = participants.find((person) => person.id === keys.cy);
+  const markup = [
+    renderRestrictedState("profile"),
+    renderEmptyState("connections"),
+    renderUnavailableState("route"),
+    renderRestrictedState(denied.displayName, denied.publicKey),
+    renderEmptyState(denied.id, denied.displayName),
+    renderUnavailableState(denied.publicKey, denied.displayName)
+  ].join("");
+  for (const identity of [denied.id, denied.publicKey, denied.displayName, shortKey(denied.publicKey)]) assert.equal(markup.includes(identity), false);
+  assert.doesNotMatch(markup, /href=|aria-label=|title=/);
+});
+
+test("status badges remain externally derived presentation rather than legal identity", () => {
+  for (const status of [AccessStatus.LIMITED, AccessStatus.FULL, AccessStatus.OPERATOR]) {
+    const html = renderStatusBadge(status);
+    assert.match(html, new RegExp(`badge-${status}`));
+    assert.match(html, /Externally derived access status; not legal identity/);
+    assert.doesNotMatch(html, /verified|KYC|login|button|data-action/i);
+  }
+  const composer = renderComposer({ viewer, viewerStatus: AccessStatus.OPERATOR, ...data });
+  assert.match(composer, /badge-operator/);
+  assert.match(composer, /Externally derived access status; not legal identity/);
+});
+
+test("consolidated shell exposes focus, overflow, demo-control, and non-claim safeguards", async () => {
+  const [css, index] = await Promise.all(["styles.css", "index.html"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8")));
+  for (const token of ["--success", "--restricted", "--radius-md", "--space-3", "--shadow-card"]) assert.match(css, new RegExp(token));
+  assert.match(css, /body\{overflow-x:hidden\}/);
+  assert.match(css, /:focus-visible/);
+  assert.match(css, /\.mobile-more-menu/);
+  assert.match(index, /Local demo control/);
+  assert.match(index, /This is not a login/);
+  for (const phrase of ["not live-network truth", "not legal identity", "does not hold funds or control private keys", "not transported or encrypted"]) assert.match(index, new RegExp(phrase, "i"));
 });

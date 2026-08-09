@@ -9,14 +9,13 @@ import { initializeNotificationState, markAllNotificationsRead, markNotification
 import { renderActivity } from "./activity.mjs";
 import { normalizeQuery, parseSearchQuery, renderSearch } from "./search.mjs";
 import { renderLocalDiscovery } from "./discovery.mjs";
+import { renderEmptyState, renderPageFrame, renderRestrictedState, renderStatusBadge, renderUnavailableState } from "./components.mjs";
+import { navigationModel, renderNavigation } from "./shell.mjs";
 
 const fixtureData = Object.freeze({ participants, statuses, edges, notes });
 const validStatuses = new Set(["limited", "full", "operator"]);
 const pageRoutes = Object.freeze({ home: "/home", search: "/search", discover: "/discover", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust" });
-const navigation = Object.freeze([
-  ["home", "Home"], ["search", "Search"], ["discover", "Discover"], ["circle", "My Circle"], ["friends", "Friends"],
-  ["discovery", "Friends of Friends"], ["messages", "Messages"], ["groups", "Groups"], ["notifications", "Notifications"], ["activity", "Activity"], ["profile", "Profile"], ["trust", "Trust"]
-]);
+export { navigationModel, renderNavigation };
 
 export const shortKey = (key) => `${key.slice(0, 8)}…${key.slice(-6)}`;
 export const profileRoute = (subjectId) => `#/profile/${subjectId}`;
@@ -43,10 +42,9 @@ export function routeFor(page, viewerId) {
 }
 
 const personCard = (person, detail) => `<a class="person person-link" href="${profileRoute(person.id)}"><div class="avatar" aria-hidden="true">${person.displayName[0]}</div><div><strong>${person.displayName}</strong><p class="meta">${detail}</p><p class="key">${shortKey(person.publicKey)}</p></div></a>`;
-const restrictedCard = (title, detail) => `<article class="person restricted"><div><strong>${title}</strong><p class="meta">${detail}</p></div></article>`;
-const restrictedDiscovery = () => restrictedCard("Restricted connection", "Friend-of-friend discovery is unavailable for this access level.");
-const noDiscovery = () => restrictedCard("No discoverable connections", "No friend-of-friend participants are available under the social visibility policy.");
-const noConnections = () => restrictedCard("No direct connections", "No direct friends are available under the social visibility policy.");
+const restrictedDiscovery = () => renderRestrictedState("discovery");
+const noDiscovery = () => renderEmptyState("friend-discovery");
+const noConnections = () => renderEmptyState("connections");
 
 function indexed(data) { return new Map(data.participants.map((person) => [person.id, person])); }
 export function resolveViewer(viewerId, data = fixtureData) { return indexed(data).get(viewerId); }
@@ -65,13 +63,13 @@ export function profileAccess({ viewer, viewerStatus, subjectId, participants, e
 
 export function renderProfile({ viewer, viewerStatus, subjectId = viewer?.id, participants: people = fixtureData.participants, edges: graph = fixtureData.edges, statuses: access = fixtureData.statuses }) {
   const result = profileAccess({ viewer, viewerStatus, subjectId, participants: people, edges: graph });
-  if (!result.visible) return restrictedCard("Profile restricted", "This participant profile is unavailable under the social visibility policy.");
+  if (!result.visible) return renderRestrictedState("profile");
   const { subject, context } = result;
   const subjectStatus = validStatuses.has(access[subject.id]) ? access[subject.id] : "limited";
   const direct = context === RelationshipContext.DIRECT ? "Yes — direct social friend" : "No";
   const trustEdges = graph.filter((edge) => edge.type === EdgeType.SPONSOR_TRUST && (edge.from === subject.id || edge.to === subject.id));
   const trust = trustEdges.length ? `${trustEdges.length} external sponsor-trust relationship${trustEdges.length === 1 ? "" : "s"}` : "No fixture sponsor-trust relationships";
-  return `<article class="profile-card"><div class="avatar avatar-large" aria-hidden="true">${subject.displayName[0]}</div><h1>${subject.displayName}</h1><span class="badge badge-${subjectStatus}">${subjectStatus}</span><p class="key">${shortKey(subject.publicKey)}</p><dl><div><dt>Relationship</dt><dd>${context}</dd></div><div><dt>Direct friend</dt><dd>${direct}</dd></div></dl><section class="trust-section"><h2>Sponsor-trust</h2><p>${trust}</p><p class="notice">Sponsor-trust is external provenance and remains separate from friendship.</p></section><p class="notice">Displayed role/status is externally derived and is not legal identity.</p></article>`;
+  return `<article class="profile-card"><div class="avatar avatar-large" aria-hidden="true">${subject.displayName[0]}</div><h2>${subject.displayName}</h2>${renderStatusBadge(subjectStatus)}<p class="key">${shortKey(subject.publicKey)}</p><dl><div><dt>Relationship</dt><dd>${context}</dd></div><div><dt>Direct friend</dt><dd>${direct}</dd></div></dl><section class="trust-section"><h3>Sponsor-trust</h3><p>${trust}</p><p class="notice">Sponsor-trust is external provenance and remains separate from friendship.</p></section><p class="notice">Displayed role/status is externally derived and is not legal identity.</p></article>`;
 }
 
 export function renderFeed({ viewer, viewerStatus, participants, edges, notes, statuses: access = fixtureData.statuses }) {
@@ -79,10 +77,10 @@ export function renderFeed({ viewer, viewerStatus, participants, edges, notes, s
 }
 
 export function renderConnections({ viewer, viewerStatus, participants, edges }) {
-  if (!viewer) return restrictedCard("Connections restricted", "Direct connection details are unavailable.");
+  if (!viewer) return renderRestrictedState("connections");
   const rendered = participants.map((person) => ({ person, context: relationshipContext(viewer.id, person.id, edges) }))
     .filter(({ context }) => context === RelationshipContext.DIRECT)
-    .map(({ person, context }) => visibilityDecision({ viewerStatus, context, policy: "social" }).visible ? personCard(person, "Direct friend · social relationship") : restrictedCard("Restricted connection", "Direct connection details are unavailable for this access level."))
+    .map(({ person, context }) => visibilityDecision({ viewerStatus, context, policy: "social" }).visible ? personCard(person, "Direct friend · social relationship") : renderRestrictedState("connections"))
     .join("");
   return rendered || noConnections();
 }
@@ -96,24 +94,16 @@ export function renderDiscovery({ viewer, viewerStatus, participants, edges }) {
 }
 
 export function renderTrust({ viewer, viewerStatus, participants, edges }) {
-  if (!viewer || !validStatuses.has(viewerStatus)) return restrictedCard("Trust records restricted", "Sponsor-trust details are unavailable.");
+  if (!viewer || !validStatuses.has(viewerStatus)) return renderRestrictedState("trust");
   const byId = new Map(participants.map((person) => [person.id, person]));
   const records = edges.filter((edge) => edge.type === EdgeType.SPONSOR_TRUST && (edge.from === viewer.id || edge.to === viewer.id));
-  if (!records.length) return restrictedCard("No associated trust records", "Sponsor-trust is external provenance, not a friend connection.");
+  if (!records.length) return renderEmptyState("trust");
   return records.map((edge) => {
     const subject = byId.get(edge.from === viewer.id ? edge.to : edge.from);
-    if (!subject) return restrictedCard("Trust record restricted", "Sponsor-trust details are unavailable.");
+    if (!subject) return renderRestrictedState("trust-record");
     const context = relationshipContext(viewer.id, subject.id, edges);
-    return visibilityDecision({ viewerStatus, context, policy: "social" }).visible ? personCard(subject, "Sponsor-trust · external provenance") : restrictedCard("Trust record restricted", "An associated sponsor-trust record exists, but its participant identity is not visible under social policy.");
+    return visibilityDecision({ viewerStatus, context, policy: "social" }).visible ? personCard(subject, "Sponsor-trust · external provenance") : renderRestrictedState("trust-record");
   }).join("");
-}
-
-export function renderNavigation(route, viewerId, className = "nav-links", notificationUnread = 0) {
-  return `<nav class="${className}" aria-label="${className === "mobile-nav" ? "Mobile" : "Primary"}">${navigation.map(([page, label]) => {
-    const href = routeFor(page, viewerId);
-    const badge = page === "notifications" ? `<span class="nav-badge" aria-label="${notificationUnread} unread local notifications">${notificationUnread}</span>` : "";
-    return `<a href="${href}"${route.page === page ? ' aria-current="page"' : ""}>${label}${badge}</a>`;
-  }).join("")}</nav>`;
 }
 
 export function renderPage(route, viewerId, data = fixtureData, ui = Object.freeze({})) {
@@ -122,7 +112,7 @@ export function renderPage(route, viewerId, data = fixtureData, ui = Object.free
   const common = { viewer, viewerStatus, ...data };
   const headings = { home: "Home", search: "Search", discover: "Discover", circle: "My Circle", friends: "Friends", discovery: "Friends of Friends", messages: "Messages", groups: "Groups", notifications: "Notifications", activity: "Activity", profile: "Participant Profile", trust: "Trust" };
   let content;
-  if (route.page === "home") return `<section class="page home-page">${renderHome(common, ui.reactions)}</section>`;
+  if (route.page === "home") return renderPageFrame({ title: "Home", content: renderHome(common, ui.reactions), className: "home-page" });
   else if (route.page === "search") content = renderSearch(common, route.searchQuery, route.queryValid);
   else if (route.page === "discover") content = renderLocalDiscovery(common);
   else if (route.page === "circle") content = renderCircle(common);
@@ -134,8 +124,8 @@ export function renderPage(route, viewerId, data = fixtureData, ui = Object.free
   else if (route.page === "activity") content = renderActivity(common, ui.reactions);
   else if (route.page === "profile") content = renderProfile({ ...common, subjectId: route.subjectId ?? viewer?.id });
   else if (route.page === "trust") content = `<article class="card trust-copy"><p><strong>${viewerStatus ?? "Restricted"} access</strong> · read-only external assertion</p><p>Social consumes HODLXXI runtime/CRT trust assertions; it does not issue or upgrade them.</p><p>Friendship does not prove covenant trust. No trust score is calculated.</p></article>${renderTrust(common)}`;
-  else return `<section class="page"><p class="eyebrow">Navigation</p><h1>Page unavailable</h1>${restrictedCard("Route not found", "Use the application navigation to choose a local surface.")}</section>`;
-  return `<section class="page"><p class="eyebrow">HODLXXI Social</p><h1>${headings[route.page]}</h1>${content}</section>`;
+  else return renderPageFrame({ eyebrow: "Navigation", title: "Page unavailable", content: renderUnavailableState("route") });
+  return renderPageFrame({ title: headings[route.page], content });
 }
 
 export function renderShell(viewerId, data = fixtureData, route = parseRoute("#/home"), ui = Object.freeze({})) {

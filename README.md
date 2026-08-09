@@ -1,10 +1,10 @@
-# HODLXXI Social V0.7
+# HODLXXI Social V0.8
 
-An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V0.7 is a dependency-free, multi-surface product shell that works offline with synthetic fixtures.
+An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V0.8 consolidates the dependency-free desktop and mobile product shell while continuing to work offline with synthetic fixtures.
 
 HODLXXI runtime/CRT remains the external authority for objective covenant status. Social consumes time-bounded assertions and falls back to Limited; it cannot grant Full or operator status. Social friendship and sponsor/covenant trust are separate relationships.
 
-Open `web/index.html` through any static file server, then use the local hash navigation for Home, Search, Discover, My Circle, Friends, Friends of Friends, Messages, Groups, Notifications, Activity, participant profiles, and Trust. Switch among synthetic participants to explore Limited, Full, and Operator views. Viewer selection is in-memory only, recomputes route visibility, and cannot edit externally derived access status. Run `npm test` for deterministic Node built-in tests.
+Open `web/index.html` through any static file server, then use the grouped desktop navigation or the mobile primary and More navigation for Home, Search, Discover, My Circle, Friends, Friends of Friends, Messages, Groups, Notifications, Activity, participant profiles, and Trust. Switch among synthetic participants to explore Limited, Full, and Operator views. The selector is a local demo control, not a login; viewer selection is in-memory only, recomputes route visibility, and cannot edit externally derived access status. Run `npm test` for deterministic Node built-in tests.
 
 Search matches only policy-permitted participants, visible posts, and accessible groups from local fixtures. Discovery offers deterministic local suggestions rather than personalized recommendations, live trends, or real-network popularity. Search history is not stored, denied identities do not contribute to result counts, and neither surface ranks or grants covenant trust or access status.
 

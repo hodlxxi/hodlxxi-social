@@ -1,5 +1,6 @@
 import { AccessStatus, EdgeType } from "../src/domain.mjs";
 import { RelationshipContext, relationshipContext, visibilityDecision } from "../src/visibility.mjs";
+import { renderEmptyState, renderStatusBadge } from "./components.mjs";
 
 export const Audience = Object.freeze({ PUBLIC: "PUBLIC", FULL_NETWORK: "FULL_NETWORK", FRIENDS: "FRIENDS" });
 const audienceValues = new Set(Object.values(Audience));
@@ -53,24 +54,24 @@ function renderReplies(note, common, people) {
 
 export function renderComposer({ viewer, viewerStatus, participants, statuses }) {
   if (!validViewer({ viewer, viewerStatus, participants, statuses })) return '<article class="restricted composer-restricted"><strong>Composer unavailable</strong><p class="meta">A valid synthetic viewer is required.</p></article>';
-  return `<form class="composer-card" id="local-composer"><div class="composer-head"><div class="avatar" aria-hidden="true">${escapeHtml(viewer.displayName[0])}</div><div><strong>${escapeHtml(viewer.displayName)}</strong><span class="badge badge-${viewerStatus}">${viewerStatus}</span><p class="meta">Local demo composer · resets on reload</p></div></div><label class="sr-only" for="composer-body">Write a local demo post</label><textarea id="composer-body" name="body" maxlength="500" placeholder="Share something with your network…" required></textarea><div class="composer-actions"><div class="local-tools" aria-label="Local demo affordances"><span>Media</span><span>Poll</span><span>Emoji</span></div><label>Audience <select name="audience">${Object.values(Audience).map((value) => `<option value="${value}">${value.replace("_", " ")}</option>`).join("")}</select></label><button type="submit">Post locally</button></div><p class="notice">Audience is a local presentation filter, not Nostr publication policy. Nothing is signed or broadcast.</p></form>`;
+  return `<form class="composer-card" id="local-composer"><div class="composer-head"><div class="avatar" aria-hidden="true">${escapeHtml(viewer.displayName[0])}</div><div><strong>${escapeHtml(viewer.displayName)}</strong>${renderStatusBadge(viewerStatus)}<p class="meta">Local demo composer · resets on reload</p></div></div><label class="sr-only" for="composer-body">Write a local demo post</label><textarea id="composer-body" name="body" maxlength="500" placeholder="Share something with your network…" required></textarea><div class="composer-actions"><div class="local-tools" aria-label="Local demo affordances"><span>Media</span><span>Poll</span><span>Emoji</span></div><label>Audience <select name="audience">${Object.values(Audience).map((value) => `<option value="${value}">${value.replace("_", " ")}</option>`).join("")}</select></label><button type="submit">Post locally</button></div><p class="notice">Audience is a local presentation filter, not Nostr publication policy. Nothing is signed or broadcast.</p></form>`;
 }
 
 export function renderFeed(common, reactionState = Object.freeze({})) {
   const people = new Map(common.participants.map((person) => [person.id, person]));
   const feed = visibleFeed(common);
-  if (!feed.length) return '<article class="restricted"><strong>No visible local posts</strong><p class="meta">The local audience and social visibility policies fail closed.</p></article>';
+  if (!feed.length) return renderEmptyState("feed");
   return feed.map((note) => {
     const author = people.get(note.authorId);
     const authorStatus = common.statuses[author.id];
     const reacted = Boolean(reactionState[note.id]);
     const media = note.media ? `<div class="media-placeholder" role="img" aria-label="${escapeHtml(note.media)}"><span>${escapeHtml(note.media)}</span></div>` : "";
-    return `<article class="post-card" data-note-id="${escapeHtml(note.id)}"><header><div class="avatar" aria-hidden="true">${escapeHtml(author.displayName[0])}</div><div><a class="post-author" href="${profileRoute(author.id)}">${escapeHtml(author.displayName)}</a><span class="badge badge-${authorStatus}">${authorStatus}</span><p class="post-meta">${escapeHtml(note.timestamp)} · ${escapeHtml(note.audience.replace("_", " "))}${note.local ? " · local demo" : " · synthetic fixture"}</p></div><button class="bookmark" type="button" aria-label="Bookmark locally">☆</button></header><p class="post-body">${escapeHtml(note.body)}</p>${media}<div class="post-actions"><button type="button" data-action="react" data-note="${escapeHtml(note.id)}" aria-pressed="${reacted}">♡ ${note.reactions + (reacted ? 1 : 0)}</button><span>Comments ${note.comments}</span><span>Reposts ${note.reposts}</span><span>Local UI only</span></div>${renderReplies(note, common, people)}</article>`;
+    return `<article class="post-card" data-note-id="${escapeHtml(note.id)}"><header><div class="avatar" aria-hidden="true">${escapeHtml(author.displayName[0])}</div><div><a class="post-author" href="${profileRoute(author.id)}">${escapeHtml(author.displayName)}</a>${renderStatusBadge(authorStatus)}<p class="post-meta">${escapeHtml(note.timestamp)} · ${escapeHtml(note.audience.replace("_", " "))}${note.local ? " · local demo" : " · synthetic fixture"}</p></div><button class="bookmark" type="button" aria-label="Bookmark locally">☆</button></header><p class="post-body">${escapeHtml(note.body)}</p>${media}<div class="post-actions"><button type="button" data-action="react" data-note="${escapeHtml(note.id)}" aria-pressed="${reacted}">♡ ${note.reactions + (reacted ? 1 : 0)}</button><span>Comments ${note.comments}</span><span>Reposts ${note.reposts}</span><span>Local UI only</span></div>${renderReplies(note, common, people)}</article>`;
   }).join("");
 }
 
 export function renderHome(common, reactionState) {
-  return `<div class="home-heading"><div><p class="eyebrow">HODLXXI Social</p><h1>Home</h1></div><span class="local-pill">Offline demo</span></div>${renderComposer(common)}<section class="feed-stack" aria-label="Local synthetic feed">${renderFeed(common, reactionState)}</section>`;
+  return `<div class="home-heading"><p class="meta">Synthetic posts and in-memory interactions</p><span class="local-pill">Offline demo</span></div>${renderComposer(common)}<section class="feed-stack" aria-label="Local synthetic feed">${renderFeed(common, reactionState)}</section>`;
 }
 
 export function renderContextSummary({ viewer, viewerStatus, participants, statuses, edges, notes }) {
