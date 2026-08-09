@@ -1,8 +1,10 @@
-# HODLXXI Social V0.8
+# HODLXXI Social V1
 
-An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V0.8 consolidates the dependency-free desktop and mobile product shell while continuing to work offline with synthetic fixtures.
+An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
 HODLXXI runtime/CRT remains the external authority for objective covenant status. Social consumes time-bounded assertions and falls back to Limited; it cannot grant Full or operator status. Social friendship and sponsor/covenant trust are separate relationships.
+
+SyntheticSocialAdapter is the only active V1 data adapter. Explicit capabilities cover current local reads and local ephemeral interactions; missing capabilities fail safely, and arbitrary adapter JSON is normalized before rendering. Future Nostr relay and HODLXXI/CRT integrations are injectable seams only. V1 performs no live reads, publication, signing, or runtime request.
 
 Open `web/index.html` through any static file server, then use the grouped desktop navigation or the mobile primary and More navigation for Home, Search, Discover, My Circle, Friends, Friends of Friends, Messages, Groups, Notifications, Activity, participant profiles, and Trust. Switch among synthetic participants to explore Limited, Full, and Operator views. The selector is a local demo control, not a login; viewer selection is in-memory only, recomputes route visibility, and cannot edit externally derived access status. Run `npm test` for deterministic Node built-in tests.
 

@@ -2,20 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { AccessStatus, EdgeType, relationship } from "../src/domain.mjs";
-import { edges, keys, notes, participants, statuses } from "../src/fixtures.mjs";
+import { conversations, edges, groups, keys, notes, notifications, participants, statuses } from "../src/fixtures.mjs";
 import { parseRoute, profileAccess, profileRoute, renderConnections, renderDiscovery, renderNavigation, renderPage, renderShell, routeFor, selectViewer, shortKey } from "../web/app.mjs";
 import { Audience, audienceDecision, prependLocalPost, renderComposer, renderContextSummary, renderFeed as renderSocialFeed, toggleReaction, visibleFeed } from "../web/feed.mjs";
 import { deriveCircleGraph, renderCircle, ringLayout } from "../web/circle.mjs";
-import { appendLocalMessage, conversationAccess, conversations, initializeLocalMessages, renderMessages, visibleConversations } from "../web/messages.mjs";
-import { groupAccess, groups, renderGroups } from "../web/groups.mjs";
-import { deriveNotifications, initializeNotificationState, markAllNotificationsRead, markNotificationRead, notifications, renderNotifications, safeNotificationRoute, unreadCount, visibleUnreadCount } from "../web/notifications.mjs";
+import { appendLocalMessage, conversationAccess, initializeLocalMessages, renderMessages, visibleConversations } from "../web/messages.mjs";
+import { groupAccess, renderGroups } from "../web/groups.mjs";
+import { deriveNotifications, initializeNotificationState, markAllNotificationsRead, markNotificationRead, renderNotifications, safeNotificationRoute, unreadCount, visibleUnreadCount } from "../web/notifications.mjs";
 import { deriveActivity, renderActivity } from "../web/activity.mjs";
 import { normalizeQuery, parseSearchQuery, renderSearch, searchAll, searchGroups, searchPeople, searchPosts } from "../web/search.mjs";
 import { deriveDiscovery, renderLocalDiscovery } from "../web/discovery.mjs";
 import { renderEmptyState, renderRestrictedState, renderStatusBadge, renderUnavailableState } from "../web/components.mjs";
 import { navigationModel, renderDesktopNavigation, renderMobileNavigation } from "../web/shell.mjs";
 
-const data = Object.freeze({ participants, statuses, edges, notes });
+const data = Object.freeze({ currentViewerId: keys.ben, participants, statuses, edges, notes, conversations, groups, notifications });
 const viewer = participants.find((person) => person.id === keys.ada);
 const directFriend = participants.find((person) => person.id === keys.ben);
 const friendOfFriend = participants.find((person) => person.id === keys.cy);
@@ -83,6 +83,12 @@ test("viewer selection rejects identities outside the synthetic fixtures", () =>
   assert.equal(selectViewer(keys.ben, "not-a-fixture-key", data), keys.ben);
   assert.deepEqual(statuses, snapshot);
   assert.equal(Object.isFrozen(statuses), true);
+});
+
+test("browser initialization consumes the normalized service current viewer", async () => {
+  const source = await readFile(new URL("../web/app.mjs", import.meta.url), "utf8");
+  assert.match(source, /resolveViewer\(data\.currentViewerId, data\)\?\.id/);
+  assert.doesNotMatch(source, /resolveViewer\(data\.currentViewerId, data\)\?\.id\s*\?\?/);
 });
 
 test("unknown or missing status fails closed without participant identity", () => {
@@ -432,22 +438,22 @@ test("Limited viewer cannot reveal denied conversation identity or metadata", ()
 });
 
 test("local message insertion is immutable, viewer-bound, and resettable", () => {
-  const state = initializeLocalMessages();
+  const state = initializeLocalMessages(conversations);
   const snapshot = structuredClone(statuses);
-  const inserted = appendLocalMessage(state, { conversationId: "chat-01", viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges, body: "  <local only>  ", timestamp: "Now · test" });
+  const inserted = appendLocalMessage(state, { conversationId: "chat-01", viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges, body: "  <local only>  ", timestamp: "Now · test" }, conversations);
   assert.equal(inserted["chat-01"].length, state["chat-01"].length + 1);
   assert.deepEqual(inserted["chat-01"].at(-1), { authorId: viewer.id, body: "<local only>", timestamp: "Now · test", local: true });
   assert.equal("viewerStatus" in inserted["chat-01"].at(-1), false);
   assert.deepEqual(statuses, snapshot);
-  assert.deepEqual(initializeLocalMessages(), state);
-  assert.notEqual(initializeLocalMessages(), state);
-  assert.equal(appendLocalMessage(state, { conversationId: "chat-02", viewer, viewerStatus: AccessStatus.LIMITED, participants, edges, body: "denied" }), state);
-  assert.match(renderMessages({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges }, "chat-01", inserted), /&lt;local only&gt;/);
+  assert.deepEqual(initializeLocalMessages(conversations), state);
+  assert.notEqual(initializeLocalMessages(conversations), state);
+  assert.equal(appendLocalMessage(state, { conversationId: "chat-02", viewer, viewerStatus: AccessStatus.LIMITED, participants, edges, body: "denied" }, conversations), state);
+  assert.match(renderMessages({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges, conversations }, "chat-01", inserted), /&lt;local only&gt;/);
   assert.doesNotThrow(() => structuredClone(state));
 });
 
 test("group detail filters denied members and inaccessible groups fail closed", () => {
-  const limitedCommon = { viewer, viewerStatus: AccessStatus.LIMITED, participants, edges };
+  const limitedCommon = { viewer, viewerStatus: AccessStatus.LIMITED, participants, edges, groups };
   const access = groupAccess({ ...limitedCommon, groupId: "group-01" });
   assert.equal(access.visible, true);
   assert.equal(access.members.filter((member) => !member.visible).length, 1);
@@ -462,9 +468,9 @@ test("group detail filters denied members and inaccessible groups fail closed", 
 test("messaging and groups make honest local non-claims without integration paths", async () => {
   const messagesSource = await readFile(new URL("../web/messages.mjs", import.meta.url), "utf8");
   const groupsSource = await readFile(new URL("../web/groups.mjs", import.meta.url), "utf8");
-  const html = renderMessages({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges }, "chat-01");
+  const html = renderMessages({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges, conversations }, "chat-01");
   for (const phrase of ["Local demo", "not transported", "not encrypted", "Nothing is delivered or persisted", "not trust", "does not grant authentication or protocol authority"]) assert.match(html, new RegExp(phrase, "i"));
-  assert.match(renderGroups({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges }, "group-01"), /no Nostr interoperability or group authority/i);
+  assert.match(renderGroups({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges, groups }, "group-01"), /no Nostr interoperability or group authority/i);
   for (const source of [messagesSource, groupsSource]) {
     assert.doesNotMatch(source, /from ["'][^"']*nostr|createNostrBoundary|\.publish\(|\.read\(|localStorage|sessionStorage|indexedDB|WebSocket|fetch\(|type=["']password|private.?key/i);
   }
@@ -478,7 +484,7 @@ test("Messages and Groups responsive styles preserve mobile bottom navigation", 
 });
 
 test("Notifications and Activity routes render and navigation carries unread state", () => {
-  const state = initializeNotificationState();
+  const state = initializeNotificationState(notifications);
   assert.equal(parseRoute("#/notifications").page, "notifications");
   assert.equal(parseRoute("#/activity").page, "activity");
   assert.match(renderPage(parseRoute("#/notifications"), keys.ada, data, { notificationState: state }), /Local demo notifications/);
@@ -493,8 +499,8 @@ test("Notifications and Activity routes render and navigation carries unread sta
 });
 
 test("notification read helpers are deterministic immutable local state", () => {
-  const initial = initializeNotificationState();
-  const reset = initializeNotificationState();
+  const initial = initializeNotificationState(notifications);
+  const reset = initializeNotificationState(notifications);
   assert.notEqual(initial, reset);
   assert.deepEqual(initial, reset);
   assert.equal(unreadCount(initial), 3);
@@ -509,7 +515,7 @@ test("notification read helpers are deterministic immutable local state", () => 
 
 test("Limited notifications render denied identity generically with no route or metadata", () => {
   const limited = { ...data, viewer, viewerStatus: AccessStatus.LIMITED };
-  const html = renderNotifications(limited, initializeNotificationState());
+  const html = renderNotifications(limited, initializeNotificationState(notifications));
   assert.match(html, /Restricted network activity/);
   assert.equal((html.match(/Restricted network activity/g) ?? []).length, 1);
   for (const leaked of [friendOfFriend.displayName, friendOfFriend.publicKey, "local-notice-reply"]) assert.equal(html.includes(leaked), false);
@@ -518,7 +524,7 @@ test("Limited notifications render denied identity generically with no route or 
   const denied = notifications.find((item) => item.actorId === keys.cy);
   assert.equal(safeNotificationRoute(denied, limited), undefined);
   assert.deepEqual(deriveNotifications(limited).find((item) => item.restricted), { restricted: true });
-  const deniedUnread = Object.freeze({ ...initializeNotificationState(), "local-notice-reply": true });
+  const deniedUnread = Object.freeze({ ...initializeNotificationState(notifications), "local-notice-reply": true });
   assert.equal(unreadCount(deniedUnread), 4);
   assert.equal(visibleUnreadCount(limited, deniedUnread), 3);
   assert.match(renderNotifications(limited, deniedUnread), /3 unread locally/);

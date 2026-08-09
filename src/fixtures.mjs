@@ -27,3 +27,28 @@ export const notes = Object.freeze([
     Object.freeze({ id: "synthetic-reply-3", authorId: keys.ben, body: "No live-network claim needed." })
   ]) })
 ]);
+
+const freezeMessages = (items) => Object.freeze(items.map((item) => Object.freeze({ ...item })));
+export const conversations = Object.freeze([
+  Object.freeze({ id: "chat-01", memberIds: Object.freeze([keys.ada, keys.ben]), unreadFor: Object.freeze([keys.ada]), messages: freezeMessages([
+    { authorId: keys.ben, body: "The local product shell is taking shape.", timestamp: "Today · 09:42" },
+    { authorId: keys.ada, body: "Good. Messaging and covenant trust stay separate.", timestamp: "Today · 09:45" }
+  ]) }),
+  Object.freeze({ id: "chat-02", memberIds: Object.freeze([keys.ada, keys.cy]), unreadFor: Object.freeze([]), messages: freezeMessages([
+    { authorId: keys.cy, body: "Visibility still follows the current viewer policy.", timestamp: "Yesterday · 16:18" }
+  ]) })
+]);
+
+export const groups = Object.freeze([
+  Object.freeze({ id: "group-01", title: "Local Builders", description: "A synthetic space for product-shell notes.", memberIds: Object.freeze([keys.ada, keys.ben, keys.cy]), activity: "Today · Interface boundaries reviewed locally" }),
+  Object.freeze({ id: "group-02", title: "Design Study", description: "A local fixture for small-screen layout discussion.", memberIds: Object.freeze([keys.ben, keys.dia]), activity: "Yesterday · Mobile spacing explored locally" })
+]);
+
+const freezeNotifications = (items) => Object.freeze(items.map((item) => Object.freeze({ ...item, target: Object.freeze({ ...item.target }) })));
+export const notifications = freezeNotifications([
+  { id: "local-notice-friend", actorId: keys.ada, kind: "friend", action: "shared profile and social connection activity", targetLabel: "Profile", timestamp: "Today · 10:08", unread: true, target: { type: "profile", id: keys.ada } },
+  { id: "local-notice-reaction", actorId: keys.ben, kind: "reaction", action: "reacted to a synthetic local post", targetLabel: "Home", timestamp: "Today · 09:54", unread: true, target: { type: "home" } },
+  { id: "local-notice-reply", actorId: keys.cy, kind: "reply", action: "replied to a demo post", targetLabel: "Home", timestamp: "Yesterday · 16:22", unread: false, target: { type: "home" } },
+  { id: "local-notice-message", actorId: keys.ada, kind: "message", action: "added a new local demo message", targetLabel: "Messages", timestamp: "Yesterday · 14:06", unread: true, target: { type: "message", id: "chat-01" } },
+  { id: "local-notice-group", actorId: keys.ben, kind: "group", action: "added synthetic local group activity", targetLabel: "Local Builders", timestamp: "Friday · 11:18", unread: false, target: { type: "group", id: "group-01" } }
+]);
