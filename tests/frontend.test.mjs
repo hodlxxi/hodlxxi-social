@@ -6,6 +6,8 @@ import { edges, keys, notes, participants, statuses } from "../src/fixtures.mjs"
 import { parseRoute, profileAccess, profileRoute, renderConnections, renderDiscovery, renderNavigation, renderPage, renderShell, routeFor, selectViewer, shortKey } from "../web/app.mjs";
 import { Audience, audienceDecision, prependLocalPost, renderComposer, renderContextSummary, renderFeed as renderSocialFeed, toggleReaction, visibleFeed } from "../web/feed.mjs";
 import { deriveCircleGraph, renderCircle, ringLayout } from "../web/circle.mjs";
+import { appendLocalMessage, conversationAccess, conversations, initializeLocalMessages, renderMessages, visibleConversations } from "../web/messages.mjs";
+import { groupAccess, groups, renderGroups } from "../web/groups.mjs";
 
 const data = Object.freeze({ participants, statuses, edges, notes });
 const viewer = participants.find((person) => person.id === keys.ada);
@@ -384,5 +386,87 @@ test("circle styles constrain the graph on mobile without replacing bottom navig
   const css = await readFile(new URL("../web/styles.css", import.meta.url), "utf8");
   assert.match(css, /\.circle-canvas\{[^}]*overflow:hidden/);
   assert.match(css, /@media\(max-width:720px\)[\s\S]*\.circle-product\{width:100%;max-width:100%\}/);
+  assert.match(css, /\.mobile-nav\{position:fixed;bottom:0/);
+});
+
+test("Messages and Groups hash routes render local product surfaces", () => {
+  for (const [hash, page, phrase] of [["#/messages", "messages", "Local demo messaging"], ["#/messages/chat-01", "messages", "Selected conversation"], ["#/groups", "groups", "Local group fixtures"], ["#/groups/group-01", "groups", "Local group detail"]]) {
+    const route = parseRoute(hash);
+    assert.equal(route.page, page);
+    assert.match(renderPage(route, keys.ada, data), new RegExp(phrase, "i"));
+  }
+  for (const label of ["Messages", "Groups"]) assert.match(renderNavigation(parseRoute("#/messages"), keys.ada), new RegExp(label));
+});
+
+test("local identifiers are synthetic slugs and malformed detail routes fail closed", () => {
+  for (const item of [...conversations, ...groups]) {
+    assert.match(item.id, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    for (const person of participants) {
+      assert.equal(item.id.includes(person.id), false);
+      assert.equal(item.id.toLowerCase().includes(person.displayName.split(" ")[0].toLowerCase()), false);
+    }
+  }
+  for (const hash of ["#/messages/unknown", "#/groups/unknown", "#/messages/Bad_ID", `#/groups/${keys.cy}`]) {
+    const route = parseRoute(hash);
+    const html = renderPage(route, keys.ada, data);
+    assert.match(html, /restricted|Route not found/i);
+    assert.equal(html.includes(keys.cy), false);
+  }
+});
+
+test("Limited viewer cannot reveal denied conversation identity or metadata", () => {
+  const limitedData = { ...data, statuses: { ...statuses, [keys.ada]: AccessStatus.LIMITED } };
+  const common = { viewer, viewerStatus: AccessStatus.LIMITED, ...limitedData };
+  assert.deepEqual(conversationAccess({ ...common, conversationId: "chat-02" }), { visible: false, reason: "restricted" });
+  assert.equal(visibleConversations(common).some(({ conversation }) => conversation.id === "chat-02"), false);
+  for (const html of [renderMessages(common), renderMessages(common, "chat-02"), renderPage(parseRoute("#/messages/chat-02"), keys.ada, limitedData)]) {
+    for (const identity of [friendOfFriend.displayName, friendOfFriend.publicKey, shortKey(friendOfFriend.publicKey), "chat-02", "Visibility still follows"]) assert.equal(html.includes(identity), false);
+    assert.doesNotMatch(html, /data-(?:participant|member|author)|title="[^"]*Cy|aria-label="[^"]*Cy/i);
+  }
+});
+
+test("local message insertion is immutable, viewer-bound, and resettable", () => {
+  const state = initializeLocalMessages();
+  const snapshot = structuredClone(statuses);
+  const inserted = appendLocalMessage(state, { conversationId: "chat-01", viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges, body: "  <local only>  ", timestamp: "Now · test" });
+  assert.equal(inserted["chat-01"].length, state["chat-01"].length + 1);
+  assert.deepEqual(inserted["chat-01"].at(-1), { authorId: viewer.id, body: "<local only>", timestamp: "Now · test", local: true });
+  assert.equal("viewerStatus" in inserted["chat-01"].at(-1), false);
+  assert.deepEqual(statuses, snapshot);
+  assert.deepEqual(initializeLocalMessages(), state);
+  assert.notEqual(initializeLocalMessages(), state);
+  assert.equal(appendLocalMessage(state, { conversationId: "chat-02", viewer, viewerStatus: AccessStatus.LIMITED, participants, edges, body: "denied" }), state);
+  assert.match(renderMessages({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges }, "chat-01", inserted), /&lt;local only&gt;/);
+  assert.doesNotThrow(() => structuredClone(state));
+});
+
+test("group detail filters denied members and inaccessible groups fail closed", () => {
+  const limitedCommon = { viewer, viewerStatus: AccessStatus.LIMITED, participants, edges };
+  const access = groupAccess({ ...limitedCommon, groupId: "group-01" });
+  assert.equal(access.visible, true);
+  assert.equal(access.members.filter((member) => !member.visible).length, 1);
+  const html = renderGroups(limitedCommon, "group-01");
+  assert.match(html, /Restricted participant/);
+  for (const identity of [friendOfFriend.displayName, friendOfFriend.publicKey, shortKey(friendOfFriend.publicKey)]) assert.equal(html.includes(identity), false);
+  const denied = renderGroups(limitedCommon, "group-02");
+  assert.match(denied, /Group restricted/);
+  assert.doesNotMatch(denied, /Design Study|Dia · synthetic|dddddddd/);
+});
+
+test("messaging and groups make honest local non-claims without integration paths", async () => {
+  const messagesSource = await readFile(new URL("../web/messages.mjs", import.meta.url), "utf8");
+  const groupsSource = await readFile(new URL("../web/groups.mjs", import.meta.url), "utf8");
+  const html = renderMessages({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges }, "chat-01");
+  for (const phrase of ["Local demo", "not transported", "not encrypted", "Nothing is delivered or persisted", "not trust", "does not grant authentication or protocol authority"]) assert.match(html, new RegExp(phrase, "i"));
+  assert.match(renderGroups({ viewer, viewerStatus: AccessStatus.OPERATOR, participants, edges }, "group-01"), /no Nostr interoperability or group authority/i);
+  for (const source of [messagesSource, groupsSource]) {
+    assert.doesNotMatch(source, /from ["'][^"']*nostr|createNostrBoundary|\.publish\(|\.read\(|localStorage|sessionStorage|indexedDB|WebSocket|fetch\(|type=["']password|private.?key/i);
+  }
+});
+
+test("Messages and Groups responsive styles preserve mobile bottom navigation", async () => {
+  const css = await readFile(new URL("../web/styles.css", import.meta.url), "utf8");
+  for (const selector of [".split-surface", ".conversation-row.selected", ".conversation-row.unread", ".message-transcript", ".message-composer", ".group-members"]) assert.match(css, new RegExp(selector.replace(".", "\\.")));
+  assert.match(css, /@media\(max-width:720px\)[\s\S]*\.surface-list\{display:flex/);
   assert.match(css, /\.mobile-nav\{position:fixed;bottom:0/);
 });
