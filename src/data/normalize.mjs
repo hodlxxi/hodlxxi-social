@@ -18,6 +18,15 @@ const record = (value, allowed, label) => {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((field) => !allowed.includes(field))) throw new TypeError(`${label} must be a supported record`);
   return value;
 };
+const probeTimestamp = (value) => {
+  if (typeof value !== "string" || value.length > 32) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{6})?\+00:00$/.exec(value);
+  if (!match) return false;
+  const [, year, month, day, hour, minute, second] = match.map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day && date.getUTCHours() === hour && date.getUTCMinutes() === minute && date.getUTCSeconds() === second;
+};
+const safeProbeEvidence = (value) => typeof value === "string" && value.length > 0 && value.trim() === value && [...value].length <= 128 && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value);
 
 export function normalizeParticipants(value) {
   const records = freezeList(value, (raw) => {
@@ -73,6 +82,25 @@ export function normalizeNotifications(value) {
 
 export function normalizeExternalAssertion(subjectValue, raw, now) {
   const subject = key(subjectValue);
+  const probeFields = ["diagnostic", "evidenceSource", "observedAt", "schema", "source", "status", "subject", "valid", "version"];
+  let probeRecord;
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && Object.getPrototypeOf(raw) === Object.prototype) {
+    const keys = Reflect.ownKeys(raw);
+    const descriptors = Object.getOwnPropertyDescriptors(raw);
+    const exact = keys.length === probeFields.length && keys.every((field) => typeof field === "string" && probeFields.includes(field)) && probeFields.every((field) => descriptors[field]?.enumerable && Object.hasOwn(descriptors[field], "value"));
+    if (exact) probeRecord = Object.fromEntries(probeFields.map((field) => [field, descriptors[field].value]));
+    else if (descriptors.source && (!Object.hasOwn(descriptors.source, "value") || descriptors.source.value === "hodlxxi-authority-probe")) return Object.freeze({ subject, assertedStatus: AccessStatus.LIMITED, source: "unavailable", valid: false });
+  }
+  if (probeRecord?.source === "hodlxxi-authority-probe") {
+    raw = probeRecord;
+    const supported = true;
+    let matchingSubject = false;
+    try { matchingSubject = supported && raw.subject === subject; } catch {}
+    const status = raw?.status === AccessStatus.FULL ? AccessStatus.FULL : AccessStatus.LIMITED;
+    const observed = raw?.observedAt === null ? raw?.status === AccessStatus.LIMITED : probeTimestamp(raw?.observedAt);
+    const valid = Boolean(supported && raw.schema === "hodlxxi.current_entitlement_assertion.v1" && raw.version === 1 && matchingSubject && raw.valid === true && raw.diagnostic === "asserted" && [AccessStatus.LIMITED, AccessStatus.FULL].includes(raw.status) && safeProbeEvidence(raw.evidenceSource) && observed);
+    return Object.freeze({ subject, assertedStatus: valid ? status : AccessStatus.LIMITED, source: valid ? raw.source : "unavailable", valid, ...(valid ? { evidenceRef: raw.evidenceSource } : {}) });
+  }
   const supported = raw && typeof raw === "object" && !Array.isArray(raw) && Object.keys(raw).every((field) => ["source", "version", "subject", "status", "expiresAt", "evidenceRef"].includes(field));
   let matchingSubject = false;
   try { matchingSubject = supported && key(raw.subject) === subject; } catch {}
