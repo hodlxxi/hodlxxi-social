@@ -1,4 +1,4 @@
-# HODLXXI Social V1.6
+# HODLXXI Social V1.7
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
@@ -18,6 +18,14 @@ V1.5 adds a developer-only, one-shot public relay probe. It requires an explicit
 
 V1.6 adds a separate developer-only browser entrypoint at `web/dev-live.html`. It starts idle and requires a developer to enter an explicit `wss://` relay for each page session. Each manual action performs one bounded read (3 events by default, at most 10, with 5-second open and read timeouts) through `WebSocketNostrReadTransport`, `NostrPublicReadAdapter`, the V1.3 composition root, and `SocialDataService`. Only normalized public notes are rendered, using text-only DOM fields. There is no synthetic fallback when a live read fails.
 
+V1.7 adds a separate CLI-only, one-shot UBID current-entitlement probe. It requires an explicit canonical credential-free HTTPS origin and lowercase x-only subject, makes one bounded read, validates the exact `hodlxxi.current_entitlement_assertion.v1` response, and exits. It is not imported by either browser application or the Nostr probe, and tests inject transport without making live requests.
+
+```text
+node scripts/hodlxxi-authority-probe.mjs --origin https://authority.example --subject <lowercase-64-hex-public-key> --timeout-ms 5000
+```
+
+Successful output is only a current read-only assertion. It cannot issue status, authenticate key ownership, grant Operator, mutate covenant trust, or establish continuing availability. Exit codes are 2 for arguments, 3 for denied, 4 for unavailable, 5 for malformed, and 6 for invalid subject; a validated Limited or Full assertion exits 0.
+
 The dev page labels `DEV / LIVE PUBLIC NOSTR DATA` separately from `DEMO VIEWER / AUTHORITY NOT LIVE`. Its local demo viewer is not authenticated, and Nostr data cannot provide HODLXXI membership, Full or Operator status, CRT validity, verified identity, sponsor trust, or covenant authority. Missing live authority remains fail-closed at Limited. The ordinary `web/index.html` application remains synthetic/offline and neither imports the live transport nor connects on load.
 
 Run the manual probe after merge with a caller-selected public relay (the relay below is deliberately a placeholder):
@@ -28,13 +36,13 @@ node scripts/nostr-relay-probe.mjs --relay <explicit-wss-relay> --kind <0-or-1> 
 
 Optional `--author <64-hex-public-key>` narrows the request further; `--json` selects sanitized JSON output. The event limit is 1–10 (default 3), and the timeout is 250–30000 milliseconds (default 5000). Exit codes are 2 for arguments or relay configuration, 3 for transport failure, 4 for timeout, 5 for malformed relay results, and 6 for canonical validation failure. A successful read with no events exits successfully with `zero-events`.
 
-Implemented now: an explicit developer-only live public-feed preview, session-memory relay selection, bounded one-shot reads, the existing WebSocket transport, Nostr adapter, composition/service boundary and canonical validation pipeline, source-truth labeling, plus the V1.5 command-line probe. The normal product remains synthetic/offline by default.
+Implemented now: an explicit developer-only live public-feed preview, session-memory relay selection, bounded one-shot reads, the existing WebSocket transport, Nostr adapter, composition/service boundary and canonical validation pipeline, source-truth labeling, the V1.5 Nostr command-line probe, and the isolated V1.7 UBID current-entitlement command-line probe. The normal product remains synthetic/offline by default.
 
-Not implemented: production live mode, automatic source or relay selection, relay discovery, relay pools, reconnect, persistent subscriptions, polling, personalized feeds, authentication, signing, publishing, DMs, encryption, NIP-07, live HODLXXI authority, persistence, or deployment.
+Not implemented: production live mode, automatic source or relay selection, relay discovery, relay pools, reconnect, persistent subscriptions, polling, personalized feeds, authentication, signing, publishing, DMs, encryption, NIP-07, application-integrated live HODLXXI authority, persistence, or deployment.
 
 Successful probe output means “a public Nostr relay read succeeded and accepted events passed current validation.” It does not mean HODLXXI membership, Full or Operator status, CRT, identity ownership, relay trust, or content trust was verified.
 
-Not implemented: default live mode, relay discovery, relay pools, reconnect, persistent subscriptions, publishing, signing, DMs, encryption, authentication, NIP-07, NIP-44, NIP-59, NIP-65, production relay selection, live HODLXXI runtime transport, environment-based configuration, private-key access, HODLXXI authentication, CRT issuance, covenant or chain validation, sponsor/status mutation, writes to HODLXXI, or production deployment. The current viewer remains explicitly injected local state and does not establish key ownership.
+Not implemented: default live mode, relay discovery, relay pools, reconnect, persistent subscriptions, publishing, signing, DMs, encryption, authentication, NIP-07, NIP-44, NIP-59, NIP-65, production relay selection, application-integrated HODLXXI runtime transport, environment-based configuration, private-key access, HODLXXI authentication, CRT issuance, covenant or chain validation, sponsor/status mutation, writes to HODLXXI, or production deployment. The current viewer remains explicitly injected local state and does not establish key ownership.
 
 Open `web/index.html` through any static file server, then use the grouped desktop navigation or the mobile primary and More navigation for Home, Search, Discover, My Circle, Friends, Friends of Friends, Messages, Groups, Notifications, Activity, participant profiles, and Trust. Switch among synthetic participants to explore Limited, Full, and Operator views. The selector is a local demo control, not a login; viewer selection is in-memory only, recomputes route visibility, and cannot edit externally derived access status. Run `node --test` for deterministic Node built-in tests.
 

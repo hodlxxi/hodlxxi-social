@@ -1,6 +1,6 @@
 # Architecture
 
-## Implemented through V1.6
+## Implemented through V1.7
 
 The dependency direction is `explicitly selected sources → source validation and normalization → composition root → Social data service → visibility/access projection → web UI`. Canonical identity, access, visibility, and Nostr validation remain in `src/domain.mjs`, `src/visibility.mjs`, and `src/nostr.mjs`; adapters do not import rendering code.
 
@@ -21,6 +21,10 @@ Demo posts, reactions, messages, and notification read choices remain local ephe
 V1.6 adds only the explicit development dependency path `web/dev-live.html → web/dev-live.mjs → src/dev/live-social-composition.mjs → WebSocketNostrReadTransport → NostrPublicReadAdapter → composition root → SocialDataService`. The helper requires a caller-supplied relay, applies a maximum of 10 events and 5-second transport timeouts, injects no authority adapter, and returns one normalized snapshot. The browser renderer displays normalized note fields with text DOM operations and retains relay selection and results only in page memory. A manual action owns one read; failures and zero events are explicit, with no synthetic fallback, reconnect, polling, or background connection.
 
 The normal dependency path is unchanged: `web/index.html → web/app.mjs → SyntheticSocialAdapter plus fixture authority → composition root → SocialDataService`. It does not import the dev helper, WebSocket transport, or Nostr adapter, so opening the normal application cannot select or contact a relay. The two visible source badges on the dev page distinguish real public feed data from the unauthenticated local demo viewer and unavailable live authority.
+
+V1.7 adds an isolated dependency path `scripts/hodlxxi-authority-probe.mjs → src/dev/hodlxxi-authority-live-probe.mjs → caller-selected UBID HTTPS origin`. The CLI accepts only a raw canonical credential-free origin, performs exactly one bounded GET for an explicit lowercase subject, and validates the exact current-entitlement schema before producing a minimized Social assertion. Its transport is asynchronous and ends at the CLI; the unchanged synchronous `HodlxxiAuthorityReadAdapter` consumes only already-obtained canonical records. Normal UI, development Nostr UI, live-social composition, and Nostr CLI do not import this path.
+
+The canonical probe source admits only Limited and Full. Denied, unavailable, malformed, invalid, mismatched, or contradictory records fail closed to Limited, and Operator is not representable. Friendship, sponsor trust, Nostr metadata, synthetic state, and adapter ordering cannot elevate this projection. Tests inject the fetch and timer seams and perform no network request.
 
 ## Not implemented
 
