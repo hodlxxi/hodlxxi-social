@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { AUTHORITY_EXIT_CODES, AuthorityProbeError } from "../src/dev/hodlxxi-authority-live-probe.mjs";
 import {
   SOCIAL_AUTHORITY_PROJECTION_SCHEMA, createExactSubjectTransport, createExplicitSubjectContext,
@@ -22,8 +21,23 @@ const response = (body, status = 200) => {
   return { status, headers: new Headers({ "content-type": "application/json" }), body: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }) };
 };
 const dependencies = (fetchImpl) => ({ fetchImpl, setTimeoutImpl: () => 1, clearTimeoutImpl() {} });
-const execFileAsync = promisify(execFile);
-const base = "b9997db5611630da749041b619965368198ce300";
+const contentSha256 = (content) => createHash("sha256").update(content, "utf8").digest("hex");
+const protectedContentSha256 = Object.freeze({
+  "web/index.html": "4db7622010a79f8a8413c12c73f9e9eae9733f02336f28e3a0550f0e933cb9ec",
+  "web/app.mjs": "3e99b5a7149caad50738c4b24568803c62f9e8859738efeec21e0961e5234a9a",
+  "web/dev-live.html": "0a08b87328f5edecc8ab7f5cd4bf1d6be692725086fd2ea2043f6657e9210bdb",
+  "web/dev-live.mjs": "7f6e7023ff5579d5d3d7183e896614a2ab22a81b5c03fb53038cb4de90ba3f88",
+  "src/dev/live-social-composition.mjs": "58a74a3aa54ed8b757124b58aac1fc5983b2bda77a1d1c935e5ca7917e445c14",
+  "scripts/nostr-relay-probe.mjs": "36848909c4b04ed009c40d531bc78d5f2ab69f7567f5ed48f21dd9f40588fc5e",
+  "package.json": "918e7ebbd01966d636b076037d03a73cf928e02d6d4ea3d38167da24ce81bad5",
+  "src/dev/hodlxxi-authority-live-probe.mjs": "794de32b78394edae493025c872b0afcbf9335e54c4b5ae6a946b2ea0459b6a4",
+  "src/data/normalize.mjs": "8fd7409c127518d8dff8fdf013ff5eb4f45da262ed35a277a5e57931e6d22038",
+  "src/data/hodlxxi-authority-read-adapter.mjs": "44d584145047dfed1c5602276a00b41401bbf9e1fb036b8dcdd4ceb279d748bd",
+  "src/data/service.mjs": "ab8a4f5c04e6a6884f793ed85a30e8c1e4ceac4e0304dc7aa63c63de6c282031",
+  "src/data/composition.mjs": "59109496ad1cdd2c207eb3a0b3694513564b6b4e4c7cc9d67117a1837ca6e27a",
+  "src/domain.mjs": "45fd3801d773299c107a54fc56d4d25434a8ad904f2b0525ff7dd271314ec757",
+  "src/fixtures.mjs": "7ce91ac3aa6543eb84d9bf80843a28bf29ed023226baa42dfd658e8326d646bc"
+});
 
 test("external Full and Limited cross the existing normalized Social boundary exactly once", async () => {
   for (const identityClass of ["limited", "full"]) {
@@ -239,16 +253,10 @@ test("implementation reuses V1.7 and contains no alternate authority or side-eff
   assert.deepEqual(pkg.devDependencies, {});
 });
 
-test("protected browser, Nostr, package, and core boundary files equal the specified base", async () => {
-  const paths = [
-    "web/index.html", "web/app.mjs", "web/dev-live.html", "web/dev-live.mjs", "src/dev/live-social-composition.mjs", "scripts/nostr-relay-probe.mjs",
-    "package.json", "src/dev/hodlxxi-authority-live-probe.mjs", "src/data/normalize.mjs", "src/data/hodlxxi-authority-read-adapter.mjs",
-    "src/data/service.mjs", "src/data/composition.mjs", "src/domain.mjs", "src/fixtures.mjs"
-  ];
-  for (const path of paths) {
+test("protected browser, Nostr, package, and core boundaries match audited content and remain isolated", async () => {
+  for (const [path, expectedSha256] of Object.entries(protectedContentSha256)) {
     const current = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
-    const { stdout: expected } = await execFileAsync("git", ["show", `${base}:${path}`], { encoding: "utf8" });
-    assert.equal(current, expected, `${path} must remain equal to the specified base`);
-    if (path.startsWith("web/") || path.includes("nostr")) assert.doesNotMatch(current, /hodlxxi-authority-live-composition|hodlxxi-authority-social-probe/);
+    assert.equal(contentSha256(current), expectedSha256, `${path} must match the audited protected content`);
+    assert.doesNotMatch(current, /hodlxxi-authority-live-composition|hodlxxi-authority-social-probe/);
   }
 });
