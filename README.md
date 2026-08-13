@@ -26,6 +26,14 @@ node scripts/hodlxxi-authority-probe.mjs --origin https://authority.example --su
 
 Successful output is only a current read-only assertion. It cannot issue status, authenticate key ownership, grant Operator, mutate covenant trust, or establish continuing availability. Exit codes are 2 for arguments, 3 for denied, 4 for unavailable, 5 for malformed, and 6 for invalid subject; a validated Limited or Full assertion exits 0.
 
+V1.8 adds a developer-only one-shot Social projection of that assertion. The runtime remains the sole external authority: Social does not grant Full, but may reflect a validated, externally asserted, time-bounded Full after it crosses the existing authority adapter, normalization, composition root, and Social data service. Run it only with an explicit canonical credential-free HTTPS origin and explicit lowercase x-only subject:
+
+```sh
+node scripts/hodlxxi-authority-social-probe.mjs --origin https://authority.example --subject <lowercase-64-hex-public-key> --timeout-ms 5000
+```
+
+Its immutable `hodlxxi.social_authority_projection.v1` record contains, in order, only `schema`, `version`, `subject`, `assertedIdentityClass`, `valid`, `diagnostic`, `evidenceSource`, and `observedAt`. The asserted class is Limited or Full only; Operator is impossible in this source. Missing or invalid authority fails closed to invalid Limited. Selecting the subject is routing context, not authentication, proof of ownership, membership, trust, or control of the key. The CLI performs no writes, refresh, polling, persistence, or deployment, and a time-bounded assertion is not permanent status. The normal synthetic UI and Nostr-only development page remain unchanged; V1.8 is not a production mode.
+
 The dev page labels `DEV / LIVE PUBLIC NOSTR DATA` separately from `DEMO VIEWER / AUTHORITY NOT LIVE`. Its local demo viewer is not authenticated, and Nostr data cannot provide HODLXXI membership, Full or Operator status, CRT validity, verified identity, sponsor trust, or covenant authority. Missing live authority remains fail-closed at Limited. The ordinary `web/index.html` application remains synthetic/offline and neither imports the live transport nor connects on load.
 
 Run the manual probe after merge with a caller-selected public relay (the relay below is deliberately a placeholder):
