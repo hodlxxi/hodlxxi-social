@@ -1,4 +1,4 @@
-# HODLXXI Social V1.7
+# HODLXXI Social V1.9
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
@@ -33,6 +33,10 @@ node scripts/hodlxxi-authority-social-probe.mjs --origin https://authority.examp
 ```
 
 Its immutable `hodlxxi.social_authority_projection.v1` record contains, in order, only `schema`, `version`, `subject`, `assertedIdentityClass`, `valid`, `diagnostic`, `evidenceSource`, and `observedAt`. The asserted class is Limited or Full only; Operator is impossible in this source. Missing or invalid authority fails closed to invalid Limited. Selecting the subject is routing context, not authentication, proof of ownership, membership, trust, or control of the key. The CLI performs no writes, refresh, polling, persistence, or deployment, and a time-bounded assertion is not permanent status. The normal synthetic UI and Nostr-only development page remain unchanged; V1.8 is not a production mode.
+
+V1.9 adds a separate developer-only browser entrypoint at `web/dev-authority.html`. It starts idle and requires an explicit canonical credential-free HTTPS origin, lowercase 64-character x-only subject, and timeout from 250 through 30000 milliseconds. Each accepted manual submission runs the unchanged V1.8 Social authority composition exactly once and displays only its formatter-valid projection or a visible fail-closed Limited result. The validated subject remains visible while loading and after authority failures; unvalidated input is not presented as a selected subject. Evidence containing `operator` in any casing is suppressed as display text without changing an otherwise valid Limited or Full assertion.
+
+This visual projection reflects external read-only authority; Social does not grant Full and never projects Operator. The page does not authenticate the subject, prove possession of a private key, issue status, persist state, retry, poll, discover an origin, or enable production mode. The ordinary synthetic application and separate Nostr developer page remain unchanged.
 
 The dev page labels `DEV / LIVE PUBLIC NOSTR DATA` separately from `DEMO VIEWER / AUTHORITY NOT LIVE`. Its local demo viewer is not authenticated, and Nostr data cannot provide HODLXXI membership, Full or Operator status, CRT validity, verified identity, sponsor trust, or covenant authority. Missing live authority remains fail-closed at Limited. The ordinary `web/index.html` application remains synthetic/offline and neither imports the live transport nor connects on load.
 

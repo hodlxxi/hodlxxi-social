@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>HODLXXI Social — Dev Authority Preview</title><link rel="stylesheet" href="./styles.css"></head>
+<body class="dev-authority-page">
+  <header class="topbar"><a class="brand" href="./index.html">HODLXXI <span>Social</span></a><div class="status"><i></i> Explicit development preview</div></header>
+  <main class="dev-live-shell">
+    <p class="eyebrow">Developer-only entrypoint</p>
+    <h1>One-shot live authority preview</h1>
+    <div class="dev-live-badges" aria-label="Source truth">
+      <strong class="badge">DEV / LIVE HODLXXI AUTHORITY</strong>
+      <strong class="badge dev-live-demo">EXPLICIT SUBJECT / NOT AUTHENTICATED</strong>
+      <strong class="badge dev-live-demo">ONE-SHOT / NO PERSISTENCE</strong>
+    </div>
+    <p class="notice">This page reflects one time-bounded assertion from the external HODLXXI authority. It does not authenticate the selected subject, issue status, prove possession of a private key, persist results, or enable production mode.</p>
+    <nav class="dev-authority-links" aria-label="Developer preview links"><a href="./index.html">Ordinary synthetic Social</a><a href="./dev-live.html">Nostr developer preview</a></nav>
+    <form id="dev-authority-form" class="dev-authority-form">
+      <label for="authority-origin">Canonical HTTPS origin</label>
+      <input id="authority-origin" name="origin" type="url" inputmode="url" autocomplete="off" required placeholder="https://authority.example">
+      <label for="authority-subject">Lowercase x-only subject</label>
+      <input id="authority-subject" name="subject" type="text" inputmode="text" autocomplete="off" minlength="64" maxlength="64" pattern="[0-9a-f]{64}" required placeholder="64 lowercase hexadecimal characters">
+      <label for="authority-timeout">Timeout (milliseconds)</label>
+      <input id="authority-timeout" name="timeout" type="number" min="250" max="30000" value="5000" required>
+      <button type="submit">Project once</button>
+      <p class="meta">Nothing is selected automatically. Each accepted submission performs one bounded composition with no retry or synthetic fallback.</p>
+    </form>
+    <section class="dev-live-state dev-authority-state" aria-live="polite">
+      <h2>Projection state</h2>
+      <dl>
+        <div><dt>Selected subject</dt><dd id="authority-selected-subject">None</dd></div>
+        <div><dt>Externally asserted class</dt><dd id="authority-class">Limited</dd></div>
+        <div><dt>Validity</dt><dd id="authority-validity">Idle</dd></div>
+        <div><dt>Diagnostic</dt><dd id="authority-diagnostic">idle</dd></div>
+        <div><dt>Evidence source</dt><dd id="authority-evidence">None</dd></div>
+        <div><dt>Observation time</dt><dd id="authority-observed-at">None</dd></div>
+      </dl>
+    </section>
+  </main>
+  <footer>Development preview only. Social reflects validated external Limited or Full assertions; it does not grant status or project Operator authority.</footer>
+  <script type="module" src="./dev-authority.mjs"></script>
+</body></html>

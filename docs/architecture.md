@@ -1,6 +1,6 @@
 # Architecture
 
-## Implemented through V1.7
+## Implemented through V1.9
 
 The dependency direction is `explicitly selected sources → source validation and normalization → composition root → Social data service → visibility/access projection → web UI`. Canonical identity, access, visibility, and Nostr validation remain in `src/domain.mjs`, `src/visibility.mjs`, and `src/nostr.mjs`; adapters do not import rendering code.
 
@@ -27,6 +27,10 @@ V1.7 adds an isolated dependency path `scripts/hodlxxi-authority-probe.mjs → s
 The canonical probe source admits only Limited and Full. Denied, unavailable, malformed, invalid, mismatched, or contradictory records fail closed to Limited, and Operator is not representable. Friendship, sponsor trust, Nostr metadata, synthetic state, and adapter ordering cannot elevate this projection. Tests inject the fetch and timer seams and perform no network request.
 
 V1.8 adds the isolated developer CLI path `scripts/hodlxxi-authority-social-probe.mjs → runAuthorityProbe() → immutable V1.7 assertion → exact-subject synchronous in-memory transport → HodlxxiAuthorityReadAdapter → createComposedSocialDataService() → SocialDataService.load() → hodlxxi.social_authority_projection.v1`. The asynchronous network boundary ends after the single awaited probe; the transport, authority adapter, composition root, and service remain synchronous. The transport exposes only `readAssertion(subject)`, answers only for the explicitly selected canonical subject, and performs no network request or write.
+
+V1.9 adds a separate visual dependency path: `web/dev-authority.html → web/dev-authority.mjs → parseAuthorityProbeArgs() → runSocialAuthorityComposition() → formatSocialAuthorityResult()`. Binding and page load remain idle. After the existing V1.7 parser accepts an explicit origin, subject, and bounded timeout, one manual submission owns one composition call. The validated subject is displayed before the asynchronous call and retained through asserted and fail-closed outcomes. The submit boundary rejects concurrent work, restores its control after completion, and has no retry, polling, reconnect, scheduler, persistence, or synthetic fallback.
+
+The exact V1.8 formatter remains the authority-projection boundary. Only formatter-valid asserted Limited or Full results render as valid; every rejection or authority failure renders Limited. Operator remains invalid as an authority class. Separately, evidence text containing the case-insensitive substring `operator` is suppressed at the text-only display boundary without reinterpreting an otherwise valid class. This page reflects external read-only authority and neither authenticates the selected subject nor grants status. The normal synthetic application and Nostr-only developer page do not import this path.
 
 The accompanying social context is routing context rather than synthetic identity or authentication: it supplies the selected subject as viewer and sole neutrally labelled participant, with empty relationships, feed, groups, conversations, and notifications and only required read capabilities. The output class is read from normalized `snapshot.statuses[subject]`, while validity and evidence come from `snapshot.externalAssertions[subject]`; it is not copied from the HTTP response. A normalized valid externally asserted Full may therefore be reflected as Full, while valid Limited remains Limited and every missing or invalid assertion fails closed to invalid Limited. Runtime remains the sole external authority, Social does not grant Full, and Operator is impossible in the V1.7/V1.8 source contract. This projection establishes neither ownership nor authentication and creates no permanent status.
 
