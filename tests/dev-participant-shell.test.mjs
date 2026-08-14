@@ -19,13 +19,14 @@ class Element {
   get textContent() { return this._text; }
 }
 function fakeDocument() {
-  const ids = ["#participant-shell-form", "#shell-origin", "#shell-relay", "#shell-subject", "#shell-timeout", "#shell-note-limit", "#shell-selected-key", "#shell-freshness", "#shell-profile-state", "#shell-feed-state", "#shell-navigation", "#shell-profile", "#shell-feed"];
+  const ids = ["#participant-shell-form", "#shell-select-extension-key", "#shell-extension-state", "#shell-origin", "#shell-relay", "#shell-subject", "#shell-timeout", "#shell-note-limit", "#shell-selected-key", "#shell-freshness", "#shell-profile-state", "#shell-feed-state", "#shell-navigation", "#shell-profile", "#shell-feed"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["#participant-shell-form"].button = new Element();
   Object.assign(elements["#shell-origin"], { value: options.origin }); Object.assign(elements["#shell-relay"], { value: options.relayUrl }); Object.assign(elements["#shell-subject"], { value: subject }); Object.assign(elements["#shell-timeout"], { value: "5000" }); Object.assign(elements["#shell-note-limit"], { value: "3" });
   return { elements, querySelector: (selector) => elements[selector] };
 }
 const submit = (binding) => binding.form.listeners.get("submit")({ preventDefault() {} });
+const selectExtension = (binding) => binding.selectionButton.listeners.get("click")({ preventDefault() {} });
 const deferred = () => { let resolve; let reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
 test("idle and invalid input perform zero reads", async () => {
@@ -33,6 +34,44 @@ test("idle and invalid input perform zero reads", async () => {
   const binding = bindParticipantShell(document, { parse: () => { throw new TypeError("invalid"); }, load: async () => { reads += 1; } });
   assert.equal(reads, 0); await submit(binding); assert.equal(reads, 0);
   assert.match(document.elements["#shell-freshness"].textContent, /no reads/);
+});
+
+test("provider resolution waits for selection and selection remains separate from participant loading", async () => {
+  const document = fakeDocument(); document.elements["#shell-subject"].value = ""; let resolves = 0; let keyCalls = 0; let loads = 0;
+  const binding = bindParticipantShell(document, { resolveProvider: () => { resolves += 1; return { getPublicKey: async () => { keyCalls += 1; return subject; } }; }, load: async () => { loads += 1; return result(); } });
+  assert.equal(resolves, 0); assert.equal(keyCalls, 0); assert.equal(loads, 0);
+  await selectExtension(binding);
+  assert.equal(resolves, 1); assert.equal(keyCalls, 1); assert.equal(loads, 0);
+  assert.equal(document.elements["#shell-subject"].value, subject);
+  assert.equal(document.elements["#shell-extension-state"].textContent, "Extension key selected");
+  assert.equal(binding.selectionButton.disabled, false);
+});
+
+test("selection retains an exact match and rejects mismatch or malformed manual subjects", async () => {
+  for (const [manual, expected] of [[subject, "Extension key selected — exact match"], ["d".repeat(64), "Subject mismatch"], ["malformed", "Invalid manual subject"]]) {
+    const document = fakeDocument(); document.elements["#shell-subject"].value = manual; let loads = 0; let selections = 0;
+    const binding = bindParticipantShell(document, { selectKey: async () => { selections += 1; return { state: "Extension key selected", publicKey: subject }; }, load: async () => { loads += 1; } });
+    await selectExtension(binding);
+    assert.equal(document.elements["#shell-subject"].value, manual); assert.equal(document.elements["#shell-extension-state"].textContent, expected); assert.equal(loads, 0);
+    assert.equal(selections, manual === "malformed" ? 0 : 1);
+  }
+});
+
+test("malformed manual input prevents provider resolution and getPublicKey access", async () => {
+  const document = fakeDocument(); document.elements["#shell-subject"].value = "not-canonical"; let resolves = 0; let keyCalls = 0;
+  const binding = bindParticipantShell(document, { resolveProvider: () => { resolves += 1; return { getPublicKey: () => { keyCalls += 1; return subject; } }; } });
+  await selectExtension(binding);
+  assert.equal(resolves, 0); assert.equal(keyCalls, 0);
+  assert.equal(document.elements["#shell-extension-state"].textContent, "Invalid manual subject");
+});
+
+test("concurrent extension selection is rejected, failures restore controls, and later selection is possible", async () => {
+  const document = fakeDocument(); const first = deferred(); let calls = 0;
+  const binding = bindParticipantShell(document, { selectKey: () => { calls += 1; return calls === 1 ? first.promise : Promise.resolve({ state: "Extension unavailable" }); } });
+  const pending = selectExtension(binding); await selectExtension(binding); assert.equal(calls, 1); assert.equal(binding.selectionButton.disabled, true);
+  first.reject(new Error("hostile extension text")); await pending;
+  assert.equal(binding.selectionButton.disabled, false); assert.equal(document.elements["#shell-extension-state"].textContent, "Extension unavailable");
+  await selectExtension(binding); assert.equal(calls, 2);
 });
 
 test("one accepted submission renders escaped existing profile, badge, and feed output", async () => {
@@ -99,6 +138,7 @@ test("Operator-bearing public display records are absent from complete rendered 
 test("surface is isolated, read-only, responsive, and preserves ordinary explicit bootstrap", async () => {
   const [html, module, css, app, index] = await Promise.all(["dev-participant-shell.html", "dev-participant-shell.mjs", "styles.css", "app.mjs", "index.html"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8")));
   assert.match(html, /DEV \/ LIVE READ-ONLY PRODUCT SHELL/); assert.match(html, /EXPLICIT PUBLIC KEY \/ NOT AUTHENTICATED/); assert.match(html, /HODLXXI AUTHORITY \+ PUBLIC NOSTR SOURCES/);
+  assert.match(html, /EXTENSION-SELECTED KEY \/ NOT AUTHENTICATED/); assert.match(html, /Select key from NIP-07 extension/);
   assert.doesNotMatch(html, /viewer-select|local-composer|message-composer|data-action="react"/);
   assert.doesNotMatch(module + html, /localStorage|sessionStorage|indexedDB|serviceWorker|setInterval|\.publish\(|sign\w*\(|\b(?:POST|PUT|PATCH|DELETE)\b/);
   assert.match(css, /live-product-grid/); assert.match(css, /@media\(max-width:720px\).*live-product-grid/s);
@@ -108,4 +148,5 @@ test("surface is isolated, read-only, responsive, and preserves ordinary explici
   assert.doesNotMatch(app.slice(0, app.indexOf("function getFixtureData")), /\.load\(\)/);
   assert.match(app, /renderApp\(root, getFixtureData\(\), browser\)/);
   assert.doesNotMatch(app, /hodlxxi-participant-live-composition|WebSocketNostrReadTransport/);
+  assert.doesNotMatch(app + index, /NIP-07|nip07|window\.nostr/);
 });

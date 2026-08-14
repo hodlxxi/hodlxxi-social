@@ -1,5 +1,6 @@
 import { loadParticipantLive, parseParticipantLiveOptions } from "../src/dev/hodlxxi-participant-live-composition.mjs";
 import { createParticipantShellSnapshot } from "../src/dev/hodlxxi-participant-shell-snapshot.mjs";
+import { isCanonicalNip07PublicKey, NIP07_SELECTION_STATE, selectNip07PublicKey } from "../src/dev/nip07-public-key-selector.mjs";
 import { renderFeed, renderNavigation, renderProfile, resolveViewer } from "./app.mjs";
 import { renderPageFrame } from "./components.mjs";
 
@@ -20,11 +21,13 @@ const setMarkup = (target, markup, kind) => {
   }
 };
 
-export function bindParticipantShell(document, { parse = parseParticipantLiveOptions, load = loadParticipantLive, map = createParticipantShellSnapshot } = {}) {
+export function bindParticipantShell(document, { parse = parseParticipantLiveOptions, load = loadParticipantLive, map = createParticipantShellSnapshot, selectKey = selectNip07PublicKey, resolveProvider = () => globalThis.window?.nostr } = {}) {
   const form = document.querySelector("#participant-shell-form");
   const button = form.querySelector('button[type="submit"]');
+  const selectionButton = document.querySelector("#shell-select-extension-key");
   const field = (id) => document.querySelector(id);
   const selected = field("#shell-selected-key");
+  const selectionState = field("#shell-extension-state");
   const freshness = field("#shell-freshness");
   const profileState = field("#shell-profile-state");
   const feedState = field("#shell-feed-state");
@@ -32,11 +35,44 @@ export function bindParticipantShell(document, { parse = parseParticipantLiveOpt
   const feedTarget = field("#shell-feed");
   const navigationTarget = field("#shell-navigation");
   let active = false;
+  let selecting = false;
   const clearRendered = () => {
     navigationTarget.innerHTML = "";
     setMarkup(profileTarget, renderPageFrame({ eyebrow: "Read-only participant", title: "Profile unavailable", content: '<article class="ui-state ui-state-unavailable"><strong>No current profile result</strong><p class="meta">The latest submission did not produce a renderable snapshot.</p></article>' }), "profile");
     setMarkup(feedTarget, renderPageFrame({ eyebrow: "Public Nostr source", title: "Public feed unavailable", content: '<article class="ui-state ui-state-unavailable"><strong>No current public-note result</strong><p class="meta">The latest submission did not produce a renderable snapshot.</p></article>' }), "feed");
   };
+
+  selectionButton.addEventListener("click", async () => {
+    if (selecting) return;
+    const manual = field("#shell-subject").value;
+    if (manual !== "" && !isCanonicalNip07PublicKey(manual)) {
+      selectionState.textContent = "Invalid manual subject";
+      return;
+    }
+    selecting = true;
+    selectionButton.disabled = true;
+    selectionState.textContent = "Selecting";
+    try {
+      const result = await selectKey({ resolveProvider });
+      if (result?.state !== NIP07_SELECTION_STATE.selected || !isCanonicalNip07PublicKey(result.publicKey)) {
+        selectionState.textContent = result?.state === NIP07_SELECTION_STATE.invalid ? NIP07_SELECTION_STATE.invalid : NIP07_SELECTION_STATE.unavailable;
+        return;
+      }
+      if (manual === "") {
+        field("#shell-subject").value = result.publicKey;
+        selectionState.textContent = NIP07_SELECTION_STATE.selected;
+      } else if (manual !== result.publicKey) {
+        selectionState.textContent = "Subject mismatch";
+      } else {
+        selectionState.textContent = "Extension key selected — exact match";
+      }
+    } catch {
+      selectionState.textContent = NIP07_SELECTION_STATE.unavailable;
+    } finally {
+      selecting = false;
+      selectionButton.disabled = false;
+    }
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -81,7 +117,7 @@ export function bindParticipantShell(document, { parse = parseParticipantLiveOpt
       button.disabled = false;
     }
   });
-  return Object.freeze({ form });
+  return Object.freeze({ form, selectionButton });
 }
 
 if (typeof document !== "undefined") bindParticipantShell(document);
