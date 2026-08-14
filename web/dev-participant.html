@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unified participant preview · HODLXXI Social</title><link rel="stylesheet" href="./styles.css"></head>
+<body><main class="dev-live-shell dev-participant-shell">
+  <p class="eyebrow">DEV / UNIFIED LIVE PARTICIPANT PREVIEW</p><h1>One subject, two read-only sources.</h1>
+  <div class="dev-live-badges"><span class="local-pill">HODLXXI EXTERNAL AUTHORITY</span><span class="local-pill dev-live-demo">NOSTR PUBLIC DATA</span><span class="local-pill dev-live-demo">NOT AUTHENTICATED</span></div>
+  <p>This development-only page uses an explicitly selected public key as routing context. It does not authenticate anyone, prove ownership or private-key possession, establish legal identity or permanent membership, issue status, or enable production mode.</p>
+  <nav class="dev-authority-links"><a href="./index.html">Ordinary Social</a><a href="./dev-live.html">Nostr preview</a><a href="./dev-authority.html">Authority preview</a></nav>
+  <form id="dev-participant-form" class="dev-participant-form">
+    <label>Authority HTTPS origin<input id="participant-origin" type="url" autocomplete="off" required></label>
+    <label>Nostr WSS relay<input id="participant-relay-input" type="url" autocomplete="off" required></label>
+    <label>Lowercase x-only public key<input id="participant-subject" type="text" minlength="64" maxlength="64" autocomplete="off" required></label>
+    <label>Timeout (ms)<input id="participant-timeout" type="number" min="250" max="30000" value="5000" required></label>
+    <label>Public-note limit<input id="participant-note-limit" type="number" min="1" max="10" value="3" required></label>
+    <button type="submit">Preview once</button><p class="meta">ONE-SHOT / NO PERSISTENCE / NO RETRY / NO AUTOMATIC REFRESH</p>
+  </form>
+  <section class="dev-live-state"><h2>Selected public key</h2><p id="participant-selected-subject" class="key">None</p><p>Relay: <span id="participant-relay">None</span></p></section>
+  <div class="dev-participant-grid">
+    <section class="dev-live-state dev-authority-state"><p class="eyebrow">HODLXXI AUTHORITY SOURCE</p><h2>Authority</h2><dl><div><dt>Class</dt><dd id="participant-authority-class">Limited</dd></div><div><dt>State</dt><dd id="participant-authority-state">Idle</dd></div><div><dt>Diagnostic</dt><dd id="participant-authority-diagnostic">None</dd></div><div><dt>Evidence</dt><dd id="participant-authority-evidence">None</dd></div><div><dt>Observed</dt><dd id="participant-authority-observed">None</dd></div></dl></section>
+    <section class="dev-live-state"><p class="eyebrow">NOSTR PUBLIC DATA SOURCE</p><h2>Public profile</h2><p id="participant-profile-state">Idle</p><p>Name: <span id="participant-profile-name">None</span></p></section>
+  </div>
+  <section><p class="eyebrow">NOSTR PUBLIC DATA SOURCE</p><h2>Bounded public-note feed</h2><p id="participant-notes-state">Idle</p><div id="participant-notes"></div></section>
+</main><script type="module" src="./dev-participant.mjs"></script></body></html>
