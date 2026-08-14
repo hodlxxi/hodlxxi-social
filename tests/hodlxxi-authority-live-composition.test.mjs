@@ -23,8 +23,8 @@ const response = (body, status = 200) => {
 const dependencies = (fetchImpl) => ({ fetchImpl, setTimeoutImpl: () => 1, clearTimeoutImpl() {} });
 const contentSha256 = (content) => createHash("sha256").update(content, "utf8").digest("hex");
 const protectedContentSha256 = Object.freeze({
-  "web/index.html": "4db7622010a79f8a8413c12c73f9e9eae9733f02336f28e3a0550f0e933cb9ec",
-  "web/app.mjs": "3e99b5a7149caad50738c4b24568803c62f9e8859738efeec21e0961e5234a9a",
+  "web/index.html": "02f4fe837149801b88a33da49d8f1f68455ad7c80233fb5995d7b160cea75606",
+  "web/app.mjs": "da127fe9aaa8e8f0d5a57642a2fa9c1cf1e30233695f6148b8b93ae11a02c974",
   "web/dev-live.html": "0a08b87328f5edecc8ab7f5cd4bf1d6be692725086fd2ea2043f6657e9210bdb",
   "web/dev-live.mjs": "7f6e7023ff5579d5d3d7183e896614a2ab22a81b5c03fb53038cb4de90ba3f88",
   "src/dev/live-social-composition.mjs": "58a74a3aa54ed8b757124b58aac1fc5983b2bda77a1d1c935e5ca7917e445c14",
@@ -259,4 +259,21 @@ test("protected browser, Nostr, package, and core boundaries match audited conte
     assert.equal(contentSha256(current), expectedSha256, `${path} must match the audited protected content`);
     assert.doesNotMatch(current, /hodlxxi-authority-live-composition|hodlxxi-authority-social-probe/);
   }
+});
+
+test("explicit ordinary bootstrap preserves V1.8 isolation and developer imports remain inert", async () => {
+  const app = await readFile(new URL("../web/app.mjs", import.meta.url), "utf8");
+  const index = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+  const developer = await readFile(new URL("../web/dev-participant-shell.mjs", import.meta.url), "utf8");
+  assert.match(index, /data-hodlxxi-synthetic-app/);
+  assert.equal((index.match(/src="\.\/app\.mjs"/g) ?? []).length, 1);
+  assert.match(app, /export function bootstrapSyntheticApp/);
+  assert.match(app, /let fixtureData;\s*function getFixtureData\(\)/);
+  assert.doesNotMatch(app.slice(0, app.indexOf("function getFixtureData")), /\.load\(\)/);
+  assert.match(app, /hasAttribute\?\.\("data-hodlxxi-synthetic-app"\)/);
+  assert.equal((app.match(/bootstrapSyntheticApp\(document\)/g) ?? []).length, 1);
+  assert.doesNotMatch(app, /hodlxxi-participant-live-composition|WebSocketNostrReadTransport|fetch\s*\(/);
+  assert.match(developer, /loadParticipantLive/);
+  assert.match(developer, /if \(typeof document !== "undefined"\) bindParticipantShell\(document\)/);
+  assert.doesNotMatch(developer, /SyntheticSocialAdapter|renderApp\(|bootstrapSyntheticApp\(|setInterval|setTimeout|localStorage|sessionStorage|indexedDB/);
 });

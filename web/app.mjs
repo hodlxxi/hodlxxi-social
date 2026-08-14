@@ -15,8 +15,14 @@ import { renderLocalDiscovery } from "./discovery.mjs";
 import { escapeHtml, renderEmptyState, renderPageFrame, renderRestrictedState, renderStatusBadge, renderUnavailableState } from "./components.mjs";
 import { navigationModel, renderNavigation } from "./shell.mjs";
 
-const fixtureAuthority = new HodlxxiAuthorityReadAdapter({ readAssertion: (subject) => assertions[subject] });
-const fixtureData = createComposedSocialDataService({ socialAdapter: new SyntheticSocialAdapter(), authorityAdapter: fixtureAuthority }).load();
+let fixtureData;
+function getFixtureData() {
+  if (!fixtureData) {
+    const fixtureAuthority = new HodlxxiAuthorityReadAdapter({ readAssertion: (subject) => assertions[subject] });
+    fixtureData = createComposedSocialDataService({ socialAdapter: new SyntheticSocialAdapter(), authorityAdapter: fixtureAuthority }).load();
+  }
+  return fixtureData;
+}
 const validStatuses = new Set(["limited", "full", "operator"]);
 const pageRoutes = Object.freeze({ home: "/home", search: "/search", discover: "/discover", circle: "/circle", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust" });
 export { navigationModel, renderNavigation };
@@ -51,8 +57,8 @@ const noDiscovery = () => renderEmptyState("friend-discovery");
 const noConnections = () => renderEmptyState("connections");
 
 function indexed(data) { return new Map(data.participants.map((person) => [person.id, person])); }
-export function resolveViewer(viewerId, data = fixtureData) { return indexed(data).get(viewerId); }
-export function selectViewer(currentViewerId, requestedViewerId, data = fixtureData) { return resolveViewer(requestedViewerId, data) ? requestedViewerId : currentViewerId; }
+export function resolveViewer(viewerId, data = getFixtureData()) { return indexed(data).get(viewerId); }
+export function selectViewer(currentViewerId, requestedViewerId, data = getFixtureData()) { return resolveViewer(requestedViewerId, data) ? requestedViewerId : currentViewerId; }
 
 export function profileAccess({ viewer, viewerStatus, subjectId, participants, edges }) {
   if (!viewer || !validStatuses.has(viewerStatus)) return Object.freeze({ visible: false, reason: "restricted" });
@@ -65,7 +71,9 @@ export function profileAccess({ viewer, viewerStatus, subjectId, participants, e
     : Object.freeze({ visible: false, reason: "restricted" });
 }
 
-export function renderProfile({ viewer, viewerStatus, subjectId = viewer?.id, participants: people = fixtureData.participants, edges: graph = fixtureData.edges, statuses: access = fixtureData.statuses }) {
+export function renderProfile(options = Object.freeze({})) {
+  const defaults = options.participants && options.edges && options.statuses ? undefined : getFixtureData();
+  const { viewer, viewerStatus, subjectId = viewer?.id, participants: people = defaults?.participants, edges: graph = defaults?.edges, statuses: access = defaults?.statuses } = options;
   const result = profileAccess({ viewer, viewerStatus, subjectId, participants: people, edges: graph });
   if (!result.visible) return renderRestrictedState("profile");
   const { subject, context } = result;
@@ -76,7 +84,7 @@ export function renderProfile({ viewer, viewerStatus, subjectId = viewer?.id, pa
   return `<article class="profile-card"><div class="avatar avatar-large" aria-hidden="true">${escapeHtml(subject.displayName[0])}</div><h2>${escapeHtml(subject.displayName)}</h2>${renderStatusBadge(subjectStatus)}<p class="key">${shortKey(subject.publicKey)}</p><dl><div><dt>Relationship</dt><dd>${context}</dd></div><div><dt>Direct friend</dt><dd>${direct}</dd></div></dl><section class="trust-section"><h3>Sponsor-trust</h3><p>${trust}</p><p class="notice">Sponsor-trust is external provenance and remains separate from friendship.</p></section><p class="notice">Displayed role/status is externally derived and is not legal identity.</p></article>`;
 }
 
-export function renderFeed({ viewer, viewerStatus, participants, edges, notes, statuses: access = fixtureData.statuses }) {
+export function renderFeed({ viewer, viewerStatus, participants, edges, notes, statuses: access = getFixtureData().statuses }) {
   return renderSocialFeed({ viewer, viewerStatus, participants, edges, notes, statuses: access });
 }
 
@@ -110,7 +118,7 @@ export function renderTrust({ viewer, viewerStatus, participants, edges }) {
   }).join("");
 }
 
-export function renderPage(route, viewerId, data = fixtureData, ui = Object.freeze({})) {
+export function renderPage(route, viewerId, data = getFixtureData(), ui = Object.freeze({})) {
   const viewer = resolveViewer(viewerId, data);
   const viewerStatus = viewer && validStatuses.has(data.statuses[viewer.id]) ? data.statuses[viewer.id] : undefined;
   const common = { viewer, viewerStatus, ...data };
@@ -132,14 +140,14 @@ export function renderPage(route, viewerId, data = fixtureData, ui = Object.free
   return renderPageFrame({ title: headings[route.page], content });
 }
 
-export function renderShell(viewerId, data = fixtureData, route = parseRoute("#/home"), ui = Object.freeze({})) {
+export function renderShell(viewerId, data = getFixtureData(), route = parseRoute("#/home"), ui = Object.freeze({})) {
   const viewer = resolveViewer(viewerId, data);
   const viewerStatus = viewer && validStatuses.has(data.statuses[viewer.id]) ? data.statuses[viewer.id] : undefined;
   const common = { viewer, viewerStatus, ...data };
   return Object.freeze({ viewerId: viewer?.id, viewerStatus, profile: renderProfile(common), feed: renderSocialFeed(common, ui.reactions), connections: renderConnections(common), discovery: renderDiscovery(common), trust: renderTrust(common), page: renderPage(route, viewerId, data, ui), navigation: renderNavigation(route, viewerId, "nav-links", visibleUnreadCount(common, ui.notificationState)) });
 }
 
-export function renderApp(root, data = fixtureData, browser = globalThis.window) {
+export function renderApp(root, data = getFixtureData(), browser = globalThis.window) {
   const selector = root.querySelector("#viewer-select");
   selector.innerHTML = data.participants.map((person) => `<option value="${person.id}">${escapeHtml(person.displayName)} · ${data.statuses[person.id]}</option>`).join("");
   let viewerId = resolveViewer(data.currentViewerId, data)?.id;
@@ -208,4 +216,10 @@ export function renderApp(root, data = fixtureData, browser = globalThis.window)
   paint();
 }
 
-if (typeof document !== "undefined") renderApp(document);
+export function bootstrapSyntheticApp(root = globalThis.document, browser = globalThis.window) {
+  if (!root?.documentElement?.hasAttribute?.("data-hodlxxi-synthetic-app")) return false;
+  renderApp(root, getFixtureData(), browser);
+  return true;
+}
+
+if (typeof document !== "undefined") bootstrapSyntheticApp(document);
