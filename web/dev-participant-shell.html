@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Live read-only participant shell · HODLXXI Social</title><link rel="stylesheet" href="./styles.css"></head>
+<body class="live-product-body">
+  <header class="topbar"><a class="brand" href="./index.html">HODLXXI <span>Social</span></a><div class="status"><i></i> DEV / LIVE READ-ONLY PRODUCT SHELL</div></header>
+  <main class="live-product-shell">
+    <header class="live-product-intro"><p class="eyebrow">DEV / LIVE READ-ONLY PRODUCT SHELL</p><h1>Explicit participant preview</h1><div class="dev-live-badges"><span class="local-pill">EXPLICIT PUBLIC KEY / NOT AUTHENTICATED</span><span class="local-pill">HODLXXI AUTHORITY + PUBLIC NOSTR SOURCES</span></div><p>One deliberate read of caller-selected public sources. No writes, signing, authentication, persistence, retry, polling, or production mode.</p><nav class="dev-authority-links"><a href="./index.html">Ordinary synthetic Social</a><a href="./dev-participant.html">Unified preview</a><a href="./dev-authority.html">Authority preview</a><a href="./dev-live.html">Nostr preview</a></nav></header>
+    <form id="participant-shell-form" class="dev-participant-form">
+      <label>Authority HTTPS origin<input id="shell-origin" type="url" autocomplete="off" required></label>
+      <label>Public Nostr WSS relay<input id="shell-relay" type="url" autocomplete="off" required></label>
+      <label>Lowercase x-only public key<input id="shell-subject" type="text" minlength="64" maxlength="64" autocomplete="off" required></label>
+      <label>Timeout (ms)<input id="shell-timeout" type="number" min="250" max="30000" value="5000" required></label>
+      <label>Public-note limit<input id="shell-note-limit" type="number" min="1" max="10" value="3" required></label>
+      <button type="submit">Load product view once</button><p class="meta">ONE-SHOT · READ-ONLY · NO PERSISTENCE · NO AUTOMATIC REFRESH</p>
+    </form>
+    <section class="live-source-strip" aria-live="polite"><div><span>Selected public key</span><strong id="shell-selected-key">None</strong></div><div><span>Authority freshness</span><strong id="shell-freshness">Idle</strong></div><div><span>Public profile</span><strong id="shell-profile-state">Idle</strong></div><div><span>Public feed</span><strong id="shell-feed-state">Idle</strong></div></section>
+    <div id="shell-navigation" class="live-product-navigation" aria-label="Read-only product navigation"></div>
+    <div class="live-product-grid">
+      <aside><p class="eyebrow">Participant profile</p><div id="shell-profile"><article class="ui-state ui-state-empty"><strong>Profile not loaded</strong><p class="meta">Submit explicit public sources to render this participant.</p></article></div></aside>
+      <section><p class="eyebrow">Home / public feed</p><div id="shell-feed"><article class="ui-state ui-state-empty"><strong>Public feed not loaded</strong><p class="meta">No source is contacted until explicit submission.</p></article></div></section>
+    </div>
+  </main>
+  <footer>Developer-only read-only projection. The selected key is not authenticated. Displayed status is external source data, not legal identity. Friendship does not prove covenant trust. Social holds no funds or private keys.</footer>
+  <script type="module" src="./dev-participant-shell.mjs"></script>
+</body></html>
