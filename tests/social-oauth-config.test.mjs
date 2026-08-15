@@ -1,0 +1,5 @@
+import test from "node:test"; import assert from "node:assert/strict";
+import { parseSocialOAuthConfig } from "../src/server/social-oauth-config.mjs";
+const valid = { publicOrigin:"https://social.example", authorityOrigin:"https://authority.example", clientId:"social", clientSecret:"test-secret", bindHost:"127.0.0.1", port:"8080", transactionTtlSeconds:"300", sessionTtlSeconds:"3600", maxPendingTransactions:"20", maxSessions:"20", outboundTimeoutMs:"1000" };
+test("configuration is explicit, canonical, loopback, bounded, and derives callback", () => { const value=parseSocialOAuthConfig(valid); assert.equal(value.callbackUri,"https://social.example/auth/callback"); assert.equal(value.port,8080); });
+test("configuration rejects non-origins, unsafe bind, missing values, and bad bounds without secret disclosure", () => { for (const patch of [{publicOrigin:"http://social.example"},{authorityOrigin:"https://u:p@authority.example"},{bindHost:"0.0.0.0"},{port:"0"},{clientSecret:""}]) assert.throws(()=>parseSocialOAuthConfig({...valid,...patch}), error=>!String(error).includes("test-secret")); });

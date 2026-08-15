@@ -38,5 +38,14 @@ jobs:
       - name: Check frontend module
         run: node --check web/app.mjs
 
+      - name: Check Social OAuth server modules
+        run: |
+          node --check src/server/social-oauth-config.mjs
+          node --check src/server/social-oauth-cookie.mjs
+          node --check src/server/social-oauth-memory.mjs
+          node --check src/server/hodlxxi-oauth-client.mjs
+          node --check src/server/social-oauth-bff.mjs
+          node --check scripts/hodlxxi-social-server.mjs
+
       - name: Check whitespace integrity
         run: git diff --check
