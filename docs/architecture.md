@@ -1,5 +1,13 @@
 # Architecture
 
+## V1.13 confidential OAuth BFF boundary
+
+The dependency-free confidential server foundation is opt-in through an explicit BFF entrypoint. The ordinary browser UI remains static and contains no secret. Only explicit entrypoint invocation reads validated configuration and OAuth client credentials; secrets remain server-side and are never browser imports, no secret is checked into the repository, and importing any server module starts no service. Browser code never receives the client secret, authorization code verifier, OAuth tokens, or opaque Social session identifier.
+
+Login uses state, S256 PKCE, and a distinct browser transaction cookie. Callback state is consumed once before the non-retried token exchange; authenticated introspection supplies only a canonical x-only subject, after which OAuth tokens are discarded. Transactions and sessions live only in bounded memory in one process. Restart logs users out; horizontal scaling needs a separately designed shared session store.
+
+The same-origin session and logout endpoints do not join the existing authority, Nostr, friendship, covenant or sponsor-trust, or relay pipelines. OAuth authentication proves only the canonical subject and cannot grant Full or Operator status, friendship, covenant or sponsor authority, or relay authority. NIP-07 selection remains separate routing context and is not an authenticated session. No Social deployment, OAuth client registration, DNS, TLS, proxy, systemd service, live login, runtime change, database, or Redis integration is included.
+
 ## Implemented through V1.9
 
 The dependency direction is `explicitly selected sources → source validation and normalization → composition root → Social data service → visibility/access projection → web UI`. Canonical identity, access, visibility, and Nostr validation remain in `src/domain.mjs`, `src/visibility.mjs`, and `src/nostr.mjs`; adapters do not import rendering code.
@@ -50,6 +58,6 @@ This CLI is one-shot, read-only, non-persistent, and developer-only. It requires
 
 ## Not implemented
 
-A future deployment may inject production relay or runtime reads, but production live mode, automatic source selection, relay discovery or pools, reconnect, persistent subscriptions, polling, personalized feeds, live HODLXXI runtime selection, environment-based configuration, and automatic production detection are not implemented. Authentication, signing, publishing, DMs, encryption, NIP-07 signing or account management, NIP-44, NIP-59, private keys, CRT issuance, covenant/Bitcoin-chain validation, sponsor or status mutation, HODLXXI writes, persistence, and production deployment are also not implemented.
+A future deployment may inject production relay or runtime reads, but production live mode, automatic source selection, relay discovery or pools, reconnect, persistent subscriptions, polling, personalized feeds, live HODLXXI runtime selection, automatic browser configuration, and automatic production detection are not implemented. Live OAuth registration or login, signing, publishing, DMs, encryption, NIP-07 signing or account management, NIP-44, NIP-59, private keys, CRT issuance, covenant/Bitcoin-chain validation, sponsor or status mutation, HODLXXI writes, durable persistence, and production deployment are also not implemented.
 
-There is no built-in relay hostname, automatic connection, generic HTTP/RPC connector, production URL, database, persistence, environment-secret access, signing, publication, private-key handling, custody, Bitcoin spending, Lightning payment, status issuance, deployment authority, or dependency on Universal-Bitcoin-Identity-Layer. The bounded WebSocket reader is activated only by the explicit V1.5 probe or V1.6 development page.
+The ordinary static browser path has no environment configuration or secret access. The explicitly invoked V1.13 BFF entrypoint is the only environment-configuration and OAuth-credential seam, and those values remain server-side. There is no built-in relay hostname, automatic connection, generic HTTP/RPC connector, production URL, database, durable persistence, signing, publication, private-key handling, custody, Bitcoin spending, Lightning payment, status issuance, deployment authority, or dependency on Universal-Bitcoin-Identity-Layer. The bounded WebSocket reader is activated only by the explicit V1.5 probe or V1.6 development page.

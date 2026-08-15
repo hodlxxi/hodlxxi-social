@@ -29,7 +29,7 @@ const protectedContentSha256 = Object.freeze({
   "web/dev-live.mjs": "7f6e7023ff5579d5d3d7183e896614a2ab22a81b5c03fb53038cb4de90ba3f88",
   "src/dev/live-social-composition.mjs": "58a74a3aa54ed8b757124b58aac1fc5983b2bda77a1d1c935e5ca7917e445c14",
   "scripts/nostr-relay-probe.mjs": "36848909c4b04ed009c40d531bc78d5f2ab69f7567f5ed48f21dd9f40588fc5e",
-  "package.json": "918e7ebbd01966d636b076037d03a73cf928e02d6d4ea3d38167da24ce81bad5",
+  "package.json": "b4d50b3821192158f0c841b550e6c36c91326bd4b741722c341259bb2e9b67db",
   "src/dev/hodlxxi-authority-live-probe.mjs": "794de32b78394edae493025c872b0afcbf9335e54c4b5ae6a946b2ea0459b6a4",
   "src/data/normalize.mjs": "8fd7409c127518d8dff8fdf013ff5eb4f45da262ed35a277a5e57931e6d22038",
   "src/data/hodlxxi-authority-read-adapter.mjs": "44d584145047dfed1c5602276a00b41401bbf9e1fb036b8dcdd4ceb279d748bd",
