@@ -1,5 +1,9 @@
 # Architecture
 
+## V1.15 local authenticated rehearsal
+
+The isolated rehearsal path is `local loopback HTTPS → web/index.html → web/auth-entry.mjs → existing V1.14 /auth routes → existing OAuth BFF/session stores`, with only the external OAuth and authority dependencies replaced by synthetic local implementations. It binds only to loopback, serves the ordinary product assets, uses the real PKCE/state/session/cookie boundaries, and allows only synthetic Limited or Full for one fixed synthetic subject. It does not import the production OAuth transport, contact HODLXXI production, read production credentials, grant Operator, or modify deployment state.
+
 ## V1.14 authenticated product entry
 
 The ordinary product path is `web/index.html → web/auth-entry.mjs → /auth/session → /auth/authority → existing HODLXXI authority composition → Limited/Full → web/components.mjs + web/shell.mjs`. The authenticated viewer comes only from the opaque Social session subject. `web/demo.html` retains the synthetic application separately. V1.14 is implemented in code but is not deployed.
