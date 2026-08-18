@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { configFromEnvironment } from "../src/server/social-oauth-config.mjs";
 import { createBoundedStore } from "../src/server/social-oauth-memory.mjs";
 import { createHodlxxiOAuthClient } from "../src/server/hodlxxi-oauth-client.mjs";
+import { createSocialAuthorityReader } from "../src/server/social-authority-reader.mjs";
 import { createSocialOAuthBff, parseRawRequestTarget, SECURITY_HEADERS } from "../src/server/social-oauth-bff.mjs";
 import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 
@@ -14,13 +15,27 @@ export function classifyRequestTarget(target, publicOrigin) {
 
 const framingProhibited = (request) => {
   const raw = request.rawHeaders ?? [];
-  let lengthCount = 0, transferCount = 0;
+  const lengths = [];
+  let transferCount = 0;
+
   for (let index = 0; index < raw.length; index += 2) {
     const name = String(raw[index]).toLowerCase();
-    if (name === "content-length") lengthCount += 1;
-    if (name === "transfer-encoding") transferCount += 1;
+
+    if (name === "content-length") {
+      lengths.push(String(raw[index + 1] ?? ""));
+    }
+
+    if (name === "transfer-encoding") {
+      transferCount += 1;
+    }
   }
-  return lengthCount > 0 || transferCount > 0;
+
+  if (transferCount > 0) return true;
+  if (lengths.length === 0) return false;
+
+  // Browser POST without a body may legitimately carry Content-Length: 0.
+  // Any body, duplicate length, alternate spelling, or TE remains rejected.
+  return lengths.length !== 1 || lengths[0] !== "0";
 };
 const send = (outgoing, result) => {
   outgoing.statusCode = result.status;
@@ -50,7 +65,14 @@ export async function runServer({ env = process.env, stdout = console.log, stder
   const pendingTransactions = createBoundedStore({ ttlSeconds: config.transactionTtlSeconds, capacity: config.maxPendingTransactions });
   const sessions = createBoundedStore({ ttlSeconds: config.sessionTtlSeconds, capacity: config.maxSessions });
   const oauthClient = createHodlxxiOAuthClient(config);
-  const bff = createSocialOAuthBff({ config, pendingTransactions, sessions, oauthClient });
+  const authorityReader = createSocialAuthorityReader(config);
+  const bff = createSocialOAuthBff({
+    config,
+    pendingTransactions,
+    sessions,
+    oauthClient,
+    authorityReader
+  });
   const server = createServer(createHttpHandler({ publicOrigin: config.publicOrigin, bff }));
   try { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(config.port, config.bindHost, resolve); }); }
   catch { stderr("listener unavailable"); return 3; }

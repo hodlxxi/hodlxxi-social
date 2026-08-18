@@ -39,9 +39,9 @@ function fakeDocument() {
   };
 }
 
-test("normal entry remains synthetic and dev-live is an explicit isolated entrypoint", async () => {
+test("synthetic demo remains explicit and dev-live remains an isolated entrypoint", async () => {
   const [index, app, devHtml] = await Promise.all([
-    readFile(new URL("../web/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../web/demo.html", import.meta.url), "utf8"),
     readFile(new URL("../web/app.mjs", import.meta.url), "utf8"),
     readFile(new URL("../web/dev-live.html", import.meta.url), "utf8")
   ]);

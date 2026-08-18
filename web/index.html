@@ -1,20 +1,90 @@
 <!doctype html>
-<html lang="en" data-hodlxxi-synthetic-app>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>HODLXXI Social</title><link rel="stylesheet" href="./styles.css"></head>
+<html lang="en" data-hodlxxi-authenticated-entry>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HODLXXI Social</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
 <body>
-  <header class="topbar"><a class="brand" href="#/home">HODLXXI <span>Social</span></a><div class="mobile-product-label" aria-hidden="true">Local demo</div><div class="status"><i></i> Offline local shell</div></header>
+  <header class="topbar">
+    <a class="brand" href="#/home">HODLXXI <span>Social</span></a>
+    <div class="mobile-product-label" aria-hidden="true">Authenticated Social</div>
+    <div class="status">
+      <i></i>
+      <span id="session-indicator-text">Checking session</span>
+    </div>
+  </header>
+
   <div class="app-shell">
     <aside class="sidebar">
       <div id="desktop-navigation"></div>
-      <p class="sidebar-note">Public-key identity. Human connection. Covenant truth kept distinct.</p>
+
+      <section class="viewer-card">
+        <p class="eyebrow">HODLXXI session</p>
+        <strong id="session-principal">Checking</strong>
+        <p id="session-detail" class="meta">
+          Reading the same-origin Social session.
+        </p>
+
+        <a
+          id="sign-in"
+          class="person person-link"
+          href="/auth/login"
+          hidden
+        >
+          <div class="avatar" aria-hidden="true">↗</div>
+          <div>
+            <strong>Sign in with HODLXXI</strong>
+            <p class="meta">Public-key authentication only.</p>
+          </div>
+        </a>
+
+        <button id="sign-out" type="button" hidden>
+          Sign out
+        </button>
+      </section>
     </aside>
-    <main id="app-page" tabindex="-1"></main>
-    <aside class="context-rail" aria-label="Current participant context">
-      <section class="viewer-card"><p class="eyebrow">Local demo control</p><label for="viewer-select">Explore as a synthetic participant</label><select id="viewer-select" aria-describedby="viewer-help"></select><strong id="access-mode"></strong><p id="viewer-help" class="meta">This is not a login. Switching changes the in-memory fixture viewer only. Access status is read-only and externally derived.</p></section>
-      <section><p class="eyebrow">Your profile</p><div id="context-profile"></div></section>
+
+    <main id="app-page">
+      <section class="page">
+        <header class="page-header">
+          <p class="eyebrow">HODLXXI Social</p>
+          <h1>Checking session</h1>
+        </header>
+      </section>
+    </main>
+
+    <aside class="context-rail" aria-label="Authenticated context">
+      <section class="viewer-card">
+        <p class="eyebrow">Current access</p>
+        <strong id="authority-status">Not checked</strong>
+        <p id="authority-summary" class="meta">
+          Authority is read only after authentication.
+        </p>
+      </section>
+
+      <section id="context-profile"></section>
+
+      <section class="viewer-card">
+        <p class="eyebrow">Development surface</p>
+        <strong>Synthetic demo remains separate</strong>
+        <p class="meta">
+          Demo identities cannot become the authenticated viewer.
+        </p>
+        <a href="./demo.html">Open synthetic demo</a>
+      </section>
     </aside>
   </div>
+
   <div id="mobile-navigation"></div>
-  <footer>Local synthetic data is not live-network truth. Displayed status is not legal identity. Friendship does not prove covenant trust. Social does not hold funds or control private keys. Demo messages are not transported or encrypted. Participation does not promise profit or investment return.</footer>
-  <script type="module" src="./app.mjs"></script>
-</body></html>
+
+  <footer>
+    Authentication is not legal identity. Friendship does not prove covenant
+    trust. Social does not hold funds or control private keys. Participation
+    does not promise profit or investment return.
+  </footer>
+
+  <script type="module" src="./auth-entry.mjs"></script>
+</body>
+</html>
