@@ -1,5 +1,5 @@
 import test from "node:test"; import assert from "node:assert/strict"; import { classifyRequestTarget, createHttpHandler } from "../scripts/hodlxxi-social-server.mjs"; import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
-const invoke=async({url,headers={},rawHeaders=[]},bff=async()=>{throw new Error("must not route");})=>{const incoming={url,method:"GET",headers,rawHeaders}; const result={headers:{},setHeader(k,v){this.headers[k]=v;},end(body){this.body=body;}}; await createHttpHandler({publicOrigin:"https://social.example",bff})(incoming,result); return result;};
+const invoke=async({url,method="GET",headers={},rawHeaders=[]},bff=async()=>{throw new Error("must not route");})=>{const incoming={url,method,headers,rawHeaders}; const result={headers:{},setHeader(k,v){this.headers[k]=v;},end(body){this.body=body;}}; await createHttpHandler({publicOrigin:"https://social.example",bff})(incoming,result); return result;};
 test("request-target recognition is bounded and exact",()=>{assert.deepEqual(classifyRequestTarget("/auth/callback?code=x&state=y","https://social.example"),{valid:true,callback:true}); for(const target of ["/auth/callback-extra","/auth/callback/","/auth/callback%2fextra","/x/%2e%2e/auth/callback","/auth/callback#x","//auth/callback","https://foreign.example/auth/callback","/bad target","/"+"a".repeat(4097)]) assert.equal(classifyRequestTarget(target,"https://social.example").callback,false);});
 test("framed exact callback rejects, clears transaction cookie, sanitizes, and performs zero routing",async()=>{let calls=0; for(const url of ["/auth/callback","/auth/callback?code=secret&state=hidden"]){const result=await invoke({url,headers:{"content-length":"1"},rawHeaders:["Content-Length","1"]},async()=>{calls++;}); assert.equal(result.statusCode,413); assert.equal(result.headers["Set-Cookie"],expireTransactionCookie()); assert.equal(result.headers["Cache-Control"],"no-store"); assert.doesNotMatch(result.body,/secret|hidden|Content-Length/);} assert.equal(calls,0);});
 test("framed non-callback and near matches never clear OAuth cookie",async()=>{for(const url of ["/auth/session","/auth/callback-extra","/auth/callback/","/auth/callback%2fextra","//auth/callback"]){const result=await invoke({url,headers:{"content-length":"1"},rawHeaders:["Content-Length","1"]}); assert.equal(result.headers["Set-Cookie"],undefined);}});
@@ -64,4 +64,47 @@ test("callback path lookalikes stay non-callback and valid non-callback routing 
   assert.equal(calls,1);
   assert.equal(routed.statusCode,200);
   assert.equal(routed.body,"{}");
+});
+
+
+test("exact zero-length framing permits a bodyless POST while duplicate or nonzero framing remains closed", async()=>{
+  let calls=0;
+
+  const accepted=await invoke({
+    url:"/auth/logout",
+    method:"POST",
+    headers:{"content-length":"0"},
+    rawHeaders:["Content-Length","0"]
+  },async(request)=>{
+    calls++;
+    assert.equal(request.method,"POST");
+    return {
+      status:200,
+      headers:{"Content-Type":"application/json"},
+      body:"{}"
+    };
+  });
+
+  assert.equal(calls,1);
+  assert.equal(accepted.statusCode,200);
+
+  for(const rawHeaders of [
+    ["Content-Length","1"],
+    ["Content-Length","0","Content-Length","0"],
+    ["Content-Length","0","Transfer-Encoding","chunked"]
+  ]){
+    const rejected=await invoke({
+      url:"/auth/logout",
+      method:"POST",
+      headers:{},
+      rawHeaders
+    },async()=>{
+      calls++;
+      throw new Error("must not route");
+    });
+
+    assert.equal(rejected.statusCode,413);
+  }
+
+  assert.equal(calls,1);
 });

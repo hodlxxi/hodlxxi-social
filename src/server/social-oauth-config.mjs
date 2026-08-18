@@ -1,4 +1,4 @@
-const LIMITS = Object.freeze({ port: [1, 65535], ttl: [1, 86400], capacity: [1, 10000], timeout: [100, 30000] });
+const LIMITS = Object.freeze({ port: [1, 65535], ttl: [1, 86400], capacity: [1, 10000], timeout: [250, 30000] });
 
 const fail = () => { throw new TypeError("invalid Social OAuth configuration"); };
 const text = (value, max = 512) => typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value) ? value : fail();

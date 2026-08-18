@@ -12,6 +12,75 @@ const response = (status, body, headers = {}) => Object.freeze({ status, headers
 const json = (status, body, headers) => response(status, JSON.stringify(body), { "Content-Type": "application/json; charset=utf-8", ...headers });
 const error = (status = 400, headers) => json(status, { error: "request_rejected" }, headers);
 const randomId = (random) => base64url(random(32));
+const SUBJECT = /^[0-9a-f]{64}$/;
+const AUTHORITY_FIELDS = Object.freeze(["status", "subject", "valid"]);
+
+const failClosedAuthority = (subject) =>
+  Object.freeze({ subject, status: "limited", valid: false });
+
+const normalizeAuthorityProjection = (subject, value) => {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    return failClosedAuthority(subject);
+  }
+
+  const keys = Reflect.ownKeys(value);
+
+  if (
+    keys.length !== AUTHORITY_FIELDS.length ||
+    keys.some((key) => typeof key !== "string") ||
+    AUTHORITY_FIELDS.some((field) => !keys.includes(field))
+  ) {
+    return failClosedAuthority(subject);
+  }
+
+  const extracted = Object.create(null);
+
+  for (const field of AUTHORITY_FIELDS) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, field);
+
+    if (
+      !descriptor?.enumerable ||
+      !Object.hasOwn(descriptor, "value")
+    ) {
+      return failClosedAuthority(subject);
+    }
+
+    extracted[field] = descriptor.value;
+  }
+
+  if (
+    extracted.subject !== subject ||
+    !SUBJECT.test(extracted.subject)
+  ) {
+    return failClosedAuthority(subject);
+  }
+
+  if (
+    extracted.valid === true &&
+    ["limited", "full"].includes(extracted.status)
+  ) {
+    return Object.freeze({
+      subject,
+      status: extracted.status,
+      valid: true
+    });
+  }
+
+  if (
+    extracted.valid === false &&
+    extracted.status === "limited"
+  ) {
+    return failClosedAuthority(subject);
+  }
+
+  return failClosedAuthority(subject);
+};
+
 const invalidRequestTarget = () => INVALID_REQUEST_TARGET;
 const decodeQueryComponent = (raw) => {
   if (!RAW_QUERY_COMPONENT.test(raw)) return null;
@@ -76,8 +145,17 @@ const exactQuery = (entries, names) => {
   return names.every((name) => Object.hasOwn(values, name)) ? Object.freeze(values) : null;
 };
 
-export function createSocialOAuthBff({ config, pendingTransactions, sessions, oauthClient, random = randomBytes }) {
-  if (![pendingTransactions, sessions, oauthClient].every(Boolean) || typeof random !== "function") throw new TypeError("invalid BFF dependencies");
+export function createSocialOAuthBff({ config, pendingTransactions, sessions, oauthClient, authorityReader, random = randomBytes }) {
+  if (
+    ![pendingTransactions, sessions, oauthClient].every(Boolean) ||
+    typeof random !== "function" ||
+    (
+      authorityReader !== undefined &&
+      typeof authorityReader !== "function"
+    )
+  ) {
+    throw new TypeError("invalid BFF dependencies");
+  }
   const callbackHeaders = (extra = {}) => ({ "Set-Cookie": expireTransactionCookie(), ...extra });
   return async function handle(request) {
     const method = request.method;
@@ -105,7 +183,7 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
         const subject = await oauthClient.authenticate({ code: query.code, verifier: transaction.verifier });
         let sessionId; for (let attempt = 0; attempt < 4; attempt += 1) { sessionId = randomId(random); if (sessions.create(sessionId, { subject })) break; sessionId = null; }
         if (!sessionId) return terminal(503);
-        return json(200, { authenticated: true, subject }, callbackHeaders({ "Set-Cookie": [expireTransactionCookie(), serializeHostCookie(SESSION_COOKIE_NAME, sessionId, config.sessionTtlSeconds)] }));
+        return response(303, "", callbackHeaders({ Location: "/", "Set-Cookie": [expireTransactionCookie(), serializeHostCookie(SESSION_COOKIE_NAME, sessionId, config.sessionTtlSeconds)] }));
       } catch { return terminal(502); }
     }
     if (target.path === "/auth/session") {
@@ -114,6 +192,45 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
       const session = id ? sessions.get(id) : null;
       return json(200, session ? { authenticated: true, subject: session.subject } : { authenticated: false });
     }
+    if (target.path === "/auth/authority") {
+      if (method !== "GET" || target.query.length !== 0) {
+        return error(method === "GET" ? 400 : 405);
+      }
+
+      let id;
+
+      try {
+        id = parseCookieHeader(cookieHeader).get(SESSION_COOKIE_NAME);
+      } catch {
+        return json(401, { error: "authentication_required" });
+      }
+
+      const session = id ? sessions.get(id) : null;
+
+      if (
+        !session ||
+        typeof session.subject !== "string" ||
+        !SUBJECT.test(session.subject)
+      ) {
+        return json(401, { error: "authentication_required" });
+      }
+
+      let projection = failClosedAuthority(session.subject);
+
+      if (authorityReader) {
+        try {
+          projection = normalizeAuthorityProjection(
+            session.subject,
+            await authorityReader(session.subject)
+          );
+        } catch {
+          projection = failClosedAuthority(session.subject);
+        }
+      }
+
+      return json(200, projection);
+    }
+
     if (target.path === "/auth/logout") {
       if (method !== "POST") return error(405);
       if (request.headers?.origin !== config.publicOrigin || target.query.length !== 0) return error(403);

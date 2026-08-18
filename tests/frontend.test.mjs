@@ -126,7 +126,7 @@ test("friendship and sponsor-trust remain separate frontend surfaces", () => {
 });
 
 test("frontend exposes interactive surfaces and required non-claims", async () => {
-  const html = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../web/demo.html", import.meta.url), "utf8");
   const app = await Promise.all(["app.mjs", "components.mjs"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8"))).then((sources) => sources.join("\n"));
   for (const phrase of ["Synthetic participant", "Friendship does not prove covenant trust", "not legal identity", "does not hold funds or control private keys", "does not promise profit or investment return"]) assert.match(html, new RegExp(phrase, "i"));
   for (const phrase of ["Home", "My Circle", "Participant Profile", "Direct friends", "Friends of Friends", "Sponsor-trust"]) assert.match(app, new RegExp(phrase, "i"));
@@ -705,7 +705,7 @@ test("status badges remain externally derived presentation rather than legal ide
 });
 
 test("consolidated shell exposes focus, overflow, demo-control, and non-claim safeguards", async () => {
-  const [css, index] = await Promise.all(["styles.css", "index.html"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8")));
+  const [css, index] = await Promise.all(["styles.css", "demo.html"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8")));
   for (const token of ["--success", "--restricted", "--radius-md", "--space-3", "--shadow-card"]) assert.match(css, new RegExp(token));
   assert.match(css, /body\{overflow-x:hidden\}/);
   assert.match(css, /:focus-visible/);

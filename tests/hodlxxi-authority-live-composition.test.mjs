@@ -23,7 +23,7 @@ const response = (body, status = 200) => {
 const dependencies = (fetchImpl) => ({ fetchImpl, setTimeoutImpl: () => 1, clearTimeoutImpl() {} });
 const contentSha256 = (content) => createHash("sha256").update(content, "utf8").digest("hex");
 const protectedContentSha256 = Object.freeze({
-  "web/index.html": "02f4fe837149801b88a33da49d8f1f68455ad7c80233fb5995d7b160cea75606",
+  "web/demo.html": "02f4fe837149801b88a33da49d8f1f68455ad7c80233fb5995d7b160cea75606",
   "web/app.mjs": "da127fe9aaa8e8f0d5a57642a2fa9c1cf1e30233695f6148b8b93ae11a02c974",
   "web/dev-live.html": "0a08b87328f5edecc8ab7f5cd4bf1d6be692725086fd2ea2043f6657e9210bdb",
   "web/dev-live.mjs": "7f6e7023ff5579d5d3d7183e896614a2ab22a81b5c03fb53038cb4de90ba3f88",
@@ -261,9 +261,9 @@ test("protected browser, Nostr, package, and core boundaries match audited conte
   }
 });
 
-test("explicit ordinary bootstrap preserves V1.8 isolation and developer imports remain inert", async () => {
+test("explicit synthetic demo bootstrap preserves isolation and developer imports remain inert", async () => {
   const app = await readFile(new URL("../web/app.mjs", import.meta.url), "utf8");
-  const index = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+  const index = await readFile(new URL("../web/demo.html", import.meta.url), "utf8");
   const developer = await readFile(new URL("../web/dev-participant-shell.mjs", import.meta.url), "utf8");
   assert.match(index, /data-hodlxxi-synthetic-app/);
   assert.equal((index.match(/src="\.\/app\.mjs"/g) ?? []).length, 1);

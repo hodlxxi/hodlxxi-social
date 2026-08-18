@@ -136,7 +136,7 @@ test("Operator-bearing public display records are absent from complete rendered 
 });
 
 test("surface is isolated, read-only, responsive, and preserves ordinary explicit bootstrap", async () => {
-  const [html, module, css, app, index] = await Promise.all(["dev-participant-shell.html", "dev-participant-shell.mjs", "styles.css", "app.mjs", "index.html"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8")));
+  const [html, module, css, app, index] = await Promise.all(["dev-participant-shell.html", "dev-participant-shell.mjs", "styles.css", "app.mjs", "demo.html"].map((name) => readFile(new URL(`../web/${name}`, import.meta.url), "utf8")));
   assert.match(html, /DEV \/ LIVE READ-ONLY PRODUCT SHELL/); assert.match(html, /EXPLICIT PUBLIC KEY \/ NOT AUTHENTICATED/); assert.match(html, /HODLXXI AUTHORITY \+ PUBLIC NOSTR SOURCES/);
   assert.match(html, /EXTENSION-SELECTED KEY \/ NOT AUTHENTICATED/); assert.match(html, /Select key from NIP-07 extension/);
   assert.doesNotMatch(html, /viewer-select|local-composer|message-composer|data-action="react"/);
