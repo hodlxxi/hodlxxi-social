@@ -1,6 +1,8 @@
-# HODLXXI Social V1.14
+# HODLXXI Social V1.15
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
+
+V1.15 adds a local-only authenticated browser rehearsal. It exercises the real V1.14 product entry, OAuth BFF transaction/session path, session-bound Limited/Full authority projection, and logout while replacing external OAuth and authority with unmistakably synthetic loopback-only inputs. The rehearsal makes no production HODLXXI request, uses no production OAuth credential, changes no deployment configuration, and cannot grant real Full or Operator authority.
 
 V1.13 adds an offline-tested, explicit opt-in confidential OAuth backend-for-frontend foundation. The ordinary browser UI remains static and contains no secret. Only explicit invocation of the server-side BFF entrypoint reads validated configuration and OAuth client credentials; secrets stay server-side, are never browser imports, and no secret is checked into this repository. Importing a server module starts no service.
 
@@ -62,7 +64,7 @@ node scripts/nostr-relay-probe.mjs --relay <explicit-wss-relay> --kind <0-or-1> 
 
 Optional `--author <64-hex-public-key>` narrows the request further; `--json` selects sanitized JSON output. The event limit is 1–10 (default 3), and the timeout is 250–30000 milliseconds (default 5000). Exit codes are 2 for arguments or relay configuration, 3 for transport failure, 4 for timeout, 5 for malformed relay results, and 6 for canonical validation failure. A successful read with no events exits successfully with `zero-events`.
 
-Implemented now: the authenticated Social product entry, opaque Social sessions, same-origin session/authority/logout endpoints, server-side read-only HODLXXI Limited/Full projection, fail-closed Limited fallback, isolated synthetic demo, explicit developer-only public-feed previews, bounded one-shot Nostr and HODLXXI probes, and the existing normalized composition/service boundaries. None of these code paths constitutes a production deployment.
+Implemented now: the authenticated Social product entry, local-only authenticated rehearsal, opaque Social sessions, same-origin session/authority/logout endpoints, server-side read-only HODLXXI Limited/Full projection, fail-closed Limited fallback, isolated synthetic demo, explicit developer-only public-feed previews, bounded one-shot Nostr and HODLXXI probes, and the existing normalized composition/service boundaries. None of these code paths constitutes a production deployment.
 
 Not implemented: production deployment, production OAuth client registration and secret provisioning, automatic relay or source selection, relay discovery or pools, reconnect, persistent subscriptions, polling, personalized live feeds, signing, publishing, DMs, encryption, NIP-07 signing or account management, durable shared session persistence, or horizontal-scale session coordination. V1.14 authentication and session-bound authority are implemented in code, but they are not deployed as a live production authentication service.
 
