@@ -186,6 +186,12 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
         return response(303, "", callbackHeaders({ Location: "/", "Set-Cookie": [expireTransactionCookie(), serializeHostCookie(SESSION_COOKIE_NAME, sessionId, config.sessionTtlSeconds)] }));
       } catch { return terminal(502); }
     }
+    if (target.path === "/auth/health") {
+      if (method !== "GET" || target.query.length !== 0) {
+        return error(method === "GET" ? 400 : 405);
+      }
+      return json(200, { ok: true });
+    }
     if (target.path === "/auth/session") {
       if (method !== "GET" || target.query.length !== 0) return error(method === "GET" ? 400 : 405);
       let id; try { id = parseCookieHeader(cookieHeader).get(SESSION_COOKIE_NAME); } catch { return json(200, { authenticated: false }); }

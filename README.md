@@ -1,8 +1,10 @@
-# HODLXXI Social V1.15
+# HODLXXI Social V1.16
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
 V1.15 adds a local-only authenticated browser rehearsal. It exercises the real V1.14 product entry, OAuth BFF transaction/session path, session-bound Limited/Full authority projection, and logout while replacing external OAuth and authority with unmistakably synthetic loopback-only inputs. The rehearsal makes no production HODLXXI request, uses no production OAuth credential, changes no deployment configuration, and cannot grant real Full or Operator authority.
+
+V1.16 adds code-only production-readiness verification without deploying Social. It adds a minimal unauthenticated `GET /auth/health` endpoint and an offline readiness command that validates the existing confidential OAuth configuration, requires separate Social and external authority origins, verifies required browser assets, reports only non-secret deployment facts, and starts no listener or network request. Production OAuth registration, credential provisioning, DNS, TLS termination, nginx, systemd, and live deployment remain separate work.
 
 V1.13 adds an offline-tested, explicit opt-in confidential OAuth backend-for-frontend foundation. The ordinary browser UI remains static and contains no secret. Only explicit invocation of the server-side BFF entrypoint reads validated configuration and OAuth client credentials; secrets stay server-side, are never browser imports, and no secret is checked into this repository. Importing a server module starts no service.
 
