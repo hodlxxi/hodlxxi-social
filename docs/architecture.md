@@ -1,5 +1,11 @@
 # Architecture
 
+## V1.16 production-readiness contract
+
+The production-readiness path is `validated server environment → existing Social OAuth configuration parser → offline readiness report`. It starts no listener, performs no network request, exposes no OAuth secret, and does not deploy anything. A production configuration must use distinct canonical HTTPS Social and external authority origins, remain loopback-bound at the BFF, and have the authenticated browser assets present.
+
+The existing BFF additionally exposes exact `GET /auth/health` with no query parameters. Health does not parse a session, read authority, authenticate a subject, or grant access; it returns only a fixed no-store liveness document suitable for a future local reverse-proxy/service check.
+
 ## V1.15 local authenticated rehearsal
 
 The isolated rehearsal path is `local loopback HTTPS → web/index.html → web/auth-entry.mjs → existing V1.14 /auth routes → existing OAuth BFF/session stores`, with only the external OAuth and authority dependencies replaced by synthetic local implementations. It binds only to loopback, serves the ordinary product assets, uses the real PKCE/state/session/cookie boundaries, and allows only synthetic Limited or Full for one fixed synthetic subject. It does not import the production OAuth transport, contact HODLXXI production, read production credentials, grant Operator, or modify deployment state.

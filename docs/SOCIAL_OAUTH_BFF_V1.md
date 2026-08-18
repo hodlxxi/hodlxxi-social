@@ -15,3 +15,7 @@ The HTTP adapter accepts no request body. For browser compatibility, one exact `
 All state is bounded, process-local, and non-durable. Restart logs users out. This version is suitable only for a controlled single process; multiple processes or horizontal scaling require a separately reviewed shared store. It adds no database or Redis.
 
 OAuth authentication proves control of the canonical subject only. It does not grant Full or Operator status, current covenant authority, friendship, sponsorship, relay trust, custody, signing, or private-key access. NIP-07 selection remains separate development routing context, not authentication. V1.14 connects the BFF to the ordinary Social UI in code through session-bound authentication and read-only authority, but production OAuth registration, secret provisioning, public HTTPS, proxy routing, TLS, service supervision, and live deployment remain separate work.
+
+## V1.16 health boundary
+
+`GET /auth/health` is an unauthenticated fixed liveness endpoint for a future local service/reverse-proxy check. It accepts no query parameters, reads no session or authority, performs no OAuth or HODLXXI request, and returns only `{"ok":true}` with the existing no-store security headers. It does not indicate user authentication, Full status, covenant validity, or production readiness by itself.
