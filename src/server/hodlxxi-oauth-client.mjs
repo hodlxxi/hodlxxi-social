@@ -116,8 +116,9 @@ async function postForm(url, fields, accept, { fetchImpl, timeoutMs, setTimeoutI
 }
 
 export function validateTokenResponse(value) {
-  const allowed = new Set(["access_token", "token_type", "expires_in", "scope"]);
+  const allowed = new Set(["access_token", "id_token", "token_type", "expires_in", "scope"]);
   if (!plain(value) || Object.keys(value).some((name) => !allowed.has(name)) || !bounded(value.access_token, 8192) || value.token_type !== "Bearer") failure();
+  if (Object.hasOwn(value, "id_token") && !bounded(value.id_token, 8192)) failure();
   if (Object.hasOwn(value, "expires_in") && (!Number.isSafeInteger(value.expires_in) || value.expires_in < 1 || value.expires_in > 86400)) failure();
   if (Object.hasOwn(value, "scope") && !bounded(value.scope, 1024)) failure();
   return value.access_token;
