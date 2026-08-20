@@ -101,7 +101,7 @@ test("exchange and introspection use exact confidential endpoints and forms", as
   const client = clientWith(async (url, init) => {
     calls.push([url, init]);
     return reply(calls.length === 1
-      ? { access_token: "token", token_type: "Bearer" }
+      ? { access_token: "token", id_token: "header.payload.signature", token_type: "Bearer" }
       : { active: true, sub: "a".repeat(64), client_id: "social", scope: "openid" });
   });
   assert.equal(await client.authenticate(credentials), "a".repeat(64));
@@ -132,6 +132,8 @@ test("strict token and introspection shapes fail closed", () => {
     { access_token: "x", token_type: "bearer" },
     { access_token: "x", token_type: "Bearer", extra: { nested: true } },
     { access_token: "x", token_type: "Bearer", scope: ["openid"] },
+    { access_token: "x", token_type: "Bearer", id_token: {} },
+    { access_token: "x", token_type: "Bearer", id_token: "" },
     accessor,
     [],
     Object.create({ access_token: "x", token_type: "Bearer" })
