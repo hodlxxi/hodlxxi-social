@@ -1,9 +1,14 @@
 import {
   escapeHtml,
-  renderPageFrame,
-  renderStatusBadge,
-  renderUnavailableState
+  renderPageFrame
 } from "./components.mjs";
+
+import {
+  createAuthenticatedProductModel,
+  renderAuthenticatedNetworkContext,
+  renderAuthenticatedProductPage,
+  renderAuthenticatedProfileContext
+} from "./auth-product.mjs";
 
 import { renderNavigation } from "./shell.mjs";
 
@@ -21,22 +26,8 @@ const PRODUCT_ROUTES = Object.freeze({
   "/groups": "groups",
   "/notifications": "notifications",
   "/activity": "activity",
-  "/trust": "trust"
-});
-
-const PRODUCT_TITLES = Object.freeze({
-  home: "Home",
-  circle: "My Circle",
-  search: "Search",
-  discover: "Discover",
-  friends: "Friends",
-  discovery: "Friends of Friends",
-  messages: "Messages",
-  groups: "Groups",
-  notifications: "Notifications",
-  activity: "Activity",
-  profile: "Profile",
-  trust: "Trust"
+  "/trust": "trust",
+  "/settings": "settings"
 });
 
 const exactKeys = (value, expected) => {
@@ -247,7 +238,8 @@ export function parseAuthenticatedRoute(hash, subject) {
   }
 
   const raw = typeof hash === "string" ? hash : "";
-  const path = raw.startsWith("#") ? raw.slice(1) : raw;
+  const path = (raw.startsWith("#") ? raw.slice(1) : raw)
+    .slice(0, 512);
 
   if (path === "" || path === "/") {
     return Object.freeze({
@@ -271,6 +263,32 @@ export function parseAuthenticatedRoute(hash, subject) {
     });
   }
 
+  if (path === "/search" || path.startsWith("/search?")) {
+    let searchQuery = "";
+
+    try {
+      const marker = path.indexOf("?");
+      const rawQuery = marker < 0
+        ? ""
+        : new URLSearchParams(path.slice(marker + 1)).get("q") ?? "";
+
+      searchQuery = rawQuery
+        .normalize("NFKC")
+        .replace(/[\u0000-\u001f\u007f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 120);
+    } catch {
+      searchQuery = "";
+    }
+
+    return Object.freeze({
+      page: "search",
+      path: "/search",
+      searchQuery
+    });
+  }
+
   const page = PRODUCT_ROUTES[path];
 
   return page
@@ -286,65 +304,6 @@ const productStatus = (authority) =>
   ["limited", "full"].includes(authority.status)
     ? authority.status
     : "limited";
-
-const participantCard = (subject, status) =>
-  `<article class="profile-card">` +
-  `<div class="avatar avatar-large" aria-hidden="true">H</div>` +
-  `<h2>Authenticated participant</h2>` +
-  `${renderStatusBadge(status)}` +
-  `<p class="key">${escapeHtml(subject)}</p>` +
-  `<p class="notice">` +
-  `This public key comes only from the authenticated Social session. ` +
-  `The access badge is projected only from current external HODLXXI authority.` +
-  `</p>` +
-  `</article>`;
-
-const productHome = (subject, status, valid) =>
-  `<article class="card">` +
-  `<p class="eyebrow">Authenticated product</p>` +
-  `<h2>Welcome to HODLXXI Social</h2>` +
-  `<p class="key">${escapeHtml(subject)}</p>` +
-  `${renderStatusBadge(status)}` +
-  `<p>` +
-  `Your Social viewer is bound to this authenticated public key. ` +
-  `No demo identity can replace it.` +
-  `</p>` +
-  `<p class="notice">` +
-  `${
-    valid
-      ? "Current Limited/Full access was accepted from external HODLXXI authority."
-      : "External Full authority was not accepted, so Social is operating as Limited."
-  }` +
-  `</p>` +
-  `</article>`;
-
-const productTrust = (subject, status, valid) =>
-  `<article class="card trust-copy">` +
-  `<p><strong>${escapeHtml(status)} access</strong> · read-only external assertion</p>` +
-  `<p class="key">${escapeHtml(subject)}</p>` +
-  `<p>` +
-  `${
-    valid
-      ? "The current access projection was accepted from the HODLXXI authority boundary."
-      : "The authority boundary failed closed to Limited."
-  }` +
-  `</p>` +
-  `<p>` +
-  `Social does not issue or upgrade covenant status. Friendship does not prove covenant trust. ` +
-  `No trust score is calculated.` +
-  `</p>` +
-  `</article>`;
-
-const unconnectedSurface = (page) =>
-  `<article class="ui-state ui-state-empty">` +
-  `<div>` +
-  `<strong>${escapeHtml(PRODUCT_TITLES[page] ?? "Surface")} ready</strong>` +
-  `<p class="meta">` +
-  `No authenticated social dataset is connected to this surface in V1.14. ` +
-  `No synthetic fallback is used.` +
-  `</p>` +
-  `</div>` +
-  `</article>`;
 
 export function buildAuthenticatedProductView(
   session,
@@ -370,40 +329,16 @@ export function buildAuthenticatedProductView(
     hash,
     session.subject
   );
-
-  let content;
-
-  if (route.page === "home") {
-    content = productHome(
-      session.subject,
-      status,
-      checkedAuthority.valid
-    );
-  } else if (route.page === "profile") {
-    content = participantCard(session.subject, status);
-  } else if (route.page === "trust") {
-    content = productTrust(
-      session.subject,
-      status,
-      checkedAuthority.valid
-    );
-  } else if (Object.hasOwn(PRODUCT_TITLES, route.page)) {
-    content = unconnectedSurface(route.page);
-  } else {
-    content = renderUnavailableState("route");
-  }
-
-  const page = renderPageFrame({
-    title:
-      PRODUCT_TITLES[route.page] ??
-      "Page unavailable",
-    content
+  const model = createAuthenticatedProductModel({
+    subject: session.subject,
+    status,
+    authorityValid: checkedAuthority.valid
   });
 
   return Object.freeze({
     route,
     status,
-    page,
+    page: renderAuthenticatedProductPage(route, model),
     desktopNavigation: renderNavigation(
       route,
       session.subject,
@@ -416,7 +351,8 @@ export function buildAuthenticatedProductView(
       "mobile-nav",
       0
     ),
-    profile: participantCard(session.subject, status)
+    profile: renderAuthenticatedProfileContext(model),
+    networkContext: renderAuthenticatedNetworkContext(model)
   });
 }
 
@@ -472,6 +408,10 @@ export function bindAuthenticatedEntry(
     root,
     "#context-profile"
   );
+  const contextNetwork = requiredElement(
+    root,
+    "#context-network"
+  );
 
   let currentSession = null;
   let currentAuthority = null;
@@ -480,6 +420,7 @@ export function bindAuthenticatedEntry(
     desktopNavigation.innerHTML = "";
     mobileNavigation.innerHTML = "";
     contextProfile.innerHTML = "";
+    contextNetwork.innerHTML = "";
 
     root.body?.removeAttribute?.("data-access");
   };
@@ -576,6 +517,7 @@ export function bindAuthenticatedEntry(
 
     appPage.innerHTML = view.page;
     contextProfile.innerHTML = view.profile;
+    contextNetwork.innerHTML = view.networkContext;
 
     authorityStatus.textContent =
       view.status === "full" ? "Full" : "Limited";
@@ -669,6 +611,29 @@ export function bindAuthenticatedEntry(
 
   signOut.addEventListener?.("click", () => {
     void logout();
+  });
+
+  root.addEventListener?.("submit", (event) => {
+    if (event.target?.id !== "authenticated-search") {
+      return;
+    }
+
+    event.preventDefault?.();
+
+    const query = new FormData(event.target)
+      .get("q")
+      ?.toString()
+      .normalize("NFKC")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120) ?? "";
+
+    if (browser?.location) {
+      browser.location.hash = query
+        ? `#/search?q=${encodeURIComponent(query)}`
+        : "#/search";
+    }
   });
 
   browser?.addEventListener?.("hashchange", () => {

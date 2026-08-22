@@ -661,7 +661,7 @@ test("Search and Discovery sources avoid persistence, network, and authority pat
 
 test("one grouped navigation model supplies complete desktop and deliberate mobile access", () => {
   const pages = navigationModel.map(({ page }) => page);
-  assert.deepEqual(pages, ["home", "circle", "search", "discover", "friends", "discovery", "messages", "groups", "notifications", "activity", "profile", "trust"]);
+  assert.deepEqual(pages, ["home", "circle", "search", "discover", "friends", "discovery", "messages", "groups", "notifications", "activity", "profile", "trust", "settings"]);
   assert.deepEqual(navigationModel.filter(({ mobile }) => mobile).map(({ page }) => page), ["home", "circle", "search", "messages", "profile"]);
   assert.deepEqual([...new Set(navigationModel.map(({ group }) => group))], ["Core", "Social", "Updates", "Identity & trust"]);
   const route = parseRoute("#/notifications");

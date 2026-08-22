@@ -4,10 +4,10 @@ export const navigationModel = Object.freeze([
   item("home", "Home", "Core", true), item("circle", "My Circle", "Core", true), item("search", "Search", "Core", true), item("discover", "Discover", "Core"),
   item("friends", "Friends", "Social"), item("discovery", "Friends of Friends", "Social"), item("messages", "Messages", "Social", true), item("groups", "Groups", "Social"),
   item("notifications", "Notifications", "Updates"), item("activity", "Activity", "Updates"),
-  item("profile", "Profile", "Identity & trust", true), item("trust", "Trust", "Identity & trust")
+  item("profile", "Profile", "Identity & trust", true), item("trust", "Trust", "Identity & trust"), item("settings", "Settings", "Identity & trust")
 ]);
 
-const routePaths = Object.freeze({ home: "/home", circle: "/circle", search: "/search", discover: "/discover", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust" });
+const routePaths = Object.freeze({ home: "/home", circle: "/circle", search: "/search", discover: "/discover", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust", settings: "/settings" });
 const routePath = (page, viewerId) => page === "profile" ? `#/profile/${viewerId}` : `#${routePaths[page] ?? "/not-found"}`;
 const isActive = (route, page) => route.page === page;
 const badge = (page, unread) => page === "notifications" ? `<span class="nav-badge" aria-label="${unread} unread local notifications">${unread}</span>` : "";

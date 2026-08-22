@@ -9,10 +9,17 @@
 <body>
   <header class="topbar">
     <a class="brand" href="#/home">HODLXXI <span>Social</span></a>
-    <div class="mobile-product-label" aria-hidden="true">Authenticated Social</div>
-    <div class="status">
-      <i></i>
-      <span id="session-indicator-text">Checking session</span>
+    <a class="command-search" href="#/search">
+      <span aria-hidden="true">⌕</span>
+      <span>Search people, posts, groups, or public keys</span>
+      <kbd>⌘ K</kbd>
+    </a>
+    <div class="topbar-actions">
+      <a class="topbar-link" href="#/notifications" aria-label="Notifications">○</a>
+      <div class="status">
+        <i></i>
+        <span id="session-indicator-text">Checking session</span>
+      </div>
     </div>
   </header>
 
@@ -66,14 +73,7 @@
 
       <section id="context-profile"></section>
 
-      <section class="viewer-card">
-        <p class="eyebrow">Development surface</p>
-        <strong>Synthetic demo remains separate</strong>
-        <p class="meta">
-          Demo identities cannot become the authenticated viewer.
-        </p>
-        <a href="./demo.html">Open synthetic demo</a>
-      </section>
+      <section id="context-network"></section>
     </aside>
   </div>
 
