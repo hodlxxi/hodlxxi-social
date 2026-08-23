@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 
 import {
   computeNostrEventId,
   verifyBip340Signature,
   verifyNostrEvent
 } from "../web/nostr-event-verifier.mjs";
+
+const verificationOptions = Object.freeze({ cryptoImpl: webcrypto });
 
 const vectors = [
   ["F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9", "00".repeat(32), "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0", true],
@@ -119,7 +121,7 @@ const signEventForTest = () => {
 test("BIP340 verification matches every official Bitcoin test vector", async () => {
   for (const [publicKey, message, signature, expected] of vectors) {
     assert.equal(
-      await verifyBip340Signature(publicKey, message, signature),
+      await verifyBip340Signature(publicKey, message, signature, verificationOptions),
       expected
     );
   }
@@ -136,15 +138,15 @@ test("NIP-01 id computation and BIP340 verification bind the complete event", as
     event.content
   ])).digest("hex");
 
-  assert.equal(await computeNostrEventId(event), expectedId);
-  const verified = await verifyNostrEvent(event);
+  assert.equal(await computeNostrEventId(event, verificationOptions), expectedId);
+  const verified = await verifyNostrEvent(event, verificationOptions);
   assert.deepEqual(verified, event);
   assert.ok(Object.isFrozen(verified));
   assert.ok(Object.isFrozen(verified.tags));
   assert.ok(Object.isFrozen(verified.tags[0]));
 
   await assert.rejects(
-    verifyNostrEvent({ ...event, content: "tampered" }),
+    verifyNostrEvent({ ...event, content: "tampered" }, verificationOptions),
     /invalid Nostr event/
   );
 
@@ -152,9 +154,9 @@ test("NIP-01 id computation and BIP340 verification bind the complete event", as
     ...event,
     content: "tampered"
   };
-  replacedId.id = await computeNostrEventId(replacedId);
+  replacedId.id = await computeNostrEventId(replacedId, verificationOptions);
   await assert.rejects(
-    verifyNostrEvent(replacedId),
+    verifyNostrEvent(replacedId, verificationOptions),
     /invalid Nostr event/
   );
 });
@@ -167,7 +169,10 @@ test("wire events reject extensions, uppercase encodings, accessors, sparse tags
     { ...event, tags: [["t", , "bad"]] },
     { ...event, kind: 65_536 }
   ]) {
-    await assert.rejects(verifyNostrEvent(candidate), /invalid Nostr event/);
+    await assert.rejects(
+      verifyNostrEvent(candidate, verificationOptions),
+      /invalid Nostr event/
+    );
   }
 
   let getterCalls = 0;
@@ -179,7 +184,10 @@ test("wire events reject extensions, uppercase encodings, accessors, sparse tags
       return event.content;
     }
   });
-  await assert.rejects(verifyNostrEvent(accessor), /invalid Nostr event/);
+  await assert.rejects(
+    verifyNostrEvent(accessor, verificationOptions),
+    /invalid Nostr event/
+  );
   assert.equal(getterCalls, 0);
 
   await assert.rejects(
