@@ -15,6 +15,7 @@ import {
   protectedReadDecision,
   protectedReadResult,
   protectedWriteDecision,
+  resolveFullRecipientDirectory,
   resolveProtectedRecipients
 } from "../src/protected-content.mjs";
 
@@ -22,6 +23,18 @@ const now = 1_700_000_000_000;
 const alice = "a".repeat(64);
 const bob = "b".repeat(64);
 const full = (subject = alice, patch = {}) => ({ source: "hodlxxi-crt", version: 1, subject, status: "full", expiresAt: now + 1, ...patch });
+const directory = (subjects = [alice]) => {
+  const snapshotId = "snapshot:synthetic:protected";
+  return {
+    schema: "hodlxxi.full_recipient_directory.v1", version: 1, source: "hodlxxi-crt", snapshotId,
+    complete: true, issuedAt: now - 1, expiresAt: now + 1,
+    recipients: subjects.map((subject, index) => ({
+      snapshotId, subject,
+      encryptionKey: { algorithm: "x25519-v1", version: 1, publicKey: `${(index ? "d" : "c").repeat(62)}${index ? "55" : "44"}`, validFrom: now - 1, expiresAt: now + 1, revoked: false },
+      authority: { source: "hodlxxi-crt", version: 1, snapshotId, subject, status: "full", expiresAt: now + 1 }
+    }))
+  };
+};
 
 test("canonical audiences and decisions are immutable", () => {
   assert.equal(PUBLIC, "PUBLIC");
@@ -120,7 +133,7 @@ test("protected envelope shape is opaque and rejects public Nostr and plaintext 
 });
 
 test("dependency boundary accepts contracts only and rejects missing operations", async () => {
-  const recipientResolver = { resolveCurrentFull() {} };
+  const recipientResolver = { resolveDirectory() {} };
   const rawEnvelope = { schema: PROTECTED_ENVELOPE_SCHEMA, version: 1, opaquePayload: "sealed" };
   const rawPayload = { schema: PROTECTED_PAYLOAD_SCHEMA, version: 1, opaqueContent: "opaque" };
   const transport = { putEnvelope: () => true, getEnvelope: () => rawEnvelope };
@@ -136,7 +149,7 @@ test("dependency boundary accepts contracts only and rejects missing operations"
 });
 
 test("dependency contracts reject extra capabilities and accessors", () => {
-  const resolver = { resolveCurrentFull() {} };
+  const resolver = { resolveDirectory() {} };
   const transport = { putEnvelope() {}, getEnvelope() {} };
   const envelope = { produceEnvelope() {}, openEnvelope() {} };
   assert.throws(() => defineProtectedContentDependencies({ recipientResolver: { ...resolver, grantFull() {} }, transport, envelope }), /protected recipient resolver required/);
@@ -144,14 +157,14 @@ test("dependency contracts reject extra capabilities and accessors", () => {
   assert.throws(() => defineProtectedContentDependencies({ recipientResolver: resolver, transport, envelope: { ...envelope, sign() {} } }), /protected envelope dependency required/);
   assert.throws(() => defineProtectedContentDependencies({ recipientResolver: resolver, transport, envelope, signer() {} }), /protected recipient resolver required/);
   const hostile = {};
-  Object.defineProperty(hostile, "resolveCurrentFull", { enumerable: true, get() { throw new Error("must not run"); } });
+  Object.defineProperty(hostile, "resolveDirectory", { enumerable: true, get() { throw new Error("must not run"); } });
   assert.throws(() => defineProtectedContentDependencies({ recipientResolver: hostile, transport, envelope }), /protected recipient resolver required/);
 });
 
 test("every dependency seam rejects plaintext and public Nostr records", async () => {
   const publicEvent = { kind: 1, pubkey: alice, content: "secret", id: "x", sig: "y", tags: [], created_at: 1 };
   const plaintext = { plaintext: "secret" };
-  const recipientResolver = { resolveCurrentFull() {} };
+  const recipientResolver = { resolveDirectory() {} };
   for (const bad of [publicEvent, plaintext]) {
     const dependencies = defineProtectedContentDependencies({
       recipientResolver,
@@ -166,13 +179,43 @@ test("every dependency seam rejects plaintext and public Nostr records", async (
   }
 });
 
-test("recipient resolver seam bounds and validates authoritative output", async () => {
+test("recipient resolver seam consumes only bounded normalized directory output", async () => {
   const transport = { putEnvelope() {}, getEnvelope() {} };
   const envelope = { produceEnvelope() {}, openEnvelope() {} };
-  const accepted = defineProtectedContentDependencies({ recipientResolver: { resolveCurrentFull: () => [full(bob), full(alice)] }, transport, envelope });
-  assert.deepEqual(await resolveProtectedRecipients(accepted, { now, limit: 2 }), [alice, bob]);
-  const unavailable = defineProtectedContentDependencies({ recipientResolver: { resolveCurrentFull() { throw new Error("offline"); } }, transport, envelope });
-  assert.equal(await resolveProtectedRecipients(unavailable, { now }), undefined);
-  const excessive = defineProtectedContentDependencies({ recipientResolver: { resolveCurrentFull: () => [full(alice), full(bob)] }, transport, envelope });
-  assert.equal(await resolveProtectedRecipients(excessive, { now, limit: 1 }), undefined);
+  const accepted = defineProtectedContentDependencies({ recipientResolver: { resolveDirectory: () => directory([alice, bob]) }, transport, envelope });
+  const resolved = await resolveProtectedRecipients(accepted, { now, limit: 2 });
+  assert.equal(resolved.state, "available");
+  assert.deepEqual(resolved.recipients.map(({ subject }) => subject), [alice, bob]);
+  const unavailable = defineProtectedContentDependencies({ recipientResolver: { resolveDirectory() { throw new Error("offline"); } }, transport, envelope });
+  assert.deepEqual(await resolveProtectedRecipients(unavailable, { now }), { state: "unavailable" });
+  const excessive = defineProtectedContentDependencies({ recipientResolver: { resolveDirectory: () => directory([alice, bob]) }, transport, envelope });
+  assert.deepEqual(await resolveProtectedRecipients(excessive, { now, limit: 1 }), { state: "unavailable" });
+});
+
+test("Full directory resolver returns only normalized directory state or generic unavailable", async () => {
+  const key = `${"c".repeat(62)}44`;
+  const snapshotId = "snapshot:synthetic:1";
+  const snapshot = {
+    schema: "hodlxxi.full_recipient_directory.v1", version: 1, source: "hodlxxi-crt", snapshotId,
+    complete: true, issuedAt: now - 1, expiresAt: now + 1,
+    recipients: [{
+      snapshotId, subject: alice,
+      encryptionKey: { algorithm: "x25519-v1", version: 1, publicKey: key, validFrom: now - 1, expiresAt: now + 1, revoked: false },
+      authority: { source: "hodlxxi-crt", version: 1, snapshotId, subject: alice, status: "full", expiresAt: now + 1 }
+    }]
+  };
+  const available = await resolveFullRecipientDirectory({ resolveDirectory: () => snapshot }, { now });
+  assert.equal(available.state, "available");
+  assert.deepEqual(available.recipients.map(({ subject }) => subject), [alice]);
+  const failures = [
+    undefined,
+    {},
+    { resolveDirectory: () => undefined },
+    { resolveDirectory: () => ({ ...snapshot, complete: false }) },
+    { resolveDirectory() { throw new Error("denied"); } },
+    { resolveDirectory: () => ({ ...snapshot, search: alice }) }
+  ];
+  const results = await Promise.all(failures.map((resolver) => resolveFullRecipientDirectory(resolver, { now })));
+  for (const result of results) assert.deepEqual(result, { state: "unavailable" });
+  assert.ok(results.every((result) => result === results[0]));
 });
