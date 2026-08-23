@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createPkceChallenge, createPkceVerifier, base64url } from "./hodlxxi-oauth-client.mjs";
 import { TRANSACTION_COOKIE_NAME, SESSION_COOKIE_NAME, parseCookieHeader, serializeHostCookie, expireTransactionCookie, expireSessionCookie } from "./social-oauth-cookie.mjs";
+import { canonicalWssRelayUrl } from "./social-oauth-config.mjs";
 
 export const SECURITY_HEADERS = Object.freeze({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" });
 const MAX_REQUEST_TARGET_BYTES = 4096;
@@ -156,6 +157,27 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
   ) {
     throw new TypeError("invalid BFF dependencies");
   }
+  let configuredRelayUrl = null;
+  if (typeof config?.nostrRelayUrl === "string") {
+    try {
+      const canonical = canonicalWssRelayUrl(config.nostrRelayUrl);
+      if (canonical === config.nostrRelayUrl) configuredRelayUrl = canonical;
+    } catch {
+      configuredRelayUrl = null;
+    }
+  }
+  const authenticatedSubject = (cookieHeader) => {
+    let id;
+    try {
+      id = parseCookieHeader(cookieHeader).get(SESSION_COOKIE_NAME);
+    } catch {
+      return null;
+    }
+    const session = id ? sessions.get(id) : null;
+    return session && typeof session.subject === "string" && SUBJECT.test(session.subject)
+      ? session.subject
+      : null;
+  };
   const callbackHeaders = (extra = {}) => ({ "Set-Cookie": expireTransactionCookie(), ...extra });
   return async function handle(request) {
     const method = request.method;
@@ -198,39 +220,37 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
       const session = id ? sessions.get(id) : null;
       return json(200, session ? { authenticated: true, subject: session.subject } : { authenticated: false });
     }
+    if (target.path === "/auth/social-read-config") {
+      if (method !== "GET" || target.query.length !== 0) {
+        return error(method === "GET" ? 400 : 405);
+      }
+      if (!authenticatedSubject(cookieHeader)) {
+        return json(401, { error: "authentication_required" });
+      }
+      return json(200, configuredRelayUrl
+        ? { enabled: true, relayUrl: configuredRelayUrl }
+        : { enabled: false });
+    }
     if (target.path === "/auth/authority") {
       if (method !== "GET" || target.query.length !== 0) {
         return error(method === "GET" ? 400 : 405);
       }
 
-      let id;
-
-      try {
-        id = parseCookieHeader(cookieHeader).get(SESSION_COOKIE_NAME);
-      } catch {
+      const subject = authenticatedSubject(cookieHeader);
+      if (!subject) {
         return json(401, { error: "authentication_required" });
       }
 
-      const session = id ? sessions.get(id) : null;
-
-      if (
-        !session ||
-        typeof session.subject !== "string" ||
-        !SUBJECT.test(session.subject)
-      ) {
-        return json(401, { error: "authentication_required" });
-      }
-
-      let projection = failClosedAuthority(session.subject);
+      let projection = failClosedAuthority(subject);
 
       if (authorityReader) {
         try {
           projection = normalizeAuthorityProjection(
-            session.subject,
-            await authorityReader(session.subject)
+            subject,
+            await authorityReader(subject)
           );
         } catch {
-          projection = failClosedAuthority(session.subject);
+          projection = failClosedAuthority(subject);
         }
       }
 

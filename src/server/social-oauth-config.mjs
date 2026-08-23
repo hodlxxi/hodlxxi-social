@@ -17,6 +17,21 @@ export function canonicalHttpsOrigin(value) {
   return url.origin;
 }
 
+export function canonicalWssRelayUrl(value) {
+  const raw = text(value, 2048);
+  let url;
+  try { url = new URL(raw); } catch { fail(); }
+  if (
+    url.protocol !== "wss:" ||
+    !url.hostname ||
+    url.hostname.endsWith(".") ||
+    url.username ||
+    url.password ||
+    url.hash
+  ) fail();
+  return url.href;
+}
+
 export function parseSocialOAuthConfig(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) fail();
   const publicOrigin = canonicalHttpsOrigin(input.publicOrigin);
@@ -25,8 +40,11 @@ export function parseSocialOAuthConfig(input) {
   if (!new Set(["127.0.0.1", "::1"]).has(bindHost)) fail();
   const clientId = text(input.clientId, 256);
   text(input.clientSecret, 1024);
+  const nostrRelayUrl = [undefined, null, ""].includes(input.nostrRelayUrl)
+    ? null
+    : canonicalWssRelayUrl(input.nostrRelayUrl);
   const result = {
-    publicOrigin, authorityOrigin, clientId, clientSecret: input.clientSecret, bindHost,
+    publicOrigin, authorityOrigin, clientId, clientSecret: input.clientSecret, bindHost, nostrRelayUrl,
     port: integer(input.port, LIMITS.port), transactionTtlSeconds: integer(input.transactionTtlSeconds, LIMITS.ttl),
     sessionTtlSeconds: integer(input.sessionTtlSeconds, LIMITS.ttl), maxPendingTransactions: integer(input.maxPendingTransactions, LIMITS.capacity),
     maxSessions: integer(input.maxSessions, LIMITS.capacity), outboundTimeoutMs: integer(input.outboundTimeoutMs, LIMITS.timeout),
@@ -40,5 +58,5 @@ export function configFromEnvironment(env) {
     clientId: env.HODLXXI_OAUTH_CLIENT_ID, clientSecret: env.HODLXXI_OAUTH_CLIENT_SECRET, bindHost: env.SOCIAL_BIND_HOST,
     port: env.SOCIAL_PORT, transactionTtlSeconds: env.SOCIAL_TRANSACTION_TTL_SECONDS, sessionTtlSeconds: env.SOCIAL_SESSION_TTL_SECONDS,
     maxPendingTransactions: env.SOCIAL_MAX_PENDING_TRANSACTIONS, maxSessions: env.SOCIAL_MAX_SESSIONS,
-    outboundTimeoutMs: env.SOCIAL_OUTBOUND_TIMEOUT_MS });
+    outboundTimeoutMs: env.SOCIAL_OUTBOUND_TIMEOUT_MS, nostrRelayUrl: env.SOCIAL_NOSTR_RELAY_URL });
 }

@@ -1,16 +1,23 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs?v=1.18.1";
+} from "./components.mjs?v=1.19.0";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.18.1";
+} from "./auth-product.mjs?v=1.19.0";
 
-import { renderNavigation } from "./shell.mjs?v=1.18.1";
+import { renderNavigation } from "./shell.mjs?v=1.19.0";
+
+import {
+  canonicalNostrRelayUrl,
+  createPendingAuthenticatedPublicRead,
+  createUnavailableAuthenticatedPublicRead,
+  loadAuthenticatedPublicRead
+} from "./authenticated-public-read.mjs?v=1.19.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const MAX_JSON_BODY_BYTES = 1024;
@@ -152,6 +159,39 @@ export function parseAuthorityDocument(value, expectedSubject) {
   throw new TypeError("invalid Social authority");
 }
 
+export function parseSocialReadConfigDocument(value) {
+  if (!plainObject(value)) {
+    throw new TypeError("invalid Social public read configuration");
+  }
+
+  if (
+    value.enabled === false &&
+    exactKeys(value, ["enabled"])
+  ) {
+    return Object.freeze({ enabled: false });
+  }
+
+  if (
+    value.enabled === true &&
+    exactKeys(value, ["enabled", "relayUrl"]) &&
+    typeof value.relayUrl === "string"
+  ) {
+    try {
+      const relayUrl = canonicalNostrRelayUrl(value.relayUrl);
+      if (relayUrl === value.relayUrl) {
+        return Object.freeze({
+          enabled: true,
+          relayUrl
+        });
+      }
+    } catch {
+      // All malformed config documents share one fixed browser diagnostic.
+    }
+  }
+
+  throw new TypeError("invalid Social public read configuration");
+}
+
 export async function readSocialSession(fetchImpl = globalThis.fetch) {
   if (typeof fetchImpl !== "function") {
     throw new TypeError("Social session unavailable");
@@ -195,6 +235,28 @@ export async function readSocialAuthority(
   return parseAuthorityDocument(
     await decodeJsonResponse(response),
     expectedSubject
+  );
+}
+
+export async function readSocialPublicReadConfig(
+  fetchImpl = globalThis.fetch
+) {
+  if (typeof fetchImpl !== "function") {
+    throw new TypeError("Social public read configuration unavailable");
+  }
+
+  const response = await fetchImpl("/auth/social-read-config", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  return parseSocialReadConfigDocument(
+    await decodeJsonResponse(response)
   );
 }
 
@@ -308,7 +370,8 @@ const productStatus = (authority) =>
 export function buildAuthenticatedProductView(
   session,
   authority,
-  hash = ""
+  hash = "",
+  publicRead = createUnavailableAuthenticatedPublicRead()
 ) {
   if (
     !session ||
@@ -332,7 +395,8 @@ export function buildAuthenticatedProductView(
   const model = createAuthenticatedProductModel({
     subject: session.subject,
     status,
-    authorityValid: checkedAuthority.valid
+    authorityValid: checkedAuthority.valid,
+    publicRead
   });
 
   return Object.freeze({
@@ -370,9 +434,13 @@ export function bindAuthenticatedEntry(
   root,
   {
     fetchImpl = globalThis.fetch,
-    browser = globalThis.window
+    browser = globalThis.window,
+    publicReadLoader = loadAuthenticatedPublicRead
   } = {}
 ) {
+  if (typeof publicReadLoader !== "function") {
+    throw new TypeError("authenticated entry unavailable");
+  }
   const sessionPrincipal = requiredElement(
     root,
     "#session-principal"
@@ -415,6 +483,7 @@ export function bindAuthenticatedEntry(
 
   let currentSession = null;
   let currentAuthority = null;
+  let currentPublicRead = null;
 
   const clearProduct = () => {
     desktopNavigation.innerHTML = "";
@@ -430,6 +499,7 @@ export function bindAuthenticatedEntry(
       authenticated: false
     });
     currentAuthority = null;
+    currentPublicRead = null;
 
     clearProduct();
 
@@ -464,6 +534,7 @@ export function bindAuthenticatedEntry(
   const renderPendingAuthority = (session) => {
     currentSession = session;
     currentAuthority = null;
+    currentPublicRead = createPendingAuthenticatedPublicRead();
 
     clearProduct();
 
@@ -506,7 +577,8 @@ export function bindAuthenticatedEntry(
     const view = buildAuthenticatedProductView(
       currentSession,
       currentAuthority,
-      browser?.location?.hash ?? ""
+      browser?.location?.hash ?? "",
+      currentPublicRead ?? createUnavailableAuthenticatedPublicRead()
     );
 
     desktopNavigation.innerHTML =
@@ -547,6 +619,15 @@ export function bindAuthenticatedEntry(
 
       renderPendingAuthority(session);
 
+      const publicRead = readSocialPublicReadConfig(fetchImpl)
+        .then((config) => config.enabled
+          ? publicReadLoader({
+              subject: session.subject,
+              relayUrl: config.relayUrl
+            })
+          : createUnavailableAuthenticatedPublicRead())
+        .catch(() => createUnavailableAuthenticatedPublicRead());
+
       let authority;
 
       try {
@@ -561,6 +642,14 @@ export function bindAuthenticatedEntry(
       }
 
       renderAuthority(authority);
+
+      try {
+        currentPublicRead = await publicRead;
+        paintProduct();
+      } catch {
+        currentPublicRead = createUnavailableAuthenticatedPublicRead();
+        paintProduct();
+      }
       return currentSession;
     })
     .catch(() => {
@@ -645,7 +734,8 @@ export function bindAuthenticatedEntry(
     logout,
     repaint: paintProduct,
     currentSession: () => currentSession,
-    currentAuthority: () => currentAuthority
+    currentAuthority: () => currentAuthority,
+    currentPublicRead: () => currentPublicRead
   });
 }
 

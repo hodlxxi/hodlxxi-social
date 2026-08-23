@@ -11,6 +11,8 @@ export const REQUIRED_PRODUCT_ASSETS = Object.freeze([
   "web/index.html",
   "web/auth-entry.mjs",
   "web/auth-product.mjs",
+  "web/authenticated-public-read.mjs",
+  "web/nostr-event-verifier.mjs",
   "web/components.mjs",
   "web/shell.mjs",
   "web/styles.css"
@@ -52,6 +54,10 @@ export async function buildSocialProductionReadiness(
     fail();
   }
 
+  if (!config.nostrRelayUrl) {
+    fail();
+  }
+
   for (const asset of REQUIRED_PRODUCT_ASSETS) {
     try {
       await accessImpl(resolve(cwd, asset), constants.R_OK);
@@ -72,6 +78,8 @@ export async function buildSocialProductionReadiness(
     healthPath: "/auth/health",
     staticEntrypoint: "web/index.html",
     authorityMode: "external-read-only",
+    publicReadMode: "browser-one-shot-explicit-relay",
+    relayHost: new URL(config.nostrRelayUrl).host,
     sessionPersistence: "process-local",
     oauthCredentials: "configured-server-side",
     networkPerformed: false,

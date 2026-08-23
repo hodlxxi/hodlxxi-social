@@ -27,4 +27,4 @@ V1.18 adds no database, durable state, automatic relay selection, relay requirem
 
 ## Browser asset delivery
 
-V1.18.1 assigns the same explicit revision to the authenticated stylesheet, module entry and its static import graph. This prevents a browser cache from combining the current HTML shell with an older renderer, navigation module or stylesheet. The offline production-readiness check requires the complete authenticated module graph; the revision is static release metadata and carries no subject, session, credential or authority information.
+V1.19 assigns the same explicit revision to the authenticated stylesheet, module entry and its complete static import graph, including `authenticated-public-read.mjs` and `nostr-event-verifier.mjs`. This prevents a browser cache from combining the current HTML shell with an older renderer, verifier, navigation module or stylesheet. The offline production-readiness check requires the complete authenticated module graph; the revision is static release metadata and carries no subject, session, credential or authority information.

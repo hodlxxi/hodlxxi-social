@@ -8,12 +8,30 @@ import {
   logoutSocialSession,
   parseAuthenticatedRoute,
   parseAuthorityDocument,
+  parseSocialReadConfigDocument,
   parseSessionDocument,
   readSocialAuthority,
+  readSocialPublicReadConfig,
   readSocialSession
 } from "../web/auth-entry.mjs";
 
 const subject = "c".repeat(64);
+const livePublicRead = () => ({
+  relayHost: "relay.example",
+  profileState: "available",
+  profile: {
+    displayName: "Ada <Social>",
+    about: "Signed public profile",
+    eventId: "1".repeat(64),
+    createdAt: "2026-08-23T00:00:00.000Z"
+  },
+  notesState: "available",
+  notes: [{
+    id: "2".repeat(64),
+    body: "Signed <public> post",
+    createdAt: "2026-08-23T00:01:00.000Z"
+  }]
+});
 
 const response = (
   payload,
@@ -235,6 +253,32 @@ test("authority permits exact Limited or Full for the session subject only", () 
   }
 });
 
+test("public read config accepts only exact disabled or canonical explicit relay documents", () => {
+  assert.deepEqual(parseSocialReadConfigDocument({ enabled: false }), {
+    enabled: false
+  });
+  assert.deepEqual(parseSocialReadConfigDocument({
+    enabled: true,
+    relayUrl: "wss://relay.example/"
+  }), {
+    enabled: true,
+    relayUrl: "wss://relay.example/"
+  });
+
+  for (const malformed of [
+    { enabled: true, relayUrl: "wss://relay.example" },
+    { enabled: true, relayUrl: "ws://relay.example/" },
+    { enabled: true },
+    { enabled: false, relayUrl: "wss://relay.example/" },
+    { enabled: true, relayUrl: "wss://relay.example/", subject }
+  ]) {
+    assert.throws(
+      () => parseSocialReadConfigDocument(malformed),
+      /invalid Social public read configuration/
+    );
+  }
+});
+
 test("session authority and logout use exact same-origin endpoints", async () => {
   const calls = [];
 
@@ -256,6 +300,13 @@ test("session authority and logout use exact same-origin endpoints", async () =>
       });
     }
 
+    if (url === "/auth/social-read-config") {
+      return response({
+        enabled: true,
+        relayUrl: "wss://relay.example/"
+      });
+    }
+
     assert.equal(url, "/auth/logout");
 
     return response({
@@ -268,6 +319,7 @@ test("session authority and logout use exact same-origin endpoints", async () =>
     subject,
     fetchImpl
   );
+  await readSocialPublicReadConfig(fetchImpl);
   await logoutSocialSession(fetchImpl);
 
   assert.deepEqual(
@@ -275,6 +327,7 @@ test("session authority and logout use exact same-origin endpoints", async () =>
     [
       "/auth/session",
       "/auth/authority",
+      "/auth/social-read-config",
       "/auth/logout"
     ]
   );
@@ -298,13 +351,13 @@ test("session authority and logout use exact same-origin endpoints", async () =>
   }
 
   assert.equal(
-    calls[2][1].method,
+    calls[3][1].method,
     "POST"
   );
 
   assert.equal(
     Object.hasOwn(
-      calls[2][1].headers,
+      calls[3][1].headers,
       "Origin"
     ),
     false
@@ -478,10 +531,103 @@ test("Home presents membership context, product guidance, and no invented networ
 
   assert.match(view.page, /Full Member/);
   assert.match(view.page, /Product guide/);
-  assert.match(view.page, /No public network events connected yet/);
+  assert.match(view.page, /Public posts unavailable/);
   assert.match(view.page, /Publishing stays unavailable/);
   assert.doesNotMatch(view.page, /Ada|Ben|Cy|Dia|reactions|reposts/i);
   assert.match(view.networkContext, /Direct friends<\/span><strong>0/);
+});
+
+test("verified own profile and posts render on Home and Profile without affecting authority", () => {
+  for (const hash of ["#/home", `#/profile/${subject}`]) {
+    const view = buildAuthenticatedProductView(
+      { authenticated: true, subject },
+      { subject, status: "full", valid: true },
+      hash,
+      livePublicRead()
+    );
+
+    assert.equal(view.status, "full");
+    assert.match(view.page, /Ada &lt;Social&gt;/);
+    assert.match(view.page, /Signed &lt;public&gt; post/);
+    assert.match(view.page, /relay\.example/);
+    assert.match(view.page, /signature checked|verified Nostr event/i);
+    assert.doesNotMatch(view.page, /<Social>|<public>/);
+  }
+});
+
+test("malformed public read state cannot enter the authenticated product model", () => {
+  for (const publicRead of [
+    { ...livePublicRead(), relayHost: "bad relay" },
+    { ...livePublicRead(), notesState: "unavailable" },
+    { ...livePublicRead(), notes: [{ ...livePublicRead().notes[0], authorId: subject }] },
+    { ...livePublicRead(), profile: { ...livePublicRead().profile, eventId: "x".repeat(64) } },
+    { ...livePublicRead(), profile: { ...livePublicRead().profile, role: "operator" } },
+    { ...livePublicRead(), profileState: "empty" }
+  ]) {
+    assert.throws(
+      () => buildAuthenticatedProductView(
+        { authenticated: true, subject },
+        { subject, status: "full", valid: true },
+        "#/home",
+        publicRead
+      ),
+      /invalid authenticated public read/
+    );
+  }
+});
+
+test("authenticated entry binds relay reads only to the current session subject", async () => {
+  const document = fakeDocument();
+  const seen = [];
+  const binding = bindAuthenticatedEntry(document, {
+    browser: fakeBrowser("#/home"),
+    fetchImpl: async (url) => {
+      if (url === "/auth/session") {
+        return response({ authenticated: true, subject });
+      }
+      if (url === "/auth/authority") {
+        return response({ subject, status: "full", valid: true });
+      }
+      assert.equal(url, "/auth/social-read-config");
+      return response({
+        enabled: true,
+        relayUrl: "wss://relay.example/"
+      });
+    },
+    publicReadLoader: async (input) => {
+      seen.push(input);
+      return livePublicRead();
+    }
+  });
+
+  await binding.ready;
+  assert.deepEqual(seen, [{
+    subject,
+    relayUrl: "wss://relay.example/"
+  }]);
+  assert.deepEqual(binding.currentPublicRead(), livePublicRead());
+  assert.match(document.elements["#app-page"].innerHTML, /Ada &lt;Social&gt;/);
+  assert.equal(binding.currentAuthority().status, "full");
+});
+
+test("malformed live-read output fails closed without signing out or changing authority", async () => {
+  const document = fakeDocument();
+  const binding = bindAuthenticatedEntry(document, {
+    browser: fakeBrowser("#/home"),
+    fetchImpl: async (url) => {
+      if (url === "/auth/session") return response({ authenticated: true, subject });
+      if (url === "/auth/authority") return response({ subject, status: "full", valid: true });
+      return response({ enabled: true, relayUrl: "wss://relay.example/" });
+    },
+    publicReadLoader: async () => ({ operator: true })
+  });
+
+  await binding.ready;
+  assert.equal(binding.currentSession().subject, subject);
+  assert.equal(binding.currentAuthority().status, "full");
+  assert.equal(binding.currentPublicRead().notesState, "unavailable");
+  assert.match(document.elements["#app-page"].innerHTML, /Public posts unavailable/);
+  assert.equal(document.body.getAttribute("data-access"), "full");
 });
 
 test("signed-out bootstrap performs no authority read and no product navigation", async () => {
@@ -896,17 +1042,22 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/components\.mjs\?v=1\.18\.1"/
+    /from "\.\/components\.mjs\?v=1\.19\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/shell\.mjs\?v=1\.18\.1"/
+    /from "\.\/shell\.mjs\?v=1\.19\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs\?v=1\.18\.1"/
+    /from "\.\/auth-product\.mjs\?v=1\.19\.0"/
+  );
+
+  assert.match(
+    module,
+    /from "\.\/authenticated-public-read\.mjs\?v=1\.19\.0"/
   );
 
   assert.doesNotMatch(
@@ -921,12 +1072,12 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.18\.1"/
+    /src="\.\/auth-entry\.mjs\?v=1\.19\.0"/
   );
 
   assert.match(
     html,
-    /href="\.\/styles\.css\?v=1\.18\.1"/
+    /href="\.\/styles\.css\?v=1\.19\.0"/
   );
 
   assert.match(
@@ -956,7 +1107,7 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 });
 
 test("authenticated browser graph uses one explicit release revision and no unversioned entry asset", async () => {
-  const [html, module] = await Promise.all([
+  const [html, module, product, publicRead] = await Promise.all([
     readFile(
       new URL("../web/index.html", import.meta.url),
       "utf8"
@@ -964,18 +1115,28 @@ test("authenticated browser graph uses one explicit release revision and no unve
     readFile(
       new URL("../web/auth-entry.mjs", import.meta.url),
       "utf8"
+    ),
+    readFile(
+      new URL("../web/auth-product.mjs", import.meta.url),
+      "utf8"
+    ),
+    readFile(
+      new URL("../web/authenticated-public-read.mjs", import.meta.url),
+      "utf8"
     )
   ]);
 
   const references = [
     ...html.matchAll(/(?:styles\.css|auth-entry\.mjs)\?v=([0-9.]+)/g),
-    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs)\?v=([0-9.]+)/g)
+    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs|authenticated-public-read\.mjs)\?v=([0-9.]+)/g),
+    ...product.matchAll(/components\.mjs\?v=([0-9.]+)/g),
+    ...publicRead.matchAll(/nostr-event-verifier\.mjs\?v=([0-9.]+)/g)
   ];
 
-  assert.equal(references.length, 5);
+  assert.equal(references.length, 8);
   assert.deepEqual(
     [...new Set(references.map((match) => match[1]))],
-    ["1.18.1"]
+    ["1.19.0"]
   );
   assert.doesNotMatch(
     html,
@@ -983,8 +1144,10 @@ test("authenticated browser graph uses one explicit release revision and no unve
   );
   assert.doesNotMatch(
     module,
-    /from "\.\/(?:components|auth-product|shell)\.mjs"/
+    /from "\.\/(?:components|auth-product|shell|authenticated-public-read)\.mjs"/
   );
+  assert.doesNotMatch(product, /from "\.\/components\.mjs"/);
+  assert.doesNotMatch(publicRead, /from "\.\/nostr-event-verifier\.mjs"/);
 });
 
 test("synthetic product remains isolated in demo.html", async () => {
