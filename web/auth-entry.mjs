@@ -1,16 +1,16 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs";
+} from "./components.mjs?v=1.18.1";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs";
+} from "./auth-product.mjs?v=1.18.1";
 
-import { renderNavigation } from "./shell.mjs";
+import { renderNavigation } from "./shell.mjs?v=1.18.1";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const MAX_JSON_BODY_BYTES = 1024;

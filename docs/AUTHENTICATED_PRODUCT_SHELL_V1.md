@@ -24,3 +24,7 @@ The renderer creates no friend edge, sponsor edge, profile claim, public post, m
 ## Capability boundary
 
 V1.18 adds no database, durable state, automatic relay selection, relay requirement, signing, publishing, message transport, custody or authority mutation. The disabled composer is presentation only. The separate synthetic demo and developer-only one-shot public-read surfaces remain isolated from the ordinary authenticated entry.
+
+## Browser asset delivery
+
+V1.18.1 assigns the same explicit revision to the authenticated stylesheet, module entry and its static import graph. This prevents a browser cache from combining the current HTML shell with an older renderer, navigation module or stylesheet. The offline production-readiness check requires the complete authenticated module graph; the revision is static release metadata and carries no subject, session, credential or authority information.

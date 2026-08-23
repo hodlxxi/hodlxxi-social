@@ -30,6 +30,17 @@ const validEnv = () => ({
   SOCIAL_OUTBOUND_TIMEOUT_MS: "5000"
 });
 
+test("production readiness requires the complete authenticated browser graph", () => {
+  assert.deepEqual(REQUIRED_PRODUCT_ASSETS, [
+    "web/index.html",
+    "web/auth-entry.mjs",
+    "web/auth-product.mjs",
+    "web/components.mjs",
+    "web/shell.mjs",
+    "web/styles.css"
+  ]);
+});
+
 test("valid production configuration yields only bounded non-secret readiness facts", async () => {
   const seen = [];
 
@@ -94,6 +105,9 @@ test("rehearsal-style same-origin authority cannot pass production readiness", a
 
 test("missing required authenticated browser asset fails closed", async () => {
   let calls = 0;
+  const missingCall = REQUIRED_PRODUCT_ASSETS.indexOf(
+    "web/auth-product.mjs"
+  ) + 1;
 
   await assert.rejects(
     buildSocialProductionReadiness(
@@ -102,7 +116,7 @@ test("missing required authenticated browser asset fails closed", async () => {
         cwd: ROOT,
         accessImpl: async () => {
           calls += 1;
-          if (calls === 2) {
+          if (calls === missingCall) {
             throw new Error("host path must not escape");
           }
         }
@@ -111,7 +125,7 @@ test("missing required authenticated browser asset fails closed", async () => {
     /production readiness failed/
   );
 
-  assert.equal(calls, 2);
+  assert.equal(calls, missingCall);
 });
 
 test("readiness runner emits JSON on success and one fixed diagnostic on failure", async () => {

@@ -10,6 +10,9 @@ export const PRODUCTION_READINESS_SCHEMA =
 export const REQUIRED_PRODUCT_ASSETS = Object.freeze([
   "web/index.html",
   "web/auth-entry.mjs",
+  "web/auth-product.mjs",
+  "web/components.mjs",
+  "web/shell.mjs",
   "web/styles.css"
 ]);
 
