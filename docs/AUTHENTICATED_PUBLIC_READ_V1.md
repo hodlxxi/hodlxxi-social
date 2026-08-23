@@ -1,6 +1,6 @@
 # Authenticated Public Read V1.19
 
-The ordinary authenticated product may read one operator-configured public Nostr relay. The server environment key is `SOCIAL_NOSTR_RELAY_URL`; it must parse to a canonical credential-free `wss://` URL. Production readiness fails when this value or any browser module in the revisioned graph is missing.
+The ordinary authenticated product may read one operator-configured public Nostr relay. The server environment key is `SOCIAL_NOSTR_RELAY_URL`; it must parse to a canonical credential-free `wss://` URL. Production readiness fails when this value or any browser module in the revisioned graph is missing. V1.20 publication uses a separately configured relay and the independent boundary documented in `AUTHENTICATED_PUBLIC_WRITE_V1.md`.
 
 After `GET /auth/session` accepts one lowercase x-only subject, `GET /auth/social-read-config` releases only the public relay URL. The browser never accepts a subject from the URL, form, extension, relay configuration, profile metadata, or relay event. It independently issues:
 

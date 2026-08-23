@@ -1,5 +1,11 @@
 # Architecture
 
+## V1.20 authenticated external-signer publication path
+
+The ordinary write dependency path is `opaque Social session subject + authenticated publish config → explicit Connect signer → external NIP-07 getPublicKey/signEvent → local NIP-01/BIP340 verification → one browser WebSocket EVENT → one exact positive relay OK`. The browser re-resolves the provider and rechecks the exact session key for every publication. Provider objects, private-key material and signed events never enter the BFF, Social session store, database or browser persistence.
+
+The profile path produces only an empty-tag kind `0` with allowlisted `display_name` and `about`; the post path produces only an empty-tag bounded kind `1`. The configured publish relay is separate from the read relay and is disclosed only through authenticated `GET /auth/social-publish-config`. Success may trigger one bounded read refresh, but there is no optimistic local event, retry, reconnect, background connection, queue or relay fallback. Nostr publication remains unable to create Limited, Full, Operator, friendship, sponsor or covenant authority.
+
 ## V1.19 authenticated public-read path
 
 The ordinary live-read dependency path is `opaque Social session → exact session subject + authenticated relay config → two independent bounded browser WebSockets → strict NIP-01 id and BIP340 verification → minimized profile/own-note state → Home/Profile`. The BFF chooses only the public relay URL; it never accepts or returns a caller-selected subject. The relay cannot grant authority, and HODLXXI Limited/Full projection remains a separately settled same-origin read.
@@ -18,7 +24,7 @@ The isolated rehearsal path is `local loopback HTTPS → web/index.html → web/
 
 ## V1.14 authenticated product entry
 
-The ordinary product path begins `web/index.html → web/auth-entry.mjs → /auth/session`. Authority continues independently through `/auth/authority → existing HODLXXI authority composition → Limited/Full`; V1.19 adds `/auth/social-read-config → authenticated-public-read.mjs → nostr-event-verifier.mjs` for verified public presentation data. The authenticated viewer comes only from the opaque Social session subject. `web/demo.html` retains the synthetic application separately.
+The ordinary product path begins `web/index.html → web/auth-entry.mjs → /auth/session`. Authority continues independently through `/auth/authority → existing HODLXXI authority composition → Limited/Full`; V1.19 adds `/auth/social-read-config → authenticated-public-read.mjs → nostr-event-verifier.mjs` for verified public presentation data, and V1.20 adds `/auth/social-publish-config → authenticated-public-write.mjs → external signer + verifier + explicit relay`. The authenticated viewer comes only from the opaque Social session subject. `web/demo.html` retains the synthetic application separately.
 
 ## V1.13 confidential OAuth BFF boundary (foundation history)
 
@@ -78,6 +84,6 @@ This CLI is one-shot, read-only, non-persistent, and developer-only. It requires
 
 ## Not implemented
 
-Automatic relay/source selection, relay discovery or pools, fallback relays, reconnect, persistent subscriptions, polling, personalized network feeds, follows/friends, signing, publishing, DMs, encryption, NIP-07 signing/account management, NIP-44, NIP-59, private keys, CRT issuance, covenant or Bitcoin-chain validation, sponsor/status mutation, HODLXXI writes, and durable shared session persistence are not implemented.
+Automatic relay/source selection, relay discovery or pools, fallback relays, reconnect, persistent subscriptions, polling, personalized network feeds, follows/friends, application/server-side signing, automatic/background publication, DMs, encryption, NIP-07 account management, NIP-44, NIP-59, private keys, CRT issuance, covenant or Bitcoin-chain validation, sponsor/status mutation, HODLXXI writes, and durable shared session persistence are not implemented.
 
-The authenticated browser has no direct environment or secret access. The Social BFF remains the environment/OAuth seam: OAuth credentials and the HODLXXI authority origin stay server-side, while one non-secret canonical relay URL may be released after session validation. There is no automatic relay choice, database, durable persistence, signing, publication, private-key handling, custody, Bitcoin spending, Lightning payment, or status issuance.
+The authenticated browser has no direct environment or server-secret access. The Social BFF remains the environment/OAuth seam: OAuth credentials and the HODLXXI authority origin stay server-side, while separate non-secret canonical read and publish relay URLs may be released after session validation. External signer interaction is explicit and browser-local; there is no automatic relay choice, database, durable persistence, application/server signing, private-key handling, custody, Bitcoin spending, Lightning payment, or status issuance.

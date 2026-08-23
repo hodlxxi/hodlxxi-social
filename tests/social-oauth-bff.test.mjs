@@ -350,3 +350,76 @@ test("social read config is session-gated, GET-only, query-free, and disabled sa
   });
   assert.deepEqual(JSON.parse(rejectedConfig.body), { enabled: false });
 });
+
+test("authenticated publish config exposes only one separate canonical explicit relay", async () => {
+  const fixture = authoritySetup(
+    undefined,
+    {
+      ...config,
+      nostrRelayUrl: "wss://read.example/",
+      nostrPublishRelayUrl: "wss://write.example/"
+    }
+  );
+
+  const result = await fixture.bff({
+    method: "GET",
+    url: "/auth/social-publish-config",
+    headers: { cookie: fixture.cookie }
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.headers["Cache-Control"], "no-store");
+  assert.deepEqual(JSON.parse(result.body), {
+    enabled: true,
+    relayUrl: "wss://write.example/"
+  });
+  assert.doesNotMatch(result.body, new RegExp(fixture.authenticatedSubject));
+  assert.doesNotMatch(result.body, /read\.example/);
+});
+
+test("publish config is session-gated GET-only query-free and disabled safely", async () => {
+  const fixture = authoritySetup(undefined);
+  const disabled = await fixture.bff({
+    method: "GET",
+    url: "/auth/social-publish-config",
+    headers: { cookie: fixture.cookie }
+  });
+  assert.deepEqual(JSON.parse(disabled.body), { enabled: false });
+
+  for (const request of [
+    {
+      method: "GET",
+      url: "/auth/social-publish-config",
+      headers: {}
+    },
+    {
+      method: "POST",
+      url: "/auth/social-publish-config",
+      headers: { cookie: fixture.cookie }
+    },
+    {
+      method: "GET",
+      url: `/auth/social-publish-config?subject=${"c".repeat(64)}`,
+      headers: { cookie: fixture.cookie }
+    }
+  ]) {
+    const result = await fixture.bff(request);
+    assert.equal(
+      result.status,
+      request.headers.cookie
+        ? (request.method === "POST" ? 405 : 400)
+        : 401
+    );
+  }
+
+  const noncanonical = authoritySetup(undefined, {
+    ...config,
+    nostrPublishRelayUrl: "wss://write.example"
+  });
+  const rejectedConfig = await noncanonical.bff({
+    method: "GET",
+    url: "/auth/social-publish-config",
+    headers: { cookie: noncanonical.cookie }
+  });
+  assert.deepEqual(JSON.parse(rejectedConfig.body), { enabled: false });
+});

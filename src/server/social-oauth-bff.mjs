@@ -157,15 +157,19 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
   ) {
     throw new TypeError("invalid BFF dependencies");
   }
-  let configuredRelayUrl = null;
-  if (typeof config?.nostrRelayUrl === "string") {
+  const configuredRelay = (value) => {
+    if (typeof value !== "string") return null;
     try {
-      const canonical = canonicalWssRelayUrl(config.nostrRelayUrl);
-      if (canonical === config.nostrRelayUrl) configuredRelayUrl = canonical;
+      const canonical = canonicalWssRelayUrl(value);
+      return canonical === value ? canonical : null;
     } catch {
-      configuredRelayUrl = null;
+      return null;
     }
-  }
+  };
+  const configuredRelayUrl = configuredRelay(config?.nostrRelayUrl);
+  const configuredPublishRelayUrl = configuredRelay(
+    config?.nostrPublishRelayUrl
+  );
   const authenticatedSubject = (cookieHeader) => {
     let id;
     try {
@@ -229,6 +233,17 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
       }
       return json(200, configuredRelayUrl
         ? { enabled: true, relayUrl: configuredRelayUrl }
+        : { enabled: false });
+    }
+    if (target.path === "/auth/social-publish-config") {
+      if (method !== "GET" || target.query.length !== 0) {
+        return error(method === "GET" ? 400 : 405);
+      }
+      if (!authenticatedSubject(cookieHeader)) {
+        return json(401, { error: "authentication_required" });
+      }
+      return json(200, configuredPublishRelayUrl
+        ? { enabled: true, relayUrl: configuredPublishRelayUrl }
         : { enabled: false });
     }
     if (target.path === "/auth/authority") {

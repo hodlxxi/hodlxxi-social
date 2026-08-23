@@ -320,7 +320,7 @@ test("hex-shaped but unsigned relay records cannot enter the default production 
   assert.deepEqual(result.notes, []);
 });
 
-test("production browser read boundary cannot persist, sign, publish, or select a relay", async () => {
+test("production browser read boundary stays read-only and cannot select either relay", async () => {
   const [entrySource, productSource, readSource, verifierSource] = await Promise.all([
     readFile(new URL("../web/auth-entry.mjs", import.meta.url), "utf8"),
     readFile(new URL("../web/auth-product.mjs", import.meta.url), "utf8"),
@@ -354,6 +354,7 @@ test("production browser read boundary cannot persist, sign, publish, or select 
     "/auth/authority",
     "/auth/logout",
     "/auth/session",
+    "/auth/social-publish-config",
     "/auth/social-read-config"
   ]);
   assert.doesNotMatch(entrySource, /\bWebSocket\b/);

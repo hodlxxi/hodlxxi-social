@@ -3,7 +3,7 @@ import {
   renderPageFrame,
   renderStatusBadge,
   renderUnavailableState
-} from "./components.mjs?v=1.19.0";
+} from "./components.mjs?v=1.20.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const CANONICAL_EVENT_ID = /^[0-9a-f]{64}$/;
@@ -14,6 +14,23 @@ const PUBLIC_READ_STATES = new Set([
   "empty",
   "unavailable"
 ]);
+const SIGNER_STATES = new Set([
+  "disabled",
+  "disconnected",
+  "connecting",
+  "connected",
+  "mismatch",
+  "unavailable"
+]);
+const PUBLISH_OPERATIONS = new Set([
+  "idle",
+  "publishing-profile",
+  "publishing-note",
+  "published-profile",
+  "published-note",
+  "failed-profile",
+  "failed-note"
+]);
 const EMPTY = Object.freeze([]);
 const DEFAULT_PUBLIC_READ = Object.freeze({
   relayHost: null,
@@ -21,6 +38,11 @@ const DEFAULT_PUBLIC_READ = Object.freeze({
   profile: null,
   notesState: "unavailable",
   notes: EMPTY
+});
+const DEFAULT_PUBLIC_WRITE = Object.freeze({
+  relayHost: null,
+  signerState: "disabled",
+  operation: "idle"
 });
 
 const plainObject = (value) =>
@@ -144,6 +166,37 @@ const normalizePublicRead = (value) => {
   });
 };
 
+const normalizePublicWrite = (value) => {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ["operation", "relayHost", "signerState"]) ||
+    !SIGNER_STATES.has(value.signerState) ||
+    !PUBLISH_OPERATIONS.has(value.operation) ||
+    !(
+      value.relayHost === null ||
+      (
+        typeof value.relayHost === "string" &&
+        value.relayHost.length > 0 &&
+        value.relayHost.length <= 255 &&
+        !/[\u0000-\u0020\u007f]/.test(value.relayHost)
+      )
+    ) ||
+    (value.signerState === "disabled") !== (value.relayHost === null) ||
+    (
+      value.operation !== "idle" &&
+      value.signerState !== "connected"
+    )
+  ) {
+    throw new TypeError("invalid authenticated public write");
+  }
+
+  return Object.freeze({
+    relayHost: value.relayHost,
+    signerState: value.signerState,
+    operation: value.operation
+  });
+};
+
 const shortKey = (subject) =>
   `${subject.slice(0, 8)}…${subject.slice(-6)}`;
 
@@ -185,6 +238,43 @@ const publicReadSource = (model) =>
   model.publicRead.relayHost
     ? `Signed Nostr events · ${model.publicRead.relayHost}`
     : "Signed Nostr events · source unavailable";
+
+const writeBusy = (model) =>
+  model.publicWrite.operation.startsWith("publishing-");
+
+const publishFeedback = (model, type) => {
+  if (model.publicWrite.operation === `published-${type}`) {
+    return `<p class="publish-feedback publish-feedback-success" role="status">Published to ${escapeHtml(model.publicWrite.relayHost)} after local signature verification.</p>`;
+  }
+  if (model.publicWrite.operation === `failed-${type}`) {
+    return `<p class="publish-feedback publish-feedback-error" role="status">Publication was not accepted. No membership or authority state changed.</p>`;
+  }
+  if (model.publicWrite.operation === `publishing-${type}`) {
+    return `<p class="publish-feedback" role="status">Waiting for signer approval and one relay acknowledgement…</p>`;
+  }
+  return "";
+};
+
+const signerControl = (model) => {
+  const state = model.publicWrite.signerState;
+  if (state === "disabled") {
+    return `<p class="signer-state signer-state-disabled">Publishing relay not configured.</p>`;
+  }
+  if (state === "connected") {
+    return `<p class="signer-state signer-state-connected"><span>✓</span> External signer matched this session key. Every action rechecks.</p>`;
+  }
+
+  const detail = state === "mismatch"
+    ? "The extension key does not match this authenticated session."
+    : state === "unavailable"
+      ? "A compatible NIP-07 signer was not accepted."
+      : state === "connecting"
+        ? "Waiting for extension approval…"
+        : "Connect an external signer to publish as this exact key.";
+
+  return `<div class="signer-connect"><p class="signer-state">${escapeHtml(detail)}</p>` +
+    `<button id="connect-authenticated-signer" class="product-action" type="button"${state === "connecting" ? " disabled" : ""}>${state === "connecting" ? "Connecting…" : "Connect signer"}</button></div>`;
+};
 
 const publicTimestamp = (value) =>
   `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`;
@@ -252,18 +342,25 @@ const membershipStrip = (model) =>
   `<a href="#/trust">View details <span aria-hidden="true">→</span></a>` +
   `</section>`;
 
-const readonlyComposer = (model) =>
-  `<section class="composer-card authenticated-composer" aria-label="Post composer preview">` +
+const authenticatedComposer = (model) => {
+  const connected = model.publicWrite.signerState === "connected";
+  const busy = writeBusy(model);
+
+  return `<section class="composer-card authenticated-composer" aria-label="Post composer">` +
   `<div class="composer-head"><div class="avatar" aria-hidden="true">${escapeHtml(avatarInitial(model))}</div>` +
   `<div><strong>${escapeHtml(publicProfileName(model))}</strong>${renderStatusBadge(model.status)}` +
   `<p>Authenticated as ${escapeHtml(shortKey(model.subject))}</p></div></div>` +
-  `<div class="composer-prompt">What’s on your mind?</div>` +
+  `<form id="authenticated-note-publisher">` +
+  `<label class="sr-only" for="authenticated-note-content">Public post</label>` +
+  `<textarea id="authenticated-note-content" name="content" maxlength="5000" required${connected ? "" : " disabled"} placeholder="What’s on your mind?"></textarea>` +
   `<div class="composer-actions"><div class="local-tools" aria-label="Planned post attachments">` +
   `<span>Image</span><span>Poll</span><span>Article</span></div>` +
   `<span class="composer-audience">Audience · Public</span>` +
-  `<button type="button" disabled>Post</button></div>` +
-  `<p class="notice">Publishing stays unavailable until a signer and write relay are explicitly connected. Nothing is signed or broadcast from this screen.</p>` +
+  `<button type="submit"${connected && !busy ? "" : " disabled"}>${busy ? "Publishing…" : "Post"}</button></div></form>` +
+  `${signerControl(model)}${publishFeedback(model, "note")}` +
+  `<p class="notice">Social never receives private-key material. Each post requires explicit approval in an external signer and one relay acknowledgement. Publishing cannot grant membership or covenant authority.</p>` +
   `</section>`;
+};
 
 const productGuide = (model) =>
   `<article class="post-card product-guide-card">` +
@@ -287,7 +384,7 @@ const homePage = (model) =>
       `<h2>Welcome back</h2><p>Your Social workspace is bound to ${escapeHtml(shortKey(model.subject))}.</p></div>` +
       `<span class="source-pill"><i></i> Session active</span></div>` +
       membershipStrip(model) +
-      readonlyComposer(model) +
+      authenticatedComposer(model) +
       `<div class="feed-toolbar"><div><strong>Your public posts</strong><span>${escapeHtml(publicReadSource(model))}</span></div>` +
       `<div class="feed-filter" aria-label="Feed scope"><span class="active">Your posts</span><span>Network later</span></div></div>` +
       `<section class="feed-stack" aria-label="Verified public posts">${publicNotesSurface(model)}` +
@@ -307,6 +404,25 @@ const profileHero = (model, compact = false) =>
   `${compact ? actionLink("#/trust", "Trust details", true) : ""}</div>` +
   `</article>`;
 
+const profileEditor = (model) => {
+  const connected = model.publicWrite.signerState === "connected";
+  const busy = writeBusy(model);
+  const displayName = publicProfileName(model) === "Your HODLXXI identity"
+    ? ""
+    : publicProfileName(model);
+  const about = publicProfileAbout(model) ?? "";
+
+  return `<section class="card authenticated-profile-editor"><p class="eyebrow">Publish profile</p>` +
+    `<h2>Public presentation</h2><form id="authenticated-profile-publisher">` +
+    `<label for="authenticated-profile-name">Display name</label>` +
+    `<input id="authenticated-profile-name" name="displayName" maxlength="80" value="${escapeHtml(displayName)}"${connected ? "" : " disabled"}>` +
+    `<label for="authenticated-profile-about">Bio</label>` +
+    `<textarea id="authenticated-profile-about" name="about" maxlength="280"${connected ? "" : " disabled"}>${escapeHtml(about)}</textarea>` +
+    `<button class="product-action" type="submit"${connected && !busy ? "" : " disabled"}>${busy ? "Publishing…" : "Publish profile"}</button>` +
+    `</form>${signerControl(model)}${publishFeedback(model, "profile")}` +
+    `<p class="notice">Only display name and bio are included in the public kind 0 event. Pictures, NIP-05 claims, links and unknown metadata are not published here.</p></section>`;
+};
+
 const profilePage = (model) =>
   renderPageFrame({
     title: "Profile",
@@ -325,7 +441,7 @@ const profilePage = (model) =>
       `<p class="notice">A verified Nostr event proves control of its signing key. It does not grant HODLXXI membership or covenant trust.</p></section>` +
       `<section class="card"><p class="eyebrow">Membership</p><h2>${escapeHtml(statusLabel(model.status))}</h2>` +
       `<p>${escapeHtml(statusDetail(model))}</p>${actionLink("#/trust", "View trust details")}</section>` +
-      `</div>` +
+      `${profileEditor(model)}</div>` +
       `<section class="profile-public-posts" aria-label="Profile public posts">` +
       `<div class="feed-toolbar"><div><strong>Public posts</strong><span>${escapeHtml(publicReadSource(model))}</span></div></div>` +
       `${publicNotesSurface(model, true)}</section>`
@@ -492,7 +608,7 @@ const activityPage = (model) =>
       `<article><span class="activity-dot activity-dot-success"></span><div><strong>${escapeHtml(statusLabel(model.status))} access projected</strong>` +
       `<p>${escapeHtml(statusDetail(model))}</p><small>Read-only HODLXXI authority</small></div></article>` +
       `<article><span class="activity-dot"></span><div><strong>Public Nostr read ${model.publicRead.notesState === "available" || model.publicRead.notesState === "empty" ? "completed" : model.publicRead.notesState}</strong>` +
-      `<p>${escapeHtml(publicReadSource(model))}. ${escapeHtml(publicPostCount(model))} accepted public posts.</p><small>One-shot browser read · no writes</small></div></article></div>` +
+      `<p>${escapeHtml(publicReadSource(model))}. ${escapeHtml(publicPostCount(model))} accepted public posts.</p><small>One-shot browser read · ${model.publicWrite.relayHost ? "explicit external-signer publishing available" : "no writes"}</small></div></article></div>` +
       `<p class="notice">This is session context, not social engagement telemetry or a trust score.</p></section>`
   });
 
@@ -530,9 +646,9 @@ const settingsPage = (model) =>
       `<article class="settings-card"><span class="settings-icon">⌁</span><div><strong>Identity & session</strong>` +
       `<p>${escapeHtml(shortKey(model.subject))} · authenticated</p></div><a href="#/profile/${escapeHtml(model.subject)}">Open</a></article>` +
       `<article class="settings-card"><span class="settings-icon">⌘</span><div><strong>Keys & signers</strong>` +
-      `<p>Social holds no signing material. Signer controls are not connected.</p></div><span>Protected</span></article>` +
+      `<p>Social holds no signing material. ${model.publicWrite.signerState === "connected" ? "The last explicit external-signer check matched this session; every action rechecks." : "No external signer has matched this page session."}</p></div>${model.publicWrite.signerState === "connected" ? "<span>Matched</span>" : "<span>Protected</span>"}</article>` +
       `<article class="settings-card"><span class="settings-icon">◉</span><div><strong>Relay settings</strong>` +
-      `<p>${escapeHtml(model.publicRead.relayHost ? `One bounded browser read from ${model.publicRead.relayHost}. No write or message relay is connected.` : "No public read, write or message relay is currently available.")}</p></div><span>${model.publicRead.relayHost ? "Read only" : "Unavailable"}</span></article>` +
+      `<p>${escapeHtml(model.publicRead.relayHost ? `One bounded browser read from ${model.publicRead.relayHost}. ${model.publicWrite.relayHost ? `Explicit publications target ${model.publicWrite.relayHost}.` : "No publish relay is configured."}` : "No public read relay is currently available.")}</p></div><span>${model.publicWrite.relayHost ? "Explicit publish" : model.publicRead.relayHost ? "Read only" : "Unavailable"}</span></article>` +
       `<article class="settings-card"><span class="settings-icon">◌</span><div><strong>Privacy & discoverability</strong>` +
       `<p>Network visibility preferences are not published yet.</p></div><span>Pending</span></article>` +
       `<article class="settings-card"><span class="settings-icon">⇩</span><div><strong>Export & backup</strong>` +
@@ -544,7 +660,8 @@ export function createAuthenticatedProductModel({
   subject,
   status,
   authorityValid,
-  publicRead = DEFAULT_PUBLIC_READ
+  publicRead = DEFAULT_PUBLIC_READ,
+  publicWrite = DEFAULT_PUBLIC_WRITE
 }) {
   if (
     typeof subject !== "string" ||
@@ -559,7 +676,8 @@ export function createAuthenticatedProductModel({
     subject,
     status,
     authorityValid,
-    publicRead: normalizePublicRead(publicRead)
+    publicRead: normalizePublicRead(publicRead),
+    publicWrite: normalizePublicWrite(publicWrite)
   });
 }
 

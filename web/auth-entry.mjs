@@ -1,23 +1,30 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs?v=1.19.0";
+} from "./components.mjs?v=1.20.0";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.19.0";
+} from "./auth-product.mjs?v=1.20.0";
 
-import { renderNavigation } from "./shell.mjs?v=1.19.0";
+import { renderNavigation } from "./shell.mjs?v=1.20.0";
 
 import {
   canonicalNostrRelayUrl,
   createPendingAuthenticatedPublicRead,
   createUnavailableAuthenticatedPublicRead,
   loadAuthenticatedPublicRead
-} from "./authenticated-public-read.mjs?v=1.19.0";
+} from "./authenticated-public-read.mjs?v=1.20.0";
+
+import {
+  AUTHENTICATED_SIGNER_STATES,
+  connectAuthenticatedNip07Signer,
+  publishAuthenticatedNote,
+  publishAuthenticatedProfile
+} from "./authenticated-public-write.mjs?v=1.20.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const MAX_JSON_BODY_BYTES = 1024;
@@ -35,6 +42,22 @@ const PRODUCT_ROUTES = Object.freeze({
   "/activity": "activity",
   "/trust": "trust",
   "/settings": "settings"
+});
+
+const DISABLED_PUBLIC_WRITE = Object.freeze({
+  relayHost: null,
+  signerState: "disabled",
+  operation: "idle"
+});
+
+const publicWriteState = (
+  relayUrl,
+  signerState = "disconnected",
+  operation = "idle"
+) => Object.freeze({
+  relayHost: new URL(relayUrl).host,
+  signerState,
+  operation
 });
 
 const exactKeys = (value, expected) => {
@@ -192,6 +215,14 @@ export function parseSocialReadConfigDocument(value) {
   throw new TypeError("invalid Social public read configuration");
 }
 
+export function parseSocialPublishConfigDocument(value) {
+  try {
+    return parseSocialReadConfigDocument(value);
+  } catch {
+    throw new TypeError("invalid Social publish configuration");
+  }
+}
+
 export async function readSocialSession(fetchImpl = globalThis.fetch) {
   if (typeof fetchImpl !== "function") {
     throw new TypeError("Social session unavailable");
@@ -256,6 +287,28 @@ export async function readSocialPublicReadConfig(
   });
 
   return parseSocialReadConfigDocument(
+    await decodeJsonResponse(response)
+  );
+}
+
+export async function readSocialPublishConfig(
+  fetchImpl = globalThis.fetch
+) {
+  if (typeof fetchImpl !== "function") {
+    throw new TypeError("Social publish configuration unavailable");
+  }
+
+  const response = await fetchImpl("/auth/social-publish-config", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  return parseSocialPublishConfigDocument(
     await decodeJsonResponse(response)
   );
 }
@@ -371,7 +424,8 @@ export function buildAuthenticatedProductView(
   session,
   authority,
   hash = "",
-  publicRead = createUnavailableAuthenticatedPublicRead()
+  publicRead = createUnavailableAuthenticatedPublicRead(),
+  publicWrite = DISABLED_PUBLIC_WRITE
 ) {
   if (
     !session ||
@@ -396,7 +450,8 @@ export function buildAuthenticatedProductView(
     subject: session.subject,
     status,
     authorityValid: checkedAuthority.valid,
-    publicRead
+    publicRead,
+    publicWrite
   });
 
   return Object.freeze({
@@ -435,10 +490,18 @@ export function bindAuthenticatedEntry(
   {
     fetchImpl = globalThis.fetch,
     browser = globalThis.window,
-    publicReadLoader = loadAuthenticatedPublicRead
+    publicReadLoader = loadAuthenticatedPublicRead,
+    signerConnector = connectAuthenticatedNip07Signer,
+    notePublisher = publishAuthenticatedNote,
+    profilePublisher = publishAuthenticatedProfile
   } = {}
 ) {
-  if (typeof publicReadLoader !== "function") {
+  if (
+    typeof publicReadLoader !== "function" ||
+    typeof signerConnector !== "function" ||
+    typeof notePublisher !== "function" ||
+    typeof profilePublisher !== "function"
+  ) {
     throw new TypeError("authenticated entry unavailable");
   }
   const sessionPrincipal = requiredElement(
@@ -484,6 +547,9 @@ export function bindAuthenticatedEntry(
   let currentSession = null;
   let currentAuthority = null;
   let currentPublicRead = null;
+  let currentReadConfig = Object.freeze({ enabled: false });
+  let currentPublishConfig = Object.freeze({ enabled: false });
+  let currentPublicWrite = DISABLED_PUBLIC_WRITE;
 
   const clearProduct = () => {
     desktopNavigation.innerHTML = "";
@@ -500,6 +566,9 @@ export function bindAuthenticatedEntry(
     });
     currentAuthority = null;
     currentPublicRead = null;
+    currentReadConfig = Object.freeze({ enabled: false });
+    currentPublishConfig = Object.freeze({ enabled: false });
+    currentPublicWrite = DISABLED_PUBLIC_WRITE;
 
     clearProduct();
 
@@ -535,6 +604,9 @@ export function bindAuthenticatedEntry(
     currentSession = session;
     currentAuthority = null;
     currentPublicRead = createPendingAuthenticatedPublicRead();
+    currentReadConfig = Object.freeze({ enabled: false });
+    currentPublishConfig = Object.freeze({ enabled: false });
+    currentPublicWrite = DISABLED_PUBLIC_WRITE;
 
     clearProduct();
 
@@ -578,7 +650,8 @@ export function bindAuthenticatedEntry(
       currentSession,
       currentAuthority,
       browser?.location?.hash ?? "",
-      currentPublicRead ?? createUnavailableAuthenticatedPublicRead()
+      currentPublicRead ?? createUnavailableAuthenticatedPublicRead(),
+      currentPublicWrite
     );
 
     desktopNavigation.innerHTML =
@@ -620,13 +693,19 @@ export function bindAuthenticatedEntry(
       renderPendingAuthority(session);
 
       const publicRead = readSocialPublicReadConfig(fetchImpl)
-        .then((config) => config.enabled
-          ? publicReadLoader({
-              subject: session.subject,
-              relayUrl: config.relayUrl
-            })
-          : createUnavailableAuthenticatedPublicRead())
+        .then((config) => {
+          currentReadConfig = config;
+          return config.enabled
+            ? publicReadLoader({
+                subject: session.subject,
+                relayUrl: config.relayUrl
+              })
+            : createUnavailableAuthenticatedPublicRead();
+        })
         .catch(() => createUnavailableAuthenticatedPublicRead());
+
+      const publishConfig = readSocialPublishConfig(fetchImpl)
+        .catch(() => Object.freeze({ enabled: false }));
 
       let authority;
 
@@ -643,6 +722,12 @@ export function bindAuthenticatedEntry(
 
       renderAuthority(authority);
 
+      currentPublishConfig = await publishConfig;
+      currentPublicWrite = currentPublishConfig.enabled
+        ? publicWriteState(currentPublishConfig.relayUrl)
+        : DISABLED_PUBLIC_WRITE;
+      paintProduct();
+
       try {
         currentPublicRead = await publicRead;
         paintProduct();
@@ -656,6 +741,145 @@ export function bindAuthenticatedEntry(
       renderSignedOut(true);
       return currentSession;
     });
+
+  const externalSignerDependencies = () => ({
+    resolveProvider: () => browser?.nostr
+  });
+
+  const writeContextCurrent = (session, relayUrl) =>
+    currentSession === session &&
+    currentPublishConfig.enabled === true &&
+    currentPublishConfig.relayUrl === relayUrl;
+
+  const connectSigner = async () => {
+    if (
+      currentSession?.authenticated !== true ||
+      !currentPublishConfig.enabled ||
+      currentPublicWrite.signerState === "connecting" ||
+      currentPublicWrite.operation.startsWith("publishing-")
+    ) {
+      return false;
+    }
+
+    const session = currentSession;
+    const relayUrl = currentPublishConfig.relayUrl;
+
+    currentPublicWrite = publicWriteState(
+      relayUrl,
+      "connecting"
+    );
+    paintProduct();
+
+    let result;
+    try {
+      result = await signerConnector(
+        { subject: session.subject },
+        externalSignerDependencies()
+      );
+    } catch {
+      result = Object.freeze({
+        state: AUTHENTICATED_SIGNER_STATES.unavailable
+      });
+    }
+
+    if (!writeContextCurrent(session, relayUrl)) {
+      return false;
+    }
+
+    const signerState = result?.state === AUTHENTICATED_SIGNER_STATES.connected
+      ? "connected"
+      : result?.state === AUTHENTICATED_SIGNER_STATES.mismatch
+        ? "mismatch"
+        : "unavailable";
+
+    currentPublicWrite = publicWriteState(
+      relayUrl,
+      signerState
+    );
+    paintProduct();
+    return signerState === "connected";
+  };
+
+  const refreshPublicRead = async () => {
+    if (
+      currentSession?.authenticated !== true ||
+      !currentReadConfig.enabled
+    ) {
+      return false;
+    }
+
+    const previous = currentPublicRead;
+    try {
+      currentPublicRead = await publicReadLoader({
+        subject: currentSession.subject,
+        relayUrl: currentReadConfig.relayUrl
+      });
+      paintProduct();
+      return true;
+    } catch {
+      currentPublicRead = previous;
+      paintProduct();
+      return false;
+    }
+  };
+
+  const publish = async (type, fields) => {
+    if (
+      currentSession?.authenticated !== true ||
+      !currentPublishConfig.enabled ||
+      currentPublicWrite.signerState !== "connected" ||
+      currentPublicWrite.operation.startsWith("publishing-")
+    ) {
+      return false;
+    }
+
+    const session = currentSession;
+    const relayUrl = currentPublishConfig.relayUrl;
+
+    currentPublicWrite = publicWriteState(
+      relayUrl,
+      "connected",
+      `publishing-${type}`
+    );
+    paintProduct();
+
+    const publisher = type === "profile"
+      ? profilePublisher
+      : notePublisher;
+
+    try {
+      await publisher(
+        {
+          subject: session.subject,
+          relayUrl,
+          ...fields
+        },
+        externalSignerDependencies()
+      );
+      if (!writeContextCurrent(session, relayUrl)) {
+        return false;
+      }
+      currentPublicWrite = publicWriteState(
+        relayUrl,
+        "connected",
+        `published-${type}`
+      );
+      paintProduct();
+      await refreshPublicRead();
+      return true;
+    } catch {
+      if (!writeContextCurrent(session, relayUrl)) {
+        return false;
+      }
+      currentPublicWrite = publicWriteState(
+        relayUrl,
+        "connected",
+        `failed-${type}`
+      );
+      paintProduct();
+      return false;
+    }
+  };
 
   const logout = async () => {
     if (currentSession?.authenticated !== true) {
@@ -702,14 +926,49 @@ export function bindAuthenticatedEntry(
     void logout();
   });
 
+  root.addEventListener?.("click", (event) => {
+    if (event.target?.id !== "connect-authenticated-signer") {
+      return;
+    }
+    event.preventDefault?.();
+    void connectSigner();
+  });
+
   root.addEventListener?.("submit", (event) => {
-    if (event.target?.id !== "authenticated-search") {
+    const formId = event.target?.id;
+    if (![
+      "authenticated-search",
+      "authenticated-note-publisher",
+      "authenticated-profile-publisher"
+    ].includes(formId)) {
       return;
     }
 
     event.preventDefault?.();
 
-    const query = new FormData(event.target)
+    let fields;
+    try {
+      fields = new FormData(event.target);
+    } catch {
+      return;
+    }
+
+    if (formId === "authenticated-note-publisher") {
+      void publish("note", {
+        content: fields.get("content")?.toString() ?? ""
+      });
+      return;
+    }
+
+    if (formId === "authenticated-profile-publisher") {
+      void publish("profile", {
+        displayName: fields.get("displayName")?.toString() ?? "",
+        about: fields.get("about")?.toString() ?? ""
+      });
+      return;
+    }
+
+    const query = fields
       .get("q")
       ?.toString()
       .normalize("NFKC")
@@ -732,10 +991,17 @@ export function bindAuthenticatedEntry(
   return Object.freeze({
     ready,
     logout,
+    connectSigner,
+    publishNote: (content) => publish("note", { content }),
+    publishProfile: (displayName, about) => publish(
+      "profile",
+      { displayName, about }
+    ),
     repaint: paintProduct,
     currentSession: () => currentSession,
     currentAuthority: () => currentAuthority,
-    currentPublicRead: () => currentPublicRead
+    currentPublicRead: () => currentPublicRead,
+    currentPublicWrite: () => currentPublicWrite
   });
 }
 
