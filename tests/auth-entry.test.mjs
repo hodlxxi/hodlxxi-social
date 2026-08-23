@@ -56,7 +56,8 @@ function fakeDocument() {
       "#desktop-navigation",
       "#mobile-navigation",
       "#app-page",
-      "#context-profile"
+      "#context-profile",
+      "#context-network"
     ].map((selector) => [
       selector,
       new Element()
@@ -64,9 +65,11 @@ function fakeDocument() {
   );
 
   const attributes = new Map();
+  const listeners = new Map();
 
   return {
     elements,
+    listeners,
     body: {
       setAttribute(name, value) {
         attributes.set(name, value);
@@ -88,6 +91,9 @@ function fakeDocument() {
     },
     querySelector(selector) {
       return elements[selector];
+    },
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
     }
   };
 }
@@ -335,7 +341,7 @@ test("product view reuses the existing navigation and component classes", () => 
 
   assert.match(
     view.page,
-    /class="page"/
+    /class="page(?:\s|\")/
   );
 
   assert.match(
@@ -394,6 +400,88 @@ test("authenticated routing permits only the current subject profile", () => {
     ).page,
     "trust"
   );
+
+  assert.equal(
+    parseAuthenticatedRoute(
+      "#/settings",
+      subject
+    ).page,
+    "settings"
+  );
+
+  assert.deepEqual(
+    parseAuthenticatedRoute(
+      "#/search?q=you",
+      subject
+    ),
+    {
+      page: "search",
+      path: "/search",
+      searchQuery: "you"
+    }
+  );
+});
+
+test("authenticated routes render complete truthful product surfaces instead of legacy placeholders", () => {
+  const routes = new Map([
+    ["#/home", /membership-strip/],
+    ["#/circle", /auth-circle-title/],
+    ["#/search?q=you", /1 permitted result/],
+    ["#/discover", /directory-product/],
+    ["#/friends", /No direct friends yet/],
+    ["#/friends-of-friends", /friends of friends/i],
+    ["#/messages", /authenticated-split/],
+    ["#/groups", /product-metrics/],
+    ["#/notifications", /all caught up/i],
+    ["#/activity", /Social session authenticated/],
+    [`#/profile/${subject}`, /profile-cover/],
+    ["#/trust", /trust-hero/],
+    ["#/settings", /settings-grid/]
+  ]);
+
+  for (const [hash, expected] of routes) {
+    const view = buildAuthenticatedProductView(
+      {
+        authenticated: true,
+        subject
+      },
+      {
+        subject,
+        status: "full",
+        valid: true
+      },
+      hash
+    );
+
+    assert.match(view.page, expected, hash);
+    assert.doesNotMatch(
+      view.page,
+      /No authenticated social dataset|Synthetic fixture|synthetic demo/i,
+      hash
+    );
+  }
+});
+
+test("Home presents membership context, product guidance, and no invented network activity", () => {
+  const view = buildAuthenticatedProductView(
+    {
+      authenticated: true,
+      subject
+    },
+    {
+      subject,
+      status: "full",
+      valid: true
+    },
+    "#/home"
+  );
+
+  assert.match(view.page, /Full Member/);
+  assert.match(view.page, /Product guide/);
+  assert.match(view.page, /No public network events connected yet/);
+  assert.match(view.page, /Publishing stays unavailable/);
+  assert.doesNotMatch(view.page, /Ada|Ben|Cy|Dia|reactions|reposts/i);
+  assert.match(view.networkContext, /Direct friends<\/span><strong>0/);
 });
 
 test("signed-out bootstrap performs no authority read and no product navigation", async () => {
@@ -699,6 +787,13 @@ test("successful logout clears viewer authority navigation profile and subject U
     ""
   );
 
+  assert.equal(
+    document.elements[
+      "#context-network"
+    ].innerHTML,
+    ""
+  );
+
   assert.doesNotMatch(
     document.elements[
       "#app-page"
@@ -809,6 +904,11 @@ test("normal authenticated entry imports pure product UI but never synthetic app
     /from "\.\/shell\.mjs"/
   );
 
+  assert.match(
+    module,
+    /from "\.\/auth-product\.mjs"/
+  );
+
   assert.doesNotMatch(
     module,
     /from "\.\/app\.mjs"|fixtures|SyntheticSocialAdapter|getFixtureData|viewer-select|window\.nostr|NIP-07|nip07|localStorage|sessionStorage|indexedDB|document\.cookie|\?subject=|agent\/authority\/current/i
@@ -837,6 +937,16 @@ test("normal authenticated entry imports pure product UI but never synthetic app
   assert.match(
     html,
     /id="sign-out"/
+  );
+
+  assert.match(
+    html,
+    /id="context-network"/
+  );
+
+  assert.doesNotMatch(
+    html,
+    /Development surface|Open synthetic demo/
   );
 });
 

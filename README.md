@@ -1,6 +1,8 @@
-# HODLXXI Social V1.16
+# HODLXXI Social V1.18
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
+
+V1.18 replaces the ordinary authenticated entry's technical placeholders with the first production-facing product shell from the UX blueprint. Home now presents a current membership chip, read-only composer boundary, product guide and honest feed state; Profile, My Circle, Search, Discover, Friends, Friends of Friends, Messages, Groups, Notifications, Activity, Trust and Settings are complete responsive surfaces rather than blank route notices. Only the session public key and current external Limited/Full projection enter the shell. No participant, relationship, post, message, group or activity is fabricated to fill an empty network.
 
 V1.15 adds a local-only authenticated browser rehearsal. It exercises the real V1.14 product entry, OAuth BFF transaction/session path, session-bound Limited/Full authority projection, and logout while replacing external OAuth and authority with unmistakably synthetic loopback-only inputs. The rehearsal makes no production HODLXXI request, uses no production OAuth credential, changes no deployment configuration, and cannot grant real Full or Operator authority.
 
