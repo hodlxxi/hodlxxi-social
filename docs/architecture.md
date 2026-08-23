@@ -1,5 +1,9 @@
 # Architecture
 
+## V1.21 protected-content foundation
+
+`src/protected-content.mjs` is a pure, offline policy and dependency boundary for future `FULL_NETWORK` delivery. It is not wired into production composition. It validates exact current-Full authority independently for authors and viewers, produces metadata-free denials, validates bounded authoritative recipient assertions, and defines only injected opaque transport and envelope contracts. Public Nostr kinds 0 and 1 remain public-only. Member directory, key distribution, rotation/revocation, durable protected transport, encryption and production UI remain unimplemented; see [Protected Content Boundary V1](PROTECTED_CONTENT_BOUNDARY_V1.md).
+
 ## V1.20 authenticated external-signer publication path
 
 The ordinary write dependency path is `opaque Social session subject + authenticated publish config → explicit Connect signer → external NIP-07 getPublicKey/signEvent → local NIP-01/BIP340 verification → one browser WebSocket EVENT → one exact positive relay OK`. The browser re-resolves the provider and rechecks the exact session key for every publication. Provider objects, private-key material and signed events never enter the BFF, Social session store, database or browser persistence.
