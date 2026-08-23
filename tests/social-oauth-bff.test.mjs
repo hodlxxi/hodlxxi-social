@@ -109,7 +109,7 @@ test("ambiguous, lookalike, absolute, and overlong callback targets fail before 
 });
 
 
-const authoritySetup = (authorityReader) => {
+const authoritySetup = (authorityReader, selectedConfig = config) => {
   const pendingTransactions = createBoundedStore({
     ttlSeconds: 300,
     capacity: 10,
@@ -129,7 +129,7 @@ const authoritySetup = (authorityReader) => {
   );
 
   const bff = createSocialOAuthBff({
-    config,
+    config: selectedConfig,
     pendingTransactions,
     sessions,
     oauthClient: {
@@ -282,4 +282,71 @@ test("authority route is GET-only and no-store", async () => {
     status: "limited",
     valid: true
   });
+});
+
+test("authenticated social read config exposes only one canonical explicit relay", async () => {
+  const fixture = authoritySetup(
+    undefined,
+    {
+      ...config,
+      nostrRelayUrl: "wss://relay.example/"
+    }
+  );
+
+  const result = await fixture.bff({
+    method: "GET",
+    url: "/auth/social-read-config",
+    headers: { cookie: fixture.cookie }
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.headers["Cache-Control"], "no-store");
+  assert.deepEqual(JSON.parse(result.body), {
+    enabled: true,
+    relayUrl: "wss://relay.example/"
+  });
+  assert.doesNotMatch(result.body, new RegExp(fixture.authenticatedSubject));
+});
+
+test("social read config is session-gated, GET-only, query-free, and disabled safely", async () => {
+  const fixture = authoritySetup(undefined);
+
+  const disabled = await fixture.bff({
+    method: "GET",
+    url: "/auth/social-read-config",
+    headers: { cookie: fixture.cookie }
+  });
+  assert.deepEqual(JSON.parse(disabled.body), { enabled: false });
+
+  for (const request of [
+    {
+      method: "GET",
+      url: "/auth/social-read-config",
+      headers: {}
+    },
+    {
+      method: "POST",
+      url: "/auth/social-read-config",
+      headers: { cookie: fixture.cookie }
+    },
+    {
+      method: "GET",
+      url: `/auth/social-read-config?subject=${"c".repeat(64)}`,
+      headers: { cookie: fixture.cookie }
+    }
+  ]) {
+    const result = await fixture.bff(request);
+    assert.equal(result.status, request.headers.cookie ? (request.method === "POST" ? 405 : 400) : 401);
+  }
+
+  const noncanonical = authoritySetup(undefined, {
+    ...config,
+    nostrRelayUrl: "wss://relay.example"
+  });
+  const rejectedConfig = await noncanonical.bff({
+    method: "GET",
+    url: "/auth/social-read-config",
+    headers: { cookie: noncanonical.cookie }
+  });
+  assert.deepEqual(JSON.parse(rejectedConfig.body), { enabled: false });
 });

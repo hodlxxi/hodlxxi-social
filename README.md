@@ -1,10 +1,14 @@
-# HODLXXI Social V1.18
+# HODLXXI Social V1.19
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
+V1.19 connects the ordinary authenticated Home and Profile surfaces to one operator-configured public Nostr relay. The BFF releases the canonical `wss://` relay URL only to an authenticated Social session; the browser then performs independent, bounded, one-shot kind `0` and kind `1` reads for the exact session subject. Every accepted event must match its NIP-01 SHA-256 id and BIP340 signature before minimized profile text or at most ten own public posts can render. Relay data cannot alter the separately projected HODLXXI Limited/Full authority.
+
+The V1.19 read is direct from the browser, so the selected relay can observe the browser network address and the queried public key. There is no relay discovery, pool, fallback, retry, reconnect, subscription, signer, publication, key custody, persistence, or background refresh. Invalid, off-subject, oversized, malformed, unsigned, or unavailable relay results produce explicit empty/unavailable UI and never synthetic replacement records.
+
 V1.18 replaces the ordinary authenticated entry's technical placeholders with the first production-facing product shell from the UX blueprint. Home now presents a current membership chip, read-only composer boundary, product guide and honest feed state; Profile, My Circle, Search, Discover, Friends, Friends of Friends, Messages, Groups, Notifications, Activity, Trust and Settings are complete responsive surfaces rather than blank route notices. Only the session public key and current external Limited/Full projection enter the shell. No participant, relationship, post, message, group or activity is fabricated to fill an empty network.
 
-V1.18.1 pins one shared browser asset revision on the authenticated stylesheet, module entry and its static import graph. A deployment can therefore never combine a new `index.html` with an older cached product renderer or stylesheet. Production readiness also requires every module in that authenticated entry graph, including `auth-product.mjs`, before reporting ready.
+V1.18.1 introduced one shared browser asset revision; V1.19 advances that revision across the complete authenticated graph, including the public-read transport and event verifier. A deployment can therefore never combine a new `index.html` with an older renderer, verifier, or stylesheet. Production readiness requires every authenticated module plus one explicit relay configuration before reporting ready.
 
 V1.15 adds a local-only authenticated browser rehearsal. It exercises the real V1.14 product entry, OAuth BFF transaction/session path, session-bound Limited/Full authority projection, and logout while replacing external OAuth and authority with unmistakably synthetic loopback-only inputs. The rehearsal makes no production HODLXXI request, uses no production OAuth credential, changes no deployment configuration, and cannot grant real Full or Operator authority.
 
@@ -26,7 +30,7 @@ V1.3 adds a small deterministic composition root. `createComposedSocialDataServi
 
 V1.4 adds `WebSocketNostrReadTransport`, a dependency-free, explicitly constructed public-read transport. A caller must supply a validated `wss://` relay URL and may inject the WebSocket factory for its runtime. Each `read(filter)` opens one bounded socket, sends one Nostr `REQ`, collects only matching `EVENT` frames until `EOSE` or the configured event limit, sends `CLOSE`, and cleans up. Connection, read, message-size, accumulated-data, and event-count bounds prevent unbounded listening. Offline tests use a deterministic fake WebSocket; canonical validation in `src/nostr.mjs` remains authoritative for every returned event.
 
-This transport is a controlled construction seam, not the application default. `SyntheticSocialAdapter` remains the active application adapter, no relay is selected automatically, and no connection occurs on page load. A live public read exists only when a caller explicitly constructs `WebSocketNostrReadTransport({ relayUrl })` and injects it into `NostrPublicReadAdapter.create({ transport, viewerId })`.
+Through V1.18 this transport remained a controlled construction seam rather than the application default. `SyntheticSocialAdapter` was the active application adapter, no relay was selected automatically, and no connection occurred on page load. That historical adapter path still exists for explicit development use; V1.19 instead uses the separately bounded authenticated browser read described above.
 
 V1.5 adds a developer-only, one-shot public relay probe. It requires an explicit relay and supported kind on every invocation, applies conservative event and timeout bounds, passes returned events through `NostrPublicReadAdapter` and canonical Nostr validation, prints only bounded normalized diagnostics, and exits. It does not change the application adapter or UI.
 
@@ -60,7 +64,7 @@ The live product shell has no viewer switching, composer, reactions, messages, m
 
 This visual projection reflects external read-only authority; Social does not grant Full and never projects Operator. The page does not authenticate the subject, prove possession of a private key, issue status, persist state, retry, poll, discover an origin, or enable production mode. The ordinary synthetic application and separate Nostr developer page remain unchanged.
 
-The dev page labels `DEV / LIVE PUBLIC NOSTR DATA` separately from `DEMO VIEWER / AUTHORITY NOT LIVE`. Its local demo viewer is not authenticated, and Nostr data cannot provide HODLXXI membership, Full or Operator status, CRT validity, verified identity, sponsor trust, or covenant authority. Missing live authority remains fail-closed at Limited. The authenticated `web/index.html` entry does not import the live Nostr transport or select a relay on load; the prior synthetic application is retained only at `web/demo.html`.
+The dev page labels `DEV / LIVE PUBLIC NOSTR DATA` separately from `DEMO VIEWER / AUTHORITY NOT LIVE`. Its local demo viewer is not authenticated, and Nostr data cannot provide HODLXXI membership, Full or Operator status, CRT validity, verified identity, sponsor trust, or covenant authority. Separately, authenticated `web/index.html` may read only the server-configured relay for its opaque session subject; the prior synthetic application remains isolated at `web/demo.html`.
 
 Run the manual probe after merge with a caller-selected public relay (the relay below is deliberately a placeholder):
 
@@ -70,13 +74,13 @@ node scripts/nostr-relay-probe.mjs --relay <explicit-wss-relay> --kind <0-or-1> 
 
 Optional `--author <64-hex-public-key>` narrows the request further; `--json` selects sanitized JSON output. The event limit is 1–10 (default 3), and the timeout is 250–30000 milliseconds (default 5000). Exit codes are 2 for arguments or relay configuration, 3 for transport failure, 4 for timeout, 5 for malformed relay results, and 6 for canonical validation failure. A successful read with no events exits successfully with `zero-events`.
 
-Implemented now: the authenticated Social product entry, local-only authenticated rehearsal, opaque Social sessions, same-origin session/authority/logout endpoints, server-side read-only HODLXXI Limited/Full projection, fail-closed Limited fallback, isolated synthetic demo, explicit developer-only public-feed previews, bounded one-shot Nostr and HODLXXI probes, and the existing normalized composition/service boundaries. None of these code paths constitutes a production deployment.
+Implemented now: the authenticated Social product entry, opaque Social sessions, same-origin session/authority/social-read-config/logout endpoints, server-side read-only HODLXXI Limited/Full projection, fail-closed Limited fallback, one explicit authenticated browser relay read, NIP-01 event-id and BIP340 verification, verified own profile/posts on Home and Profile, the isolated synthetic demo, local rehearsal, developer probes, and normalized composition/service boundaries.
 
-Not implemented: production deployment, production OAuth client registration and secret provisioning, automatic relay or source selection, relay discovery or pools, reconnect, persistent subscriptions, polling, personalized live feeds, signing, publishing, DMs, encryption, NIP-07 signing or account management, durable shared session persistence, or horizontal-scale session coordination. V1.14 authentication and session-bound authority are implemented in code, but they are not deployed as a live production authentication service.
+Not implemented: automatic relay/source selection, relay discovery or pools, fallback relays, reconnect, persistent subscriptions, polling, personalized network feeds, follows/friends from Nostr, signing, publishing, DMs, encryption, NIP-07 signing or account management, durable shared session persistence, or horizontal-scale session coordination.
 
 Successful probe output means “a public Nostr relay read succeeded and accepted events passed current validation.” It does not mean HODLXXI membership, Full or Operator status, CRT, identity ownership, relay trust, or content trust was verified.
 
-Not implemented: default live social-data mode, relay discovery, relay pools, reconnect, persistent subscriptions, publishing, signing, DMs, encryption, NIP-07 signing or account management, NIP-44, NIP-59, NIP-65, production relay selection, private-key access, CRT issuance, covenant or chain validation, sponsor/status mutation, writes to HODLXXI, durable shared session storage, or production deployment. OAuth login and session-bound authority are implemented in code in V1.14, but production OAuth registration, credential provisioning, and deployed live login remain separate work. The ordinary authenticated viewer now comes only from the opaque Social session subject.
+Not implemented: relay discovery, relay pools or failover, reconnect, persistent subscriptions, publishing, signing, DMs, encryption, NIP-07 signing/account management, NIP-44, NIP-59, NIP-65 discovery, private-key access, CRT issuance, covenant/chain validation, sponsor/status mutation, writes to HODLXXI, durable shared session storage, or server-side Nostr proxying. The ordinary authenticated viewer comes only from the opaque Social session subject.
 
 The authenticated `web/index.html` is designed to run behind the same-origin Social BFF and its `/auth/*` routes; opening it as a standalone static file does not create an authenticated session. For deterministic local product exploration, serve `web/demo.html`: its viewer selector is explicitly synthetic, in-memory, and not a login. Run `node --test` for deterministic Node built-in tests.
 
@@ -98,6 +102,6 @@ Notifications and Activity are synthetic local summaries, not live network telem
 - A displayed role or status is not legal identity.
 - Social does not hold funds or control private keys.
 - Participation does not promise profit or investment return.
-- This repository contains no custody, signing, publishing, automatic or production relay selection, database, Redis, Bitcoin RPC, LND, or deployment integration.
+- This repository contains no custody, signing, publishing, automatic relay selection, database, Redis, Bitcoin RPC, or LND integration. Its only ordinary Nostr network path is the explicit bounded read-only relay configured by the Social operator.
 
 See [architecture](docs/architecture.md), [domain/access](docs/domain-access-model.md), [Nostr boundary](docs/nostr-boundary.md), and [graph/visibility](docs/social-graph-visibility.md).

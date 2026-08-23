@@ -3,10 +3,146 @@ import {
   renderPageFrame,
   renderStatusBadge,
   renderUnavailableState
-} from "./components.mjs";
+} from "./components.mjs?v=1.19.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
+const CANONICAL_EVENT_ID = /^[0-9a-f]{64}$/;
 const PRODUCT_STATUSES = new Set(["limited", "full"]);
+const PUBLIC_READ_STATES = new Set([
+  "loading",
+  "available",
+  "empty",
+  "unavailable"
+]);
+const EMPTY = Object.freeze([]);
+const DEFAULT_PUBLIC_READ = Object.freeze({
+  relayHost: null,
+  profileState: "unavailable",
+  profile: null,
+  notesState: "unavailable",
+  notes: EMPTY
+});
+
+const plainObject = (value) =>
+  Boolean(value) &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  Object.getPrototypeOf(value) === Object.prototype;
+
+const exactKeys = (value, expected) => {
+  const keys = Object.keys(value).sort();
+  const sorted = [...expected].sort();
+  return keys.length === sorted.length &&
+    sorted.every((name, index) => keys[index] === name);
+};
+
+const validIsoTimestamp = (value) => {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  ) return false;
+  const timestamp = new Date(value);
+  return Number.isFinite(timestamp.getTime()) && timestamp.toISOString() === value;
+};
+
+const normalizePublicRead = (value) => {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, [
+      "notes",
+      "notesState",
+      "profile",
+      "profileState",
+      "relayHost"
+    ]) ||
+    !PUBLIC_READ_STATES.has(value.profileState) ||
+    !PUBLIC_READ_STATES.has(value.notesState) ||
+    !(
+      value.relayHost === null ||
+      (
+        typeof value.relayHost === "string" &&
+        value.relayHost.length > 0 &&
+        value.relayHost.length <= 255 &&
+        !/[\u0000-\u0020\u007f]/.test(value.relayHost)
+      )
+    ) ||
+    !Array.isArray(value.notes)
+  ) {
+    throw new TypeError("invalid authenticated public read");
+  }
+
+  let profile = null;
+  if (value.profileState === "available") {
+    if (
+      !plainObject(value.profile) ||
+      !exactKeys(value.profile, [
+        "about",
+        "createdAt",
+        "displayName",
+        "eventId"
+      ]) ||
+      !CANONICAL_EVENT_ID.test(value.profile.eventId) ||
+      !validIsoTimestamp(value.profile.createdAt) ||
+      !(
+        value.profile.displayName === null ||
+        (
+          typeof value.profile.displayName === "string" &&
+          value.profile.displayName.length > 0 &&
+          value.profile.displayName.length <= 80
+        )
+      ) ||
+      !(
+        value.profile.about === null ||
+        (
+          typeof value.profile.about === "string" &&
+          value.profile.about.length > 0 &&
+          value.profile.about.length <= 280
+        )
+      )
+    ) {
+      throw new TypeError("invalid authenticated public read");
+    }
+    profile = Object.freeze({ ...value.profile });
+  } else if (value.profile !== null) {
+    throw new TypeError("invalid authenticated public read");
+  }
+
+  const notes = [];
+  for (const note of value.notes) {
+    if (
+      !plainObject(note) ||
+      !exactKeys(note, ["body", "createdAt", "id"]) ||
+      !CANONICAL_EVENT_ID.test(note.id) ||
+      typeof note.body !== "string" ||
+      note.body.length > 5_000 ||
+      !validIsoTimestamp(note.createdAt)
+    ) {
+      throw new TypeError("invalid authenticated public read");
+    }
+    notes.push(Object.freeze({ ...note }));
+  }
+
+  if (
+    notes.length > 10 ||
+    (value.notesState === "available" && notes.length === 0) ||
+    (value.notesState !== "available" && notes.length !== 0) ||
+    (
+      [value.profileState, value.notesState].some((state) =>
+        ["available", "empty"].includes(state)
+      ) && value.relayHost === null
+    )
+  ) {
+    throw new TypeError("invalid authenticated public read");
+  }
+
+  return Object.freeze({
+    relayHost: value.relayHost,
+    profileState: value.profileState,
+    profile,
+    notesState: value.notesState,
+    notes: Object.freeze(notes)
+  });
+};
 
 const shortKey = (subject) =>
   `${subject.slice(0, 8)}…${subject.slice(-6)}`;
@@ -24,6 +160,35 @@ const statusDetail = (model) => {
     : "Current Limited access was projected from the external HODLXXI authority for this session.";
 };
 
+const publicProfileName = (model) =>
+  model.publicRead.profileState === "available" &&
+  model.publicRead.profile?.displayName
+    ? model.publicRead.profile.displayName
+    : "Your HODLXXI identity";
+
+const publicProfileAbout = (model) =>
+  model.publicRead.profileState === "available"
+    ? model.publicRead.profile?.about
+    : null;
+
+const avatarInitial = (model) => {
+  const first = [...publicProfileName(model).trim()][0] ?? "H";
+  return first.toUpperCase().slice(0, 2);
+};
+
+const publicPostCount = (model) =>
+  ["available", "empty"].includes(model.publicRead.notesState)
+    ? String(model.publicRead.notes.length)
+    : "—";
+
+const publicReadSource = (model) =>
+  model.publicRead.relayHost
+    ? `Signed Nostr events · ${model.publicRead.relayHost}`
+    : "Signed Nostr events · source unavailable";
+
+const publicTimestamp = (value) =>
+  `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`;
+
 const actionLink = (href, label, secondary = false) =>
   `<a class="product-action${secondary ? " product-action-secondary" : ""}" href="${href}">${escapeHtml(label)}</a>`;
 
@@ -37,6 +202,46 @@ const surfaceEmpty = ({ icon, title, detail, actions = "" }) =>
   `${actions ? `<div class="product-actions">${actions}</div>` : ""}</div>` +
   `</article>`;
 
+const publicNoteCard = (model, note) =>
+  `<article class="post-card public-note-card">` +
+  `<header><div class="avatar" aria-hidden="true">${escapeHtml(avatarInitial(model))}</div>` +
+  `<div><strong class="post-author">${escapeHtml(publicProfileName(model))}</strong>` +
+  `<span class="verified-event-label">Verified event</span>` +
+  `<p class="post-meta">${escapeHtml(publicTimestamp(note.createdAt))} · Public</p></div></header>` +
+  `<p class="post-body public-note-body">${note.body ? escapeHtml(note.body) : "<em>Empty signed note</em>"}</p>` +
+  `<footer class="public-note-proof"><span>${escapeHtml(shortKey(note.id))}</span>` +
+  `<span>Read-only · signature checked</span></footer></article>`;
+
+const publicNotesSurface = (model, profile = false) => {
+  if (model.publicRead.notesState === "available") {
+    return model.publicRead.notes
+      .map((note) => publicNoteCard(model, note))
+      .join("");
+  }
+
+  if (model.publicRead.notesState === "loading") {
+    return surfaceEmpty({
+      icon: "…",
+      title: "Reading signed public posts",
+      detail: "Social is performing one bounded read for this exact authenticated public key."
+    });
+  }
+
+  if (model.publicRead.notesState === "empty") {
+    return surfaceEmpty({
+      icon: "◎",
+      title: profile ? "No signed public posts on this profile" : "No signed public posts found",
+      detail: `The explicit relay ${model.publicRead.relayHost} completed the bounded read without returning a verified kind 1 event for this key.`
+    });
+  }
+
+  return surfaceEmpty({
+    icon: "!",
+    title: "Public posts unavailable",
+    detail: "The bounded relay read could not be accepted. Social displays no unverified or off-subject event data."
+  });
+};
+
 const membershipStrip = (model) =>
   `<section class="membership-strip" aria-label="Current membership">` +
   `<div class="membership-mark" aria-hidden="true">✓</div>` +
@@ -49,8 +254,8 @@ const membershipStrip = (model) =>
 
 const readonlyComposer = (model) =>
   `<section class="composer-card authenticated-composer" aria-label="Post composer preview">` +
-  `<div class="composer-head"><div class="avatar" aria-hidden="true">H</div>` +
-  `<div><strong>Your profile</strong>${renderStatusBadge(model.status)}` +
+  `<div class="composer-head"><div class="avatar" aria-hidden="true">${escapeHtml(avatarInitial(model))}</div>` +
+  `<div><strong>${escapeHtml(publicProfileName(model))}</strong>${renderStatusBadge(model.status)}` +
   `<p>Authenticated as ${escapeHtml(shortKey(model.subject))}</p></div></div>` +
   `<div class="composer-prompt">What’s on your mind?</div>` +
   `<div class="composer-actions"><div class="local-tools" aria-label="Planned post attachments">` +
@@ -66,7 +271,7 @@ const productGuide = (model) =>
   `<div><strong class="post-author">HODLXXI Social</strong>` +
   `<span class="product-guide-label">Product guide</span>` +
   `<p class="post-meta">Your authenticated workspace · current session</p></div></header>` +
-  `<p class="post-body">Your public-key session and ${escapeHtml(statusLabel(model.status))} access are active. Start with your profile, inspect the separate trust context, then build your social circle.</p>` +
+  `<p class="post-body">Your public-key session and ${escapeHtml(statusLabel(model.status))} access are active. Signed Nostr profile data and posts remain separate from HODLXXI membership authority.</p>` +
   `<div class="guide-steps">` +
   `<a href="#/profile/${escapeHtml(model.subject)}"><span>1</span><strong>Review identity</strong><small>Session-bound public key</small></a>` +
   `<a href="#/circle"><span>2</span><strong>Open My Circle</strong><small>Friends and two-hop reach</small></a>` +
@@ -83,28 +288,20 @@ const homePage = (model) =>
       `<span class="source-pill"><i></i> Session active</span></div>` +
       membershipStrip(model) +
       readonlyComposer(model) +
-      `<div class="feed-toolbar"><div><strong>Home feed</strong><span>Permitted network activity</span></div>` +
-      `<div class="feed-filter" aria-label="Feed audience"><span class="active">For you</span><span>Following</span></div></div>` +
-      `<section class="feed-stack" aria-label="Home feed">${productGuide(model)}` +
-      surfaceEmpty({
-        icon: "◎",
-        title: "No public network events connected yet",
-        detail: "The product shell is active and will show normalized public posts here when the authenticated public-read source is connected.",
-        actions:
-          actionLink("#/circle", "Open My Circle") +
-          actionLink("#/discover", "Discover people", true)
-      }) +
-      `</section>`
+      `<div class="feed-toolbar"><div><strong>Your public posts</strong><span>${escapeHtml(publicReadSource(model))}</span></div>` +
+      `<div class="feed-filter" aria-label="Feed scope"><span class="active">Your posts</span><span>Network later</span></div></div>` +
+      `<section class="feed-stack" aria-label="Verified public posts">${publicNotesSurface(model)}` +
+      `${productGuide(model)}</section>`
   });
 
 const profileHero = (model, compact = false) =>
   `<article class="authenticated-profile${compact ? " authenticated-profile-compact" : ""}">` +
   `${compact ? "" : '<div class="profile-cover" aria-hidden="true"></div>'}` +
-  `<div class="profile-identity"><div class="avatar avatar-large" aria-hidden="true">H</div>` +
+  `<div class="profile-identity"><div class="avatar avatar-large" aria-hidden="true">${escapeHtml(avatarInitial(model))}</div>` +
   `<div><p class="eyebrow">Authenticated participant</p>` +
-  `<h2>Your HODLXXI identity</h2><div class="profile-badges">${renderStatusBadge(model.status)}<span class="session-chip">Session authenticated</span></div></div></div>` +
+  `<h2>${escapeHtml(publicProfileName(model))}</h2><div class="profile-badges">${renderStatusBadge(model.status)}<span class="session-chip">Session authenticated</span></div></div></div>` +
   `<p class="key">${escapeHtml(model.subject)}</p>` +
-  `${compact ? "" : `<p class="profile-lead">This is the only participant identity accepted from the current Social session. Public profile fields will remain separate from membership authority.</p>`}` +
+  `${compact ? "" : `<p class="profile-lead">This is the only participant identity accepted from the current Social session. ${escapeHtml(publicReadSource(model))}. Public presentation remains separate from membership authority.</p>`}` +
   `<div class="profile-links">` +
   actionLink(`#/profile/${escapeHtml(model.subject)}`, compact ? "Open profile" : "Profile", compact) +
   `${compact ? actionLink("#/trust", "Trust details", true) : ""}</div>` +
@@ -117,21 +314,21 @@ const profilePage = (model) =>
     content:
       profileHero(model) +
       `<dl class="profile-stat-row">` +
-      `<div><dt>Posts</dt><dd>0</dd></div><div><dt>Friends</dt><dd>0</dd></div><div><dt>Circles</dt><dd>0</dd></div>` +
+      `<div><dt>Posts</dt><dd>${escapeHtml(publicPostCount(model))}</dd></div><div><dt>Friends</dt><dd>0</dd></div><div><dt>Circles</dt><dd>0</dd></div>` +
       `</dl>` +
       `<div class="profile-grid">` +
       `<section class="card"><p class="eyebrow">Public profile</p><h2>Profile details</h2>` +
-      `<dl class="detail-list"><div><dt>Display name</dt><dd>Not published</dd></div>` +
-      `<div><dt>Bio</dt><dd>Not published</dd></div><div><dt>Public key</dt><dd>${escapeHtml(shortKey(model.subject))}</dd></div></dl>` +
-      `<p class="notice">Public presentation data is not inferred from the membership source.</p></section>` +
+      `<dl class="detail-list"><div><dt>Display name</dt><dd>${escapeHtml(model.publicRead.profileState === "loading" ? "Loading" : model.publicRead.profileState === "unavailable" ? "Unavailable" : model.publicRead.profile?.displayName ?? "Not published")}</dd></div>` +
+      `<div><dt>Bio</dt><dd>${escapeHtml(publicProfileAbout(model) ?? (model.publicRead.profileState === "loading" ? "Loading" : model.publicRead.profileState === "unavailable" ? "Unavailable" : "Not published"))}</dd></div>` +
+      `<div><dt>Public key</dt><dd>${escapeHtml(shortKey(model.subject))}</dd></div>` +
+      `<div><dt>Read source</dt><dd>${escapeHtml(model.publicRead.relayHost ?? "Unavailable")}</dd></div></dl>` +
+      `<p class="notice">A verified Nostr event proves control of its signing key. It does not grant HODLXXI membership or covenant trust.</p></section>` +
       `<section class="card"><p class="eyebrow">Membership</p><h2>${escapeHtml(statusLabel(model.status))}</h2>` +
       `<p>${escapeHtml(statusDetail(model))}</p>${actionLink("#/trust", "View trust details")}</section>` +
       `</div>` +
-      surfaceEmpty({
-        icon: "✦",
-        title: "No public posts on this profile",
-        detail: "Normalized public posts associated with this authenticated key will appear here after a public-read source is connected."
-      })
+      `<section class="profile-public-posts" aria-label="Profile public posts">` +
+      `<div class="feed-toolbar"><div><strong>Public posts</strong><span>${escapeHtml(publicReadSource(model))}</span></div></div>` +
+      `${publicNotesSurface(model, true)}</section>`
   });
 
 const circlePage = (model) =>
@@ -293,7 +490,9 @@ const activityPage = (model) =>
       `<div class="activity-timeline"><article><span class="activity-dot"></span><div><strong>Social session authenticated</strong>` +
       `<p>${escapeHtml(shortKey(model.subject))} is the sole viewer for this workspace.</p><small>Current browser session</small></div></article>` +
       `<article><span class="activity-dot activity-dot-success"></span><div><strong>${escapeHtml(statusLabel(model.status))} access projected</strong>` +
-      `<p>${escapeHtml(statusDetail(model))}</p><small>Read-only HODLXXI authority</small></div></article></div>` +
+      `<p>${escapeHtml(statusDetail(model))}</p><small>Read-only HODLXXI authority</small></div></article>` +
+      `<article><span class="activity-dot"></span><div><strong>Public Nostr read ${model.publicRead.notesState === "available" || model.publicRead.notesState === "empty" ? "completed" : model.publicRead.notesState}</strong>` +
+      `<p>${escapeHtml(publicReadSource(model))}. ${escapeHtml(publicPostCount(model))} accepted public posts.</p><small>One-shot browser read · no writes</small></div></article></div>` +
       `<p class="notice">This is session context, not social engagement telemetry or a trust score.</p></section>`
   });
 
@@ -333,7 +532,7 @@ const settingsPage = (model) =>
       `<article class="settings-card"><span class="settings-icon">⌘</span><div><strong>Keys & signers</strong>` +
       `<p>Social holds no signing material. Signer controls are not connected.</p></div><span>Protected</span></article>` +
       `<article class="settings-card"><span class="settings-icon">◉</span><div><strong>Relay settings</strong>` +
-      `<p>No automatic read, write or message relay is selected.</p></div><span>Not configured</span></article>` +
+      `<p>${escapeHtml(model.publicRead.relayHost ? `One bounded browser read from ${model.publicRead.relayHost}. No write or message relay is connected.` : "No public read, write or message relay is currently available.")}</p></div><span>${model.publicRead.relayHost ? "Read only" : "Unavailable"}</span></article>` +
       `<article class="settings-card"><span class="settings-icon">◌</span><div><strong>Privacy & discoverability</strong>` +
       `<p>Network visibility preferences are not published yet.</p></div><span>Pending</span></article>` +
       `<article class="settings-card"><span class="settings-icon">⇩</span><div><strong>Export & backup</strong>` +
@@ -344,7 +543,8 @@ const settingsPage = (model) =>
 export function createAuthenticatedProductModel({
   subject,
   status,
-  authorityValid
+  authorityValid,
+  publicRead = DEFAULT_PUBLIC_READ
 }) {
   if (
     typeof subject !== "string" ||
@@ -358,7 +558,8 @@ export function createAuthenticatedProductModel({
   return Object.freeze({
     subject,
     status,
-    authorityValid
+    authorityValid,
+    publicRead: normalizePublicRead(publicRead)
   });
 }
 
@@ -399,7 +600,7 @@ export const renderAuthenticatedNetworkContext = (model) =>
   `<article class="viewer-card network-context"><p class="eyebrow">Network activity</p>` +
   `<div class="network-context-row"><span>Direct friends</span><strong>0</strong></div>` +
   `<div class="network-context-row"><span>Two-hop reach</span><strong>0</strong></div>` +
-  `<div class="network-context-row"><span>Visible posts</span><strong>0</strong></div>` +
+  `<div class="network-context-row"><span>Visible posts</span><strong>${escapeHtml(publicPostCount(model))}</strong></div>` +
   `<div class="network-context-row"><span>Groups</span><strong>0</strong></div>` +
-  `<p class="notice">Counts reflect only the authenticated dataset currently connected to this session.</p>` +
+  `<p class="notice">Post count reflects only signature-verified kind 1 events for the current session subject. Relationship counts remain unconnected.</p>` +
   `${actionLink("#/circle", "View My Circle", true)}</article>`;

@@ -1,5 +1,11 @@
 # Architecture
 
+## V1.19 authenticated public-read path
+
+The ordinary live-read dependency path is `opaque Social session → exact session subject + authenticated relay config → two independent bounded browser WebSockets → strict NIP-01 id and BIP340 verification → minimized profile/own-note state → Home/Profile`. The BFF chooses only the public relay URL; it never accepts or returns a caller-selected subject. The relay cannot grant authority, and HODLXXI Limited/Full projection remains a separately settled same-origin read.
+
+The browser uses one explicit relay, at most four kind `0` candidates and ten kind `1` notes, with fixed time and byte limits. It performs no discovery, failover, retry, reconnect, polling, subscription, persistence, signing, or publishing. Direct browser transport means the relay can observe the browser network address and queried public key; it never receives the Social cookie or OAuth/authority data.
+
 ## V1.16 production-readiness contract
 
 The production-readiness path is `validated server environment → existing Social OAuth configuration parser → offline readiness report`. It starts no listener, performs no network request, exposes no OAuth secret, and does not deploy anything. A production configuration must use distinct canonical HTTPS Social and external authority origins, remain loopback-bound at the BFF, and have the authenticated browser assets present.
@@ -12,7 +18,7 @@ The isolated rehearsal path is `local loopback HTTPS → web/index.html → web/
 
 ## V1.14 authenticated product entry
 
-The ordinary product path is `web/index.html → web/auth-entry.mjs → /auth/session → /auth/authority → existing HODLXXI authority composition → Limited/Full → web/components.mjs + web/shell.mjs`. The authenticated viewer comes only from the opaque Social session subject. `web/demo.html` retains the synthetic application separately. V1.14 is implemented in code but is not deployed.
+The ordinary product path begins `web/index.html → web/auth-entry.mjs → /auth/session`. Authority continues independently through `/auth/authority → existing HODLXXI authority composition → Limited/Full`; V1.19 adds `/auth/social-read-config → authenticated-public-read.mjs → nostr-event-verifier.mjs` for verified public presentation data. The authenticated viewer comes only from the opaque Social session subject. `web/demo.html` retains the synthetic application separately.
 
 ## V1.13 confidential OAuth BFF boundary (foundation history)
 
@@ -20,7 +26,7 @@ The dependency-free confidential server foundation is opt-in through an explicit
 
 Login uses state, S256 PKCE, and a distinct browser transaction cookie. Callback state is consumed once before the non-retried token exchange; authenticated introspection supplies only a canonical x-only subject, after which OAuth tokens are discarded. Transactions and sessions live only in bounded memory in one process. Restart logs users out; horizontal scaling needs a separately designed shared session store.
 
-The same-origin session and logout endpoints do not join the existing authority, Nostr, friendship, covenant or sponsor-trust, or relay pipelines. OAuth authentication proves only the canonical subject and cannot grant Full or Operator status, friendship, covenant or sponsor authority, or relay authority. NIP-07 selection remains separate routing context and is not an authenticated session. No Social deployment, OAuth client registration, DNS, TLS, proxy, systemd service, live login, runtime change, database, or Redis integration is included.
+The same-origin session establishes only the canonical subject. Authority, Nostr presentation data, friendship, covenant and sponsor trust remain distinct projections. OAuth authentication cannot grant Full or Operator status, friendship, covenant/sponsor authority, or relay trust. NIP-07 selection remains separate development routing context and is not an authenticated session. No database or Redis integration is included.
 
 ## Implemented through V1.9
 
@@ -72,6 +78,6 @@ This CLI is one-shot, read-only, non-persistent, and developer-only. It requires
 
 ## Not implemented
 
-A future deployment may add production social data and controlled runtime integration, but automatic relay/source selection, relay discovery or pools, reconnect, persistent subscriptions, polling, personalized live feeds, signing, publishing, DMs, encryption, NIP-07 signing or account management, NIP-44, NIP-59, private keys, CRT issuance, covenant or Bitcoin-chain validation, sponsor or status mutation, HODLXXI writes, durable shared session persistence, and production deployment are not implemented. OAuth login and session-bound authority are implemented in code in V1.14, but OAuth client registration, production credential provisioning, and deployed live login remain separate work.
+Automatic relay/source selection, relay discovery or pools, fallback relays, reconnect, persistent subscriptions, polling, personalized network feeds, follows/friends, signing, publishing, DMs, encryption, NIP-07 signing/account management, NIP-44, NIP-59, private keys, CRT issuance, covenant or Bitcoin-chain validation, sponsor/status mutation, HODLXXI writes, and durable shared session persistence are not implemented.
 
-The authenticated browser path has no environment configuration or secret access. The explicitly invoked Social BFF is the only environment-configuration and OAuth-credential seam, and those values remain server-side. The browser receives neither OAuth credentials nor the HODLXXI authority origin. There is no built-in relay hostname, automatic relay connection, production URL, database, durable persistence, signing, publication, private-key handling, custody, Bitcoin spending, Lightning payment, status issuance, or deployment authority. The bounded WebSocket reader remains limited to the explicit development probe and development page.
+The authenticated browser has no direct environment or secret access. The Social BFF remains the environment/OAuth seam: OAuth credentials and the HODLXXI authority origin stay server-side, while one non-secret canonical relay URL may be released after session validation. There is no automatic relay choice, database, durable persistence, signing, publication, private-key handling, custody, Bitcoin spending, Lightning payment, or status issuance.
