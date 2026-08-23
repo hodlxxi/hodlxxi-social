@@ -1,8 +1,8 @@
 # Architecture
 
-## V1.21 protected-content foundation
+## V1.22 Full recipient directory boundary
 
-`src/protected-content.mjs` is a pure, offline policy and dependency boundary for future `FULL_NETWORK` delivery. It is not wired into production composition. It validates exact current-Full authority independently for authors and viewers, produces metadata-free denials, validates bounded authoritative recipient assertions, and defines only injected opaque transport and envelope contracts. Public Nostr kinds 0 and 1 remain public-only. Member directory, key distribution, rotation/revocation, durable protected transport, encryption and production UI remain unimplemented; see [Protected Content Boundary V1](PROTECTED_CONTENT_BOUNDARY_V1.md).
+`src/protected-content.mjs` is a pure, offline policy and dependency boundary for future `FULL_NETWORK` delivery. It is not wired into production composition. It validates exact current-Full authority independently for authors and viewers, produces metadata-free denials, validates bounded authoritative recipient assertions, and defines only injected opaque transport and envelope contracts. V1.22 adds `src/full-recipient-directory.mjs` as a defensive consumer of one complete, fresh external snapshot with exact-subject Full authority and separate versioned encryption-key bindings. Its dependency direction is `injected future directory resolver → exact snapshot validation → immutable available directory or one generic unavailable result`; no production composition imports it. Public Nostr kinds 0 and 1 remain public-only. Live directory acquisition, key provision, durable protected transport, encryption and production UI remain unimplemented; see [Protected Content Boundary V1](PROTECTED_CONTENT_BOUNDARY_V1.md) and [Full Recipient Directory V1.22](FULL_RECIPIENT_DIRECTORY_V1.md).
 
 ## V1.20 authenticated external-signer publication path
 

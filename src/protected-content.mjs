@@ -1,4 +1,5 @@
 import { normalizePublicKey } from "./domain.mjs";
+import { FULL_RECIPIENT_DIRECTORY_UNAVAILABLE, normalizeFullRecipientDirectory } from "./full-recipient-directory.mjs";
 
 export const PUBLIC = "PUBLIC";
 export const FULL_NETWORK = "FULL_NETWORK";
@@ -121,21 +122,21 @@ export function defineProtectedContentDependencies(input = {}) {
   const recipientResolver = dependencies?.recipientResolver;
   const transport = dependencies?.transport;
   const envelope = dependencies?.envelope;
-  const resolverRecord = recordSnapshot(recipientResolver, ["resolveCurrentFull"]);
+  const resolverRecord = recordSnapshot(recipientResolver, ["resolveDirectory"]);
   const transportRecord = recordSnapshot(transport, ["putEnvelope", "getEnvelope"]);
   const envelopeRecord = recordSnapshot(envelope, ["produceEnvelope", "openEnvelope"]);
-  if (typeof resolverRecord?.resolveCurrentFull !== "function") throw new TypeError("protected recipient resolver required");
+  if (typeof resolverRecord?.resolveDirectory !== "function") throw new TypeError("protected recipient resolver required");
   if (typeof transportRecord?.putEnvelope !== "function" || typeof transportRecord?.getEnvelope !== "function") throw new TypeError("protected envelope transport required");
   if (typeof envelopeRecord?.produceEnvelope !== "function" || typeof envelopeRecord?.openEnvelope !== "function") throw new TypeError("protected envelope dependency required");
   const safeRecipientResolver = Object.freeze({
-    async resolveCurrentFull(optionsValue) {
+    async resolveDirectory(optionsValue) {
       const options = recordSnapshot(optionsValue, ["now", "limit"]);
-      if (!options || !Number.isFinite(options.now) || !Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > MAX_PROTECTED_RECIPIENTS) return undefined;
+      if (!options || !Number.isFinite(options.now) || !Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > MAX_PROTECTED_RECIPIENTS) return FULL_RECIPIENT_DIRECTORY_UNAVAILABLE;
       try {
-        const assertions = await resolverRecord.resolveCurrentFull(Object.freeze(options));
-        return normalizeCurrentFullRecipients(assertions, options);
+        const snapshot = await resolverRecord.resolveDirectory(Object.freeze(options));
+        return normalizeFullRecipientDirectory(snapshot, options);
       } catch {
-        return undefined;
+        return FULL_RECIPIENT_DIRECTORY_UNAVAILABLE;
       }
     }
   });
@@ -180,8 +181,20 @@ export function defineProtectedContentDependencies(input = {}) {
 
 export async function resolveProtectedRecipients(dependencies, { now, limit = MAX_PROTECTED_RECIPIENTS } = {}) {
   try {
-    return await dependencies.recipientResolver.resolveCurrentFull(Object.freeze({ now, limit }));
+    return await dependencies.recipientResolver.resolveDirectory(Object.freeze({ now, limit }));
   } catch {
-    return undefined;
+    return FULL_RECIPIENT_DIRECTORY_UNAVAILABLE;
+  }
+}
+
+export async function resolveFullRecipientDirectory(resolver, { now, limit = MAX_PROTECTED_RECIPIENTS } = {}) {
+  if (!Number.isFinite(now) || !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PROTECTED_RECIPIENTS) return FULL_RECIPIENT_DIRECTORY_UNAVAILABLE;
+  try {
+    const record = recordSnapshot(resolver, ["resolveDirectory"]);
+    if (typeof record?.resolveDirectory !== "function") return FULL_RECIPIENT_DIRECTORY_UNAVAILABLE;
+    const snapshot = await record.resolveDirectory(Object.freeze({ now, limit }));
+    return normalizeFullRecipientDirectory(snapshot, { now, limit });
+  } catch {
+    return FULL_RECIPIENT_DIRECTORY_UNAVAILABLE;
   }
 }
