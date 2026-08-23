@@ -12,11 +12,13 @@ This foundation makes Social a confidential HODLXXI OAuth client. Explicit runti
 
 `GET /auth/social-read-config` also requires an authenticated Social session, accepts no query parameters, and returns only `{ "enabled": false }` or one canonical operator-configured `wss://` relay URL. It never returns the subject, authority origin, OAuth credential, token, signer, relay credential, pool, or fallback. The browser continues to derive the read subject only from `/auth/session`.
 
+`GET /auth/social-publish-config` is a separate session-gated, query-free endpoint with the same minimized document shape. It releases only the independently configured canonical publish relay URL. It does not imply relay acceptance, resolve a signer, receive an unsigned or signed event, proxy a WebSocket, or expose the session subject. Missing configuration returns `{ "enabled": false }`.
+
 The HTTP adapter accepts no request body. For browser compatibility, one exact `Content-Length: 0` is permitted for a bodyless POST. Non-zero content length, duplicate content-length framing, transfer encoding, conflicting framing, or any actual request body remains rejected before routing. An exact bounded callback target still receives transaction-cookie deletion; near matches, malformed targets, and non-callback routes do not acquire OAuth-cookie behavior. Responses are bounded, sanitized, no-store, nosniff, and no-referrer.
 
 All state is bounded, process-local, and non-durable. Restart logs users out. This version is suitable only for a controlled single process; multiple processes or horizontal scaling require a separately reviewed shared store. It adds no database or Redis.
 
-OAuth authentication proves control of the canonical subject only. It does not grant Full or Operator status, current covenant authority, friendship, sponsorship, relay trust, custody, signing, or private-key access. NIP-07 selection remains separate development routing context, not authentication. The explicit public relay configuration grants read routing only and cannot alter the subject or authority projection.
+OAuth authentication establishes the canonical Social session subject only. It does not grant Full or Operator status, current covenant authority, friendship, sponsorship, relay trust, custody, signing capability, or private-key access. A later explicit browser NIP-07 action may request an external signature only when the extension key exactly matches that subject; the BFF never participates in signing. Read and publish relay configuration grants routing only and cannot alter the subject or authority projection.
 
 ## V1.16 health boundary
 

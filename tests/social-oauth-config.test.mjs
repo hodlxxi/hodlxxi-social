@@ -43,3 +43,30 @@ test("Nostr public read relay is optional, explicit, canonical, and wss-only", (
     }));
   }
 });
+
+test("Nostr publish relay is separate optional explicit and wss-only", () => {
+  assert.equal(parseSocialOAuthConfig(valid).nostrPublishRelayUrl, null);
+  const configured = parseSocialOAuthConfig({
+    ...valid,
+    nostrRelayUrl: "wss://read.example",
+    nostrPublishRelayUrl: "wss://write.example/path"
+  });
+  assert.equal(configured.nostrRelayUrl, "wss://read.example/");
+  assert.equal(
+    configured.nostrPublishRelayUrl,
+    "wss://write.example/path"
+  );
+
+  for (const nostrPublishRelayUrl of [
+    "ws://write.example",
+    "https://write.example",
+    "wss://user:pass@write.example",
+    "wss://write.example/#fragment",
+    "wss://write.example./"
+  ]) {
+    assert.throws(() => parseSocialOAuthConfig({
+      ...valid,
+      nostrPublishRelayUrl
+    }));
+  }
+});

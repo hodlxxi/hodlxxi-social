@@ -28,7 +28,8 @@ const validEnv = () => ({
   SOCIAL_MAX_PENDING_TRANSACTIONS: "64",
   SOCIAL_MAX_SESSIONS: "256",
   SOCIAL_OUTBOUND_TIMEOUT_MS: "5000",
-  SOCIAL_NOSTR_RELAY_URL: "wss://relay.example"
+  SOCIAL_NOSTR_RELAY_URL: "wss://relay.example",
+  SOCIAL_NOSTR_PUBLISH_RELAY_URL: "wss://write.example"
 });
 
 test("production readiness requires the complete authenticated browser graph", () => {
@@ -37,6 +38,7 @@ test("production readiness requires the complete authenticated browser graph", (
     "web/auth-entry.mjs",
     "web/auth-product.mjs",
     "web/authenticated-public-read.mjs",
+    "web/authenticated-public-write.mjs",
     "web/nostr-event-verifier.mjs",
     "web/components.mjs",
     "web/shell.mjs",
@@ -71,6 +73,11 @@ test("valid production configuration yields only bounded non-secret readiness fa
     authorityMode: "external-read-only",
     publicReadMode: "browser-one-shot-explicit-relay",
     relayHost: "relay.example",
+    publicWriteMode: "browser-explicit-external-signer",
+    publishRelayHost: "write.example",
+    serverSigning: false,
+    keyCustody: false,
+    hodlxxiWrites: false,
     sessionPersistence: "process-local",
     oauthCredentials: "configured-server-side",
     networkPerformed: false,
@@ -111,6 +118,19 @@ test("rehearsal-style same-origin authority cannot pass production readiness", a
 test("production readiness requires one explicit public read relay", async () => {
   const env = validEnv();
   delete env.SOCIAL_NOSTR_RELAY_URL;
+
+  await assert.rejects(
+    buildSocialProductionReadiness(env, {
+      cwd: ROOT,
+      accessImpl: async () => {}
+    }),
+    /production readiness failed/
+  );
+});
+
+test("production readiness requires a separate explicit publish relay", async () => {
+  const env = validEnv();
+  delete env.SOCIAL_NOSTR_PUBLISH_RELAY_URL;
 
   await assert.rejects(
     buildSocialProductionReadiness(env, {

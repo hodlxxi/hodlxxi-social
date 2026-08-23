@@ -43,8 +43,11 @@ export function parseSocialOAuthConfig(input) {
   const nostrRelayUrl = [undefined, null, ""].includes(input.nostrRelayUrl)
     ? null
     : canonicalWssRelayUrl(input.nostrRelayUrl);
+  const nostrPublishRelayUrl = [undefined, null, ""].includes(input.nostrPublishRelayUrl)
+    ? null
+    : canonicalWssRelayUrl(input.nostrPublishRelayUrl);
   const result = {
-    publicOrigin, authorityOrigin, clientId, clientSecret: input.clientSecret, bindHost, nostrRelayUrl,
+    publicOrigin, authorityOrigin, clientId, clientSecret: input.clientSecret, bindHost, nostrRelayUrl, nostrPublishRelayUrl,
     port: integer(input.port, LIMITS.port), transactionTtlSeconds: integer(input.transactionTtlSeconds, LIMITS.ttl),
     sessionTtlSeconds: integer(input.sessionTtlSeconds, LIMITS.ttl), maxPendingTransactions: integer(input.maxPendingTransactions, LIMITS.capacity),
     maxSessions: integer(input.maxSessions, LIMITS.capacity), outboundTimeoutMs: integer(input.outboundTimeoutMs, LIMITS.timeout),
@@ -58,5 +61,6 @@ export function configFromEnvironment(env) {
     clientId: env.HODLXXI_OAUTH_CLIENT_ID, clientSecret: env.HODLXXI_OAUTH_CLIENT_SECRET, bindHost: env.SOCIAL_BIND_HOST,
     port: env.SOCIAL_PORT, transactionTtlSeconds: env.SOCIAL_TRANSACTION_TTL_SECONDS, sessionTtlSeconds: env.SOCIAL_SESSION_TTL_SECONDS,
     maxPendingTransactions: env.SOCIAL_MAX_PENDING_TRANSACTIONS, maxSessions: env.SOCIAL_MAX_SESSIONS,
-    outboundTimeoutMs: env.SOCIAL_OUTBOUND_TIMEOUT_MS, nostrRelayUrl: env.SOCIAL_NOSTR_RELAY_URL });
+    outboundTimeoutMs: env.SOCIAL_OUTBOUND_TIMEOUT_MS, nostrRelayUrl: env.SOCIAL_NOSTR_RELAY_URL,
+    nostrPublishRelayUrl: env.SOCIAL_NOSTR_PUBLISH_RELAY_URL });
 }

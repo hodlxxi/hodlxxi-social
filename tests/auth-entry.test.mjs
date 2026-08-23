@@ -8,9 +8,11 @@ import {
   logoutSocialSession,
   parseAuthenticatedRoute,
   parseAuthorityDocument,
+  parseSocialPublishConfigDocument,
   parseSocialReadConfigDocument,
   parseSessionDocument,
   readSocialAuthority,
+  readSocialPublishConfig,
   readSocialPublicReadConfig,
   readSocialSession
 } from "../web/auth-entry.mjs";
@@ -31,6 +33,13 @@ const livePublicRead = () => ({
     body: "Signed <public> post",
     createdAt: "2026-08-23T00:01:00.000Z"
   }]
+});
+
+const livePublicWrite = (patch = {}) => ({
+  relayHost: "write.example",
+  signerState: "disconnected",
+  operation: "idle",
+  ...patch
 });
 
 const response = (
@@ -279,6 +288,31 @@ test("public read config accepts only exact disabled or canonical explicit relay
   }
 });
 
+test("publish config has the same exact shape but a separate failure boundary", () => {
+  assert.deepEqual(parseSocialPublishConfigDocument({ enabled: false }), {
+    enabled: false
+  });
+  assert.deepEqual(parseSocialPublishConfigDocument({
+    enabled: true,
+    relayUrl: "wss://write.example/"
+  }), {
+    enabled: true,
+    relayUrl: "wss://write.example/"
+  });
+
+  for (const malformed of [
+    { enabled: true, relayUrl: "wss://write.example" },
+    { enabled: true, relayUrl: "https://write.example/" },
+    { enabled: false, relayUrl: "wss://write.example/" },
+    { enabled: true, relayUrl: "wss://write.example/", subject }
+  ]) {
+    assert.throws(
+      () => parseSocialPublishConfigDocument(malformed),
+      /invalid Social publish configuration/
+    );
+  }
+});
+
 test("session authority and logout use exact same-origin endpoints", async () => {
   const calls = [];
 
@@ -307,6 +341,13 @@ test("session authority and logout use exact same-origin endpoints", async () =>
       });
     }
 
+    if (url === "/auth/social-publish-config") {
+      return response({
+        enabled: true,
+        relayUrl: "wss://write.example/"
+      });
+    }
+
     assert.equal(url, "/auth/logout");
 
     return response({
@@ -320,6 +361,7 @@ test("session authority and logout use exact same-origin endpoints", async () =>
     fetchImpl
   );
   await readSocialPublicReadConfig(fetchImpl);
+  await readSocialPublishConfig(fetchImpl);
   await logoutSocialSession(fetchImpl);
 
   assert.deepEqual(
@@ -328,6 +370,7 @@ test("session authority and logout use exact same-origin endpoints", async () =>
       "/auth/session",
       "/auth/authority",
       "/auth/social-read-config",
+      "/auth/social-publish-config",
       "/auth/logout"
     ]
   );
@@ -351,13 +394,13 @@ test("session authority and logout use exact same-origin endpoints", async () =>
   }
 
   assert.equal(
-    calls[3][1].method,
+    calls[4][1].method,
     "POST"
   );
 
   assert.equal(
     Object.hasOwn(
-      calls[3][1].headers,
+      calls[4][1].headers,
       "Origin"
     ),
     false
@@ -532,7 +575,8 @@ test("Home presents membership context, product guidance, and no invented networ
   assert.match(view.page, /Full Member/);
   assert.match(view.page, /Product guide/);
   assert.match(view.page, /Public posts unavailable/);
-  assert.match(view.page, /Publishing stays unavailable/);
+  assert.match(view.page, /Publishing relay not configured/);
+  assert.match(view.page, /Social never receives private-key material/);
   assert.doesNotMatch(view.page, /Ada|Ben|Cy|Dia|reactions|reposts/i);
   assert.match(view.networkContext, /Direct friends<\/span><strong>0/);
 });
@@ -576,6 +620,56 @@ test("malformed public read state cannot enter the authenticated product model",
   }
 });
 
+test("connected exact-session signer enables bounded note and profile forms only", () => {
+  const write = livePublicWrite({ signerState: "connected" });
+  const home = buildAuthenticatedProductView(
+    { authenticated: true, subject },
+    { subject, status: "full", valid: true },
+    "#/home",
+    livePublicRead(),
+    write
+  );
+  const profile = buildAuthenticatedProductView(
+    { authenticated: true, subject },
+    { subject, status: "full", valid: true },
+    `#/profile/${subject}`,
+    livePublicRead(),
+    write
+  );
+
+  assert.match(home.page, /id="authenticated-note-publisher"/);
+  assert.match(home.page, /name="content" maxlength="5000" required placeholder=/);
+  assert.match(home.page, /External signer matched this session key/);
+  assert.match(profile.page, /id="authenticated-profile-publisher"/);
+  assert.match(profile.page, /name="displayName" maxlength="80"/);
+  assert.match(profile.page, /name="about" maxlength="280"/);
+  assert.match(profile.page, /Only display name and bio/);
+  assert.doesNotMatch(home.page + profile.page, /private.?key material.*received/i);
+});
+
+test("malformed public write state cannot enter the authenticated product model", () => {
+  for (const publicWrite of [
+    { ...livePublicWrite(), signerState: "operator" },
+    { ...livePublicWrite(), relayHost: "bad relay" },
+    { ...livePublicWrite(), signerState: "disabled" },
+    { ...livePublicWrite(), operation: "published-admin" },
+    { ...livePublicWrite(), signerState: "disconnected", operation: "publishing-note" },
+    { ...livePublicWrite(), signerState: "mismatch", operation: "failed-note" },
+    { ...livePublicWrite(), authority: "full" }
+  ]) {
+    assert.throws(
+      () => buildAuthenticatedProductView(
+        { authenticated: true, subject },
+        { subject, status: "full", valid: true },
+        "#/home",
+        livePublicRead(),
+        publicWrite
+      ),
+      /invalid authenticated public write/
+    );
+  }
+});
+
 test("authenticated entry binds relay reads only to the current session subject", async () => {
   const document = fakeDocument();
   const seen = [];
@@ -608,6 +702,170 @@ test("authenticated entry binds relay reads only to the current session subject"
   assert.deepEqual(binding.currentPublicRead(), livePublicRead());
   assert.match(document.elements["#app-page"].innerHTML, /Ada &lt;Social&gt;/);
   assert.equal(binding.currentAuthority().status, "full");
+});
+
+test("explicit signer connection publishes kind 1 and kind 0 without changing authority", async () => {
+  const document = fakeDocument();
+  const browser = fakeBrowser("#/home");
+  browser.nostr = Object.freeze({ marker: "external signer" });
+  const reads = [];
+  const publications = [];
+
+  const binding = bindAuthenticatedEntry(document, {
+    browser,
+    fetchImpl: async (url) => {
+      if (url === "/auth/session") {
+        return response({ authenticated: true, subject });
+      }
+      if (url === "/auth/authority") {
+        return response({ subject, status: "full", valid: true });
+      }
+      if (url === "/auth/social-read-config") {
+        return response({ enabled: true, relayUrl: "wss://relay.example/" });
+      }
+      assert.equal(url, "/auth/social-publish-config");
+      return response({ enabled: true, relayUrl: "wss://write.example/" });
+    },
+    publicReadLoader: async (input) => {
+      reads.push(input);
+      return livePublicRead();
+    },
+    signerConnector: async (input, dependencies) => {
+      assert.deepEqual(input, { subject });
+      assert.equal(dependencies.resolveProvider(), browser.nostr);
+      return { state: "connected", publicKey: subject };
+    },
+    notePublisher: async (input, dependencies) => {
+      publications.push(["note", input]);
+      assert.equal(dependencies.resolveProvider(), browser.nostr);
+      return { accepted: true };
+    },
+    profilePublisher: async (input, dependencies) => {
+      publications.push(["profile", input]);
+      assert.equal(dependencies.resolveProvider(), browser.nostr);
+      return { accepted: true };
+    }
+  });
+
+  await binding.ready;
+  assert.deepEqual(binding.currentPublicWrite(), livePublicWrite());
+  assert.equal(await binding.connectSigner(), true);
+  assert.equal(binding.currentPublicWrite().signerState, "connected");
+
+  assert.equal(await binding.publishNote("Hello Social"), true);
+  assert.deepEqual(publications[0], ["note", {
+    subject,
+    relayUrl: "wss://write.example/",
+    content: "Hello Social"
+  }]);
+  assert.equal(binding.currentPublicWrite().operation, "published-note");
+  assert.match(document.elements["#app-page"].innerHTML, /Published to write\.example/);
+
+  browser.location.hash = `#/profile/${subject}`;
+  assert.equal(await binding.publishProfile("Ada", "Public profile"), true);
+  assert.deepEqual(publications[1], ["profile", {
+    subject,
+    relayUrl: "wss://write.example/",
+    displayName: "Ada",
+    about: "Public profile"
+  }]);
+  assert.equal(binding.currentPublicWrite().operation, "published-profile");
+  assert.equal(binding.currentAuthority().status, "full");
+  assert.equal(binding.currentAuthority().valid, true);
+  assert.equal(reads.length, 3);
+  assert.ok(reads.every((input) => input.subject === subject));
+});
+
+test("signer mismatch remains local and fail closed", async () => {
+  const document = fakeDocument();
+  const browser = fakeBrowser("#/home");
+  browser.nostr = Object.freeze({ marker: "mismatch" });
+  let publicationCalls = 0;
+
+  const binding = bindAuthenticatedEntry(document, {
+    browser,
+    fetchImpl: async (url) => {
+      if (url === "/auth/session") return response({ authenticated: true, subject });
+      if (url === "/auth/authority") return response({ subject, status: "full", valid: true });
+      if (url === "/auth/social-publish-config") {
+        return response({ enabled: true, relayUrl: "wss://write.example/" });
+      }
+      return response({ enabled: false });
+    },
+    signerConnector: async () => ({ state: "mismatch" }),
+    notePublisher: async () => {
+      publicationCalls += 1;
+      throw new Error("private relay rejection");
+    }
+  });
+
+  await binding.ready;
+  assert.equal(await binding.connectSigner(), false);
+  assert.equal(binding.currentPublicWrite().signerState, "mismatch");
+  assert.equal(await binding.publishNote("must not publish"), false);
+  assert.equal(publicationCalls, 0);
+  assert.equal(binding.currentAuthority().status, "full");
+  assert.doesNotMatch(document.elements["#app-page"].innerHTML, /private relay rejection/);
+});
+
+test("logout invalidates pending signer and publication completions", async () => {
+  const makeFetch = () => async (url) => {
+    if (url === "/auth/session") return response({ authenticated: true, subject });
+    if (url === "/auth/authority") return response({ subject, status: "full", valid: true });
+    if (url === "/auth/social-publish-config") {
+      return response({ enabled: true, relayUrl: "wss://write.example/" });
+    }
+    if (url === "/auth/logout") return response({ authenticated: false });
+    return response({ enabled: false });
+  };
+
+  {
+    const document = fakeDocument();
+    let finishSigner;
+    const binding = bindAuthenticatedEntry(document, {
+      browser: fakeBrowser(),
+      fetchImpl: makeFetch(),
+      signerConnector: () => new Promise((resolve) => {
+        finishSigner = resolve;
+      })
+    });
+
+    await binding.ready;
+    const pending = binding.connectSigner();
+    assert.equal(binding.currentPublicWrite().signerState, "connecting");
+    assert.equal(await binding.logout(), true);
+    finishSigner({ state: "connected", publicKey: subject });
+    assert.equal(await pending, false);
+    assert.deepEqual(binding.currentSession(), { authenticated: false });
+    assert.deepEqual(binding.currentPublicWrite(), {
+      relayHost: null,
+      signerState: "disabled",
+      operation: "idle"
+    });
+  }
+
+  {
+    const document = fakeDocument();
+    let finishPublication;
+    const binding = bindAuthenticatedEntry(document, {
+      browser: fakeBrowser(),
+      fetchImpl: makeFetch(),
+      signerConnector: async () => ({ state: "connected", publicKey: subject }),
+      notePublisher: () => new Promise((resolve) => {
+        finishPublication = resolve;
+      })
+    });
+
+    await binding.ready;
+    assert.equal(await binding.connectSigner(), true);
+    const pending = binding.publishNote("public event");
+    assert.equal(binding.currentPublicWrite().operation, "publishing-note");
+    assert.equal(await binding.logout(), true);
+    finishPublication({ accepted: true });
+    assert.equal(await pending, false);
+    assert.deepEqual(binding.currentSession(), { authenticated: false });
+    assert.equal(document.body.getAttribute("data-access"), undefined);
+  }
 });
 
 test("malformed live-read output fails closed without signing out or changing authority", async () => {
@@ -1042,27 +1300,37 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/components\.mjs\?v=1\.19\.0"/
+    /from "\.\/components\.mjs\?v=1\.20\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/shell\.mjs\?v=1\.19\.0"/
+    /from "\.\/shell\.mjs\?v=1\.20\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs\?v=1\.19\.0"/
+    /from "\.\/auth-product\.mjs\?v=1\.20\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-read\.mjs\?v=1\.19\.0"/
+    /from "\.\/authenticated-public-read\.mjs\?v=1\.20\.0"/
+  );
+
+  assert.match(
+    module,
+    /from "\.\/authenticated-public-write\.mjs\?v=1\.20\.0"/
+  );
+
+  assert.match(
+    module,
+    /resolveProvider: \(\) => browser\?\.nostr/
   );
 
   assert.doesNotMatch(
     module,
-    /from "\.\/app\.mjs"|fixtures|SyntheticSocialAdapter|getFixtureData|viewer-select|window\.nostr|NIP-07|nip07|localStorage|sessionStorage|indexedDB|document\.cookie|\?subject=|agent\/authority\/current/i
+    /from "\.\/app\.mjs"|fixtures|SyntheticSocialAdapter|getFixtureData|viewer-select|localStorage|sessionStorage|indexedDB|document\.cookie|\?subject=|agent\/authority\/current/i
   );
 
   assert.doesNotMatch(
@@ -1072,12 +1340,12 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.19\.0"/
+    /src="\.\/auth-entry\.mjs\?v=1\.20\.0"/
   );
 
   assert.match(
     html,
-    /href="\.\/styles\.css\?v=1\.19\.0"/
+    /href="\.\/styles\.css\?v=1\.20\.0"/
   );
 
   assert.match(
@@ -1107,7 +1375,7 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 });
 
 test("authenticated browser graph uses one explicit release revision and no unversioned entry asset", async () => {
-  const [html, module, product, publicRead] = await Promise.all([
+  const [html, module, product, publicRead, publicWrite] = await Promise.all([
     readFile(
       new URL("../web/index.html", import.meta.url),
       "utf8"
@@ -1123,20 +1391,25 @@ test("authenticated browser graph uses one explicit release revision and no unve
     readFile(
       new URL("../web/authenticated-public-read.mjs", import.meta.url),
       "utf8"
+    ),
+    readFile(
+      new URL("../web/authenticated-public-write.mjs", import.meta.url),
+      "utf8"
     )
   ]);
 
   const references = [
     ...html.matchAll(/(?:styles\.css|auth-entry\.mjs)\?v=([0-9.]+)/g),
-    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs|authenticated-public-read\.mjs)\?v=([0-9.]+)/g),
+    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs|authenticated-public-read\.mjs|authenticated-public-write\.mjs)\?v=([0-9.]+)/g),
     ...product.matchAll(/components\.mjs\?v=([0-9.]+)/g),
-    ...publicRead.matchAll(/nostr-event-verifier\.mjs\?v=([0-9.]+)/g)
+    ...publicRead.matchAll(/nostr-event-verifier\.mjs\?v=([0-9.]+)/g),
+    ...publicWrite.matchAll(/(?:authenticated-public-read\.mjs|nostr-event-verifier\.mjs)\?v=([0-9.]+)/g)
   ];
 
-  assert.equal(references.length, 8);
+  assert.equal(references.length, 11);
   assert.deepEqual(
     [...new Set(references.map((match) => match[1]))],
-    ["1.19.0"]
+    ["1.20.0"]
   );
   assert.doesNotMatch(
     html,
@@ -1144,10 +1417,14 @@ test("authenticated browser graph uses one explicit release revision and no unve
   );
   assert.doesNotMatch(
     module,
-    /from "\.\/(?:components|auth-product|shell|authenticated-public-read)\.mjs"/
+    /from "\.\/(?:components|auth-product|shell|authenticated-public-read|authenticated-public-write)\.mjs"/
   );
   assert.doesNotMatch(product, /from "\.\/components\.mjs"/);
   assert.doesNotMatch(publicRead, /from "\.\/nostr-event-verifier\.mjs"/);
+  assert.doesNotMatch(
+    publicWrite,
+    /from "\.\/(?:authenticated-public-read|nostr-event-verifier)\.mjs"/
+  );
 });
 
 test("synthetic product remains isolated in demo.html", async () => {

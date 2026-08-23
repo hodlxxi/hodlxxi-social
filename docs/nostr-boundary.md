@@ -2,6 +2,14 @@
 
 Nostr public keys map one-to-one to participant IDs. The canonical boundary maps signed kind `0` profile events and kind `1` text notes into small immutable domain records. Validation occurs before mapping.
 
+## V1.20 ordinary authenticated public write
+
+`web/authenticated-public-write.mjs` is the only production-facing publication boundary. It receives the session subject and one separately configured canonical publish relay from authenticated state. Page load performs no signer lookup and opens no write connection. One deliberate connection action resolves the external NIP-07 provider, calls `getPublicKey()`, and accepts only the exact lowercase session subject without retaining the provider.
+
+Each publication re-resolves that provider, rechecks the same key, requests one kind `0` or kind `1` signature, and passes the complete returned event through `web/nostr-event-verifier.mjs`. The verified public key, timestamp, kind, empty tags and content must exactly match the requested unsigned event. Only then does one bounded socket send one `EVENT`; only an exact positive `OK` for that event id is success. The relay response text never reaches UI diagnostics.
+
+Profile content allowlists only `display_name` and `about`; note content is bounded public text. There is no key import, provider persistence, application/server signing, retry, reconnect, pool, fallback, queue, optimistic insertion or background publication. The extension can observe the origin and unsigned event; the relay can observe the browser network address and complete public signed event. Neither signer nor relay can grant HODLXXI authority.
+
 ## V1.19 ordinary authenticated read
 
 `web/authenticated-public-read.mjs` is the production-facing browser read boundary. It receives one canonical relay URL from the authenticated BFF configuration endpoint and one subject only from the opaque Social session. It performs separate bounded kind `0` and kind `1` reads using exact author filters. `web/nostr-event-verifier.mjs` then recomputes the NIP-01 SHA-256 event id and verifies the BIP340 signature before any profile or note mapper runs. Shape-only `id`/`sig` strings are never sufficient for this path.
@@ -12,7 +20,7 @@ Only display name, bio, note text, timestamp and event id survive into immutable
 
 `READ_PUBLIC_NOSTR` explicitly identifies this read-only capability. The adapter has no `READ_EXTERNAL_AUTHORITY` capability or assertion operation. It is initialized into an immutable snapshot and then satisfies the social side of the service contract; application rendering does not know transport details. The current viewer is separately injected local state and is not proof of authentication or key ownership. Nostr metadata cannot supply CRT assertions, elevate Limited to Full or Operator, or create sponsor/covenant trust. Contact/follow events and all other kinds are rejected rather than interpreted as trust.
 
-SyntheticSocialAdapter remains fully supported by the isolated demo shell. The ordinary authenticated shell may use one operator-configured relay for read-only profile/posts, while the separate HODLXXI authority seam remains unchanged. Signing, publishing, DMs, encryption, NIP-07 account control, NIP-44, NIP-59, private keys, authority mutation, and HODLXXI writes remain unimplemented. The repository has no relay discovery/pool, generic RPC connector, signer, or secret loader.
+SyntheticSocialAdapter remains fully supported by the isolated demo shell. The ordinary authenticated shell may use one operator-configured relay for read-only profile/posts, while the separate HODLXXI authority seam remains unchanged. V1.20 adds only the constrained external-signer publication boundary above. DMs, encryption, NIP-07 account management, NIP-44, NIP-59, private keys, authority mutation, and HODLXXI writes remain unimplemented. The repository has no relay discovery/pool, generic RPC connector, application/server signer, or secret-key loader.
 
 ## V1.4 controlled public read transport
 
@@ -22,7 +30,7 @@ One read owns one WebSocket. It validates the public filter through the canonica
 
 The transport parses only the relay envelope. Returned event objects are still untrusted and must pass `NostrPublicReadAdapter` and `src/nostr.mjs` validation before minimized Social records exist. Relay data cannot provide `READ_EXTERNAL_AUTHORITY`, grant Full or Operator, replace HODLXXI/CRT assertions, or reach rendering as raw relay objects. Tests inject a deterministic fake WebSocket and make no live connection.
 
-Relay discovery, relay pools/failover, reconnect, persistent subscriptions, publishing, signing, DMs, encryption, NIP-07 account control, NIP-44, NIP-59 and NIP-65 discovery are not implemented. The only ordinary live path is the explicit bounded read described above.
+This V1.4 transport itself has no relay discovery, pool/failover, reconnect, persistent subscription, publishing, signing, DMs, encryption, NIP-07 account control, NIP-44, NIP-59 or NIP-65 discovery. The ordinary V1.20 write path is a separate explicitly gated module described above.
 
 ## V1.5 developer-only manual probe
 

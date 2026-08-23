@@ -12,6 +12,7 @@ export const REQUIRED_PRODUCT_ASSETS = Object.freeze([
   "web/auth-entry.mjs",
   "web/auth-product.mjs",
   "web/authenticated-public-read.mjs",
+  "web/authenticated-public-write.mjs",
   "web/nostr-event-verifier.mjs",
   "web/components.mjs",
   "web/shell.mjs",
@@ -54,7 +55,7 @@ export async function buildSocialProductionReadiness(
     fail();
   }
 
-  if (!config.nostrRelayUrl) {
+  if (!config.nostrRelayUrl || !config.nostrPublishRelayUrl) {
     fail();
   }
 
@@ -80,6 +81,11 @@ export async function buildSocialProductionReadiness(
     authorityMode: "external-read-only",
     publicReadMode: "browser-one-shot-explicit-relay",
     relayHost: new URL(config.nostrRelayUrl).host,
+    publicWriteMode: "browser-explicit-external-signer",
+    publishRelayHost: new URL(config.nostrPublishRelayUrl).host,
+    serverSigning: false,
+    keyCustody: false,
+    hodlxxiWrites: false,
     sessionPersistence: "process-local",
     oauthCredentials: "configured-server-side",
     networkPerformed: false,
