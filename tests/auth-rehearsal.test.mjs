@@ -214,6 +214,36 @@ test("ordinary index is served with an unmistakable local rehearsal banner", asy
   assert.doesNotMatch(html, /hodlxxi\.com/);
 });
 
+test("rehearsal serves only the exact authenticated asset revision query", async () => {
+  const runtime = createRehearsalRuntime({
+    port: 18443,
+    status: "full",
+    random: deterministicRandom
+  });
+  const handler = createRehearsalHandler({ runtime });
+
+  for (const path of [
+    "/styles.css?v=1.18.1",
+    "/auth-entry.mjs?v=1.18.1",
+    "/auth-product.mjs?v=1.18.1",
+    "/components.mjs?v=1.18.1",
+    "/shell.mjs?v=1.18.1"
+  ]) {
+    const result = await invoke(handler, { url: path });
+    assert.equal(result.statusCode, 200, path);
+  }
+
+  for (const path of [
+    "/auth-entry.mjs?",
+    "/auth-entry.mjs?v=1.18",
+    "/auth-entry.mjs?v=1.18.1&extra=1",
+    "/demo.html?v=1.18.1"
+  ]) {
+    const result = await invoke(handler, { url: path });
+    assert.equal(result.statusCode, 400, path);
+  }
+});
+
 test("Limited rehearsal completes login callback session authority and logout", async () => {
   const {
     runtime,

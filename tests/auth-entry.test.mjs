@@ -896,17 +896,17 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/components\.mjs"/
+    /from "\.\/components\.mjs\?v=1\.18\.1"/
   );
 
   assert.match(
     module,
-    /from "\.\/shell\.mjs"/
+    /from "\.\/shell\.mjs\?v=1\.18\.1"/
   );
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs"/
+    /from "\.\/auth-product\.mjs\?v=1\.18\.1"/
   );
 
   assert.doesNotMatch(
@@ -921,7 +921,12 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs"/
+    /src="\.\/auth-entry\.mjs\?v=1\.18\.1"/
+  );
+
+  assert.match(
+    html,
+    /href="\.\/styles\.css\?v=1\.18\.1"/
   );
 
   assert.match(
@@ -947,6 +952,38 @@ test("normal authenticated entry imports pure product UI but never synthetic app
   assert.doesNotMatch(
     html,
     /Development surface|Open synthetic demo/
+  );
+});
+
+test("authenticated browser graph uses one explicit release revision and no unversioned entry asset", async () => {
+  const [html, module] = await Promise.all([
+    readFile(
+      new URL("../web/index.html", import.meta.url),
+      "utf8"
+    ),
+    readFile(
+      new URL("../web/auth-entry.mjs", import.meta.url),
+      "utf8"
+    )
+  ]);
+
+  const references = [
+    ...html.matchAll(/(?:styles\.css|auth-entry\.mjs)\?v=([0-9.]+)/g),
+    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs)\?v=([0-9.]+)/g)
+  ];
+
+  assert.equal(references.length, 5);
+  assert.deepEqual(
+    [...new Set(references.map((match) => match[1]))],
+    ["1.18.1"]
+  );
+  assert.doesNotMatch(
+    html,
+    /href="\.\/styles\.css"|src="\.\/auth-entry\.mjs"/
+  );
+  assert.doesNotMatch(
+    module,
+    /from "\.\/(?:components|auth-product|shell)\.mjs"/
   );
 });
 

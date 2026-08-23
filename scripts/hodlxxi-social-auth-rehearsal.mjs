@@ -16,6 +16,14 @@ export const REHEARSAL_CODE = "hodlxxi-social-rehearsal-code";
 const WEB_ROOT = fileURLToPath(new URL("../web/", import.meta.url));
 const STATUS = new Set(["limited", "full"]);
 const VERIFIER = /^[A-Za-z0-9_-]{43}$/;
+const AUTHENTICATED_ASSET_REVISION = "1.18.1";
+const REVISIONED_AUTHENTICATED_ASSETS = new Set([
+  "/styles.css",
+  "/auth-entry.mjs",
+  "/auth-product.mjs",
+  "/components.mjs",
+  "/shell.mjs"
+]);
 
 const securityHeaders = Object.freeze({
   "Cache-Control": "no-store",
@@ -197,7 +205,6 @@ const staticPath = (target) => {
     typeof target !== "string" ||
     !target.startsWith("/") ||
     target.startsWith("//") ||
-    target.includes("?") ||
     target.includes("#") ||
     target.includes("%") ||
     target.includes("\\")
@@ -205,7 +212,29 @@ const staticPath = (target) => {
     return null;
   }
 
-  const pathname = target === "/" ? "/index.html" : target;
+  const queryOffset = target.indexOf("?");
+  const rawPath = queryOffset < 0
+    ? target
+    : target.slice(0, queryOffset);
+  const query = queryOffset < 0
+    ? ""
+    : target.slice(queryOffset + 1);
+  const pathname = rawPath === "/" ? "/index.html" : rawPath;
+
+  if (
+    query &&
+    (
+      query !== `v=${AUTHENTICATED_ASSET_REVISION}` ||
+      !REVISIONED_AUTHENTICATED_ASSETS.has(pathname)
+    )
+  ) {
+    return null;
+  }
+
+  if (queryOffset >= 0 && query.length === 0) {
+    return null;
+  }
+
   const segments = pathname.slice(1).split("/");
 
   if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
