@@ -3,7 +3,7 @@ import {
   renderPageFrame,
   renderStatusBadge,
   renderUnavailableState
-} from "./components.mjs?v=1.20.0";
+} from "./components.mjs?v=1.23.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const CANONICAL_EVENT_ID = /^[0-9a-f]{64}$/;
@@ -212,6 +212,9 @@ const statusDetail = (model) => {
     ? "Current Full access was projected from the external HODLXXI authority for this session."
     : "Current Limited access was projected from the external HODLXXI authority for this session.";
 };
+
+const hasFullNetworkAccess = (model) =>
+  model.authorityValid === true && model.status === "full";
 
 const publicProfileName = (model) =>
   model.publicRead.profileState === "available" &&
@@ -516,6 +519,31 @@ const directoryPage = (model, title, mode) => {
   });
 };
 
+const fullNetworkPage = () =>
+  renderPageFrame({
+    eyebrow: "Private member network",
+    title: "Full Network",
+    className: "full-network-page",
+    content:
+      `<section class="full-network-product">` +
+      `<div class="full-network-hero"><div><p class="eyebrow">HODLXXI Full members</p>` +
+      `<h2>The private HODLXXI Full-member network</h2>` +
+      `<p>This authenticated area is reserved for participants with a current accepted Full authority projection.</p></div>` +
+      `<div class="full-network-access"><span>Current access</span><strong>Full</strong></div></div>` +
+      `<article class="full-network-privacy"><div class="full-network-privacy-mark" aria-hidden="true">◉</div>` +
+      `<div><p class="eyebrow">Privacy boundary</p><h2>Participant identity keys are not exposed here</h2>` +
+      `<p>This browser shell does not receive or render other participants’ public keys or private directory records.</p></div></article>` +
+      `<section class="full-network-directory" aria-label="Full Network directory state">` +
+      `<div><p class="eyebrow">Directory state</p><h2>Private directory not connected yet</h2>` +
+      `<p>The viewer-private directory remains outside this release.</p></div>` +
+      surfaceEmpty({
+        icon: "◌",
+        title: "Live private aliases will be connected next",
+        detail: "The next integration step will connect real viewer-private aliases. No participant records or substitute data are shown now."
+      }) +
+      `</section></section>`
+  });
+
 const searchPage = (model, query = "") => {
   const normalized = String(query).trim().toLowerCase().slice(0, 120);
   const matchesSelf = Boolean(normalized) && [
@@ -695,6 +723,9 @@ export function renderAuthenticatedProductPage(route, model) {
   if (route.page === "circle") return circlePage(model);
   if (route.page === "search") return searchPage(model, route.searchQuery);
   if (route.page === "discover") return directoryPage(model, "Discover", "discover");
+  if (route.page === "full-network" && hasFullNetworkAccess(model)) {
+    return fullNetworkPage();
+  }
   if (route.page === "friends") return directoryPage(model, "Friends", "friends");
   if (route.page === "discovery") return directoryPage(model, "Friends of Friends", "discovery");
   if (route.page === "messages") return messagesPage(model);

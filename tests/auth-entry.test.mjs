@@ -505,6 +505,14 @@ test("authenticated routing permits only the current subject profile", () => {
     "settings"
   );
 
+  assert.equal(
+    parseAuthenticatedRoute(
+      "#/full-network",
+      subject
+    ).page,
+    "full-network"
+  );
+
   assert.deepEqual(
     parseAuthenticatedRoute(
       "#/search?q=you",
@@ -524,6 +532,7 @@ test("authenticated routes render complete truthful product surfaces instead of 
     ["#/circle", /auth-circle-title/],
     ["#/search?q=you", /1 permitted result/],
     ["#/discover", /directory-product/],
+    ["#/full-network", /Private directory not connected yet/],
     ["#/friends", /No direct friends yet/],
     ["#/friends-of-friends", /friends of friends/i],
     ["#/messages", /authenticated-split/],
@@ -554,6 +563,57 @@ test("authenticated routes render complete truthful product surfaces instead of 
       view.page,
       /No authenticated social dataset|Synthetic fixture|synthetic demo/i,
       hash
+    );
+  }
+});
+
+test("accepted Full authority exposes the Full Network navigation and honest empty surface", () => {
+  const targetSubject = "d".repeat(64);
+  const view = buildAuthenticatedProductView(
+    { authenticated: true, subject },
+    { subject, status: "full", valid: true },
+    "#/full-network"
+  );
+  const productMarkup =
+    view.page + view.desktopNavigation + view.mobileNavigation;
+
+  assert.equal(view.route.page, "full-network");
+  assert.match(view.desktopNavigation, /href="#\/full-network" aria-current="page">Full Network/);
+  assert.match(view.mobileNavigation, /href="#\/full-network" aria-current="page">Full Network/);
+  assert.match(view.page, /<h1>Full Network<\/h1>/);
+  assert.match(view.page, /Current access<\/span><strong>Full<\/strong>/);
+  assert.match(view.page, /private HODLXXI Full-member network/i);
+  assert.match(view.page, /Participant identity keys are not exposed here/);
+  assert.match(view.page, /Private directory not connected yet/);
+  assert.match(view.page, /Live private aliases will be connected next/);
+  assert.doesNotMatch(productMarkup, new RegExp(targetSubject));
+  assert.doesNotMatch(
+    productMarkup,
+    /Ada · synthetic|Ben · synthetic|Cy · synthetic|Dia · synthetic|synthetic-note|fixture participant|synthetic participant|xpub|x25519|covenant key/i
+  );
+});
+
+test("Limited and fail-closed authority cannot enter or discover the Full Network surface", () => {
+  for (const authority of [
+    { subject, status: "limited", valid: true },
+    { subject, status: "limited", valid: false }
+  ]) {
+    const view = buildAuthenticatedProductView(
+      { authenticated: true, subject },
+      authority,
+      "#/full-network"
+    );
+    const productMarkup =
+      view.page + view.desktopNavigation + view.mobileNavigation;
+
+    assert.equal(view.status, "limited");
+    assert.equal(view.route.page, "not-found");
+    assert.match(view.page, /Page unavailable/);
+    assert.match(view.page, /Route not found/);
+    assert.doesNotMatch(productMarkup, /Full Network|full-network/);
+    assert.doesNotMatch(
+      productMarkup,
+      /participant records|participant count|private aliases|directory state/i
     );
   }
 });
@@ -1300,27 +1360,27 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/components\.mjs\?v=1\.20\.0"/
+    /from "\.\/components\.mjs\?v=1\.23\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/shell\.mjs\?v=1\.20\.0"/
+    /from "\.\/shell\.mjs\?v=1\.23\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs\?v=1\.20\.0"/
+    /from "\.\/auth-product\.mjs\?v=1\.23\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-read\.mjs\?v=1\.20\.0"/
+    /from "\.\/authenticated-public-read\.mjs\?v=1\.23\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-write\.mjs\?v=1\.20\.0"/
+    /from "\.\/authenticated-public-write\.mjs\?v=1\.23\.0"/
   );
 
   assert.match(
@@ -1340,12 +1400,12 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.20\.0"/
+    /src="\.\/auth-entry\.mjs\?v=1\.23\.0"/
   );
 
   assert.match(
     html,
-    /href="\.\/styles\.css\?v=1\.20\.0"/
+    /href="\.\/styles\.css\?v=1\.23\.0"/
   );
 
   assert.match(
@@ -1409,7 +1469,7 @@ test("authenticated browser graph uses one explicit release revision and no unve
   assert.equal(references.length, 11);
   assert.deepEqual(
     [...new Set(references.map((match) => match[1]))],
-    ["1.20.0"]
+    ["1.23.0"]
   );
   assert.doesNotMatch(
     html,

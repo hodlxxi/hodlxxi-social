@@ -1,30 +1,30 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs?v=1.20.0";
+} from "./components.mjs?v=1.23.0";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.20.0";
+} from "./auth-product.mjs?v=1.23.0";
 
-import { renderNavigation } from "./shell.mjs?v=1.20.0";
+import { renderNavigation } from "./shell.mjs?v=1.23.0";
 
 import {
   canonicalNostrRelayUrl,
   createPendingAuthenticatedPublicRead,
   createUnavailableAuthenticatedPublicRead,
   loadAuthenticatedPublicRead
-} from "./authenticated-public-read.mjs?v=1.20.0";
+} from "./authenticated-public-read.mjs?v=1.23.0";
 
 import {
   AUTHENTICATED_SIGNER_STATES,
   connectAuthenticatedNip07Signer,
   publishAuthenticatedNote,
   publishAuthenticatedProfile
-} from "./authenticated-public-write.mjs?v=1.20.0";
+} from "./authenticated-public-write.mjs?v=1.23.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const MAX_JSON_BODY_BYTES = 1024;
@@ -34,6 +34,7 @@ const PRODUCT_ROUTES = Object.freeze({
   "/circle": "circle",
   "/search": "search",
   "/discover": "discover",
+  "/full-network": "full-network",
   "/friends": "friends",
   "/friends-of-friends": "discovery",
   "/messages": "messages",
@@ -442,10 +443,19 @@ export function buildAuthenticatedProductView(
   );
 
   const status = productStatus(checkedAuthority);
-  const route = parseAuthenticatedRoute(
+  const requestedRoute = parseAuthenticatedRoute(
     hash,
     session.subject
   );
+  const fullNetworkAccess =
+    checkedAuthority.valid === true && status === "full";
+  const route =
+    requestedRoute.page === "full-network" && !fullNetworkAccess
+      ? Object.freeze({
+          page: "not-found",
+          path: "/not-found"
+        })
+      : requestedRoute;
   const model = createAuthenticatedProductModel({
     subject: session.subject,
     status,
@@ -462,13 +472,15 @@ export function buildAuthenticatedProductView(
       route,
       session.subject,
       "nav-links",
-      0
+      0,
+      fullNetworkAccess
     ),
     mobileNavigation: renderNavigation(
       route,
       session.subject,
       "mobile-nav",
-      0
+      0,
+      fullNetworkAccess
     ),
     profile: renderAuthenticatedProfileContext(model),
     networkContext: renderAuthenticatedNetworkContext(model)

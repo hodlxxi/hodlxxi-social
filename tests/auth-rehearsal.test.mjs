@@ -223,14 +223,14 @@ test("rehearsal serves only the exact authenticated asset revision query", async
   const handler = createRehearsalHandler({ runtime });
 
   for (const path of [
-    "/styles.css?v=1.20.0",
-    "/auth-entry.mjs?v=1.20.0",
-    "/auth-product.mjs?v=1.20.0",
-    "/authenticated-public-read.mjs?v=1.20.0",
-    "/authenticated-public-write.mjs?v=1.20.0",
-    "/nostr-event-verifier.mjs?v=1.20.0",
-    "/components.mjs?v=1.20.0",
-    "/shell.mjs?v=1.20.0"
+    "/styles.css?v=1.23.0",
+    "/auth-entry.mjs?v=1.23.0",
+    "/auth-product.mjs?v=1.23.0",
+    "/authenticated-public-read.mjs?v=1.23.0",
+    "/authenticated-public-write.mjs?v=1.23.0",
+    "/nostr-event-verifier.mjs?v=1.23.0",
+    "/components.mjs?v=1.23.0",
+    "/shell.mjs?v=1.23.0"
   ]) {
     const result = await invoke(handler, { url: path });
     assert.equal(result.statusCode, 200, path);
@@ -239,8 +239,8 @@ test("rehearsal serves only the exact authenticated asset revision query", async
   for (const path of [
     "/auth-entry.mjs?",
     "/auth-entry.mjs?v=1.18",
-    "/auth-entry.mjs?v=1.20.0&extra=1",
-    "/demo.html?v=1.20.0"
+    "/auth-entry.mjs?v=1.23.0&extra=1",
+    "/demo.html?v=1.23.0"
   ]) {
     const result = await invoke(handler, { url: path });
     assert.equal(result.statusCode, 400, path);
