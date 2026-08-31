@@ -7,24 +7,34 @@ export const navigationModel = Object.freeze([
   item("profile", "Profile", "Identity & trust", true), item("trust", "Trust", "Identity & trust"), item("settings", "Settings", "Identity & trust")
 ]);
 
-const routePaths = Object.freeze({ home: "/home", circle: "/circle", search: "/search", discover: "/discover", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust", settings: "/settings" });
+const fullNetworkNavigationItem = item("full-network", "Full Network", "Social");
+const navigationEntries = (fullNetworkAccess) => fullNetworkAccess === true
+  ? Object.freeze([
+      ...navigationModel.slice(0, 4),
+      fullNetworkNavigationItem,
+      ...navigationModel.slice(4)
+    ])
+  : navigationModel;
+const routePaths = Object.freeze({ home: "/home", circle: "/circle", search: "/search", discover: "/discover", "full-network": "/full-network", friends: "/friends", discovery: "/friends-of-friends", messages: "/messages", groups: "/groups", notifications: "/notifications", activity: "/activity", trust: "/trust", settings: "/settings" });
 const routePath = (page, viewerId) => page === "profile" ? `#/profile/${viewerId}` : `#${routePaths[page] ?? "/not-found"}`;
 const isActive = (route, page) => route.page === page;
 const badge = (page, unread) => page === "notifications" ? `<span class="nav-badge" aria-label="${unread} unread local notifications">${unread}</span>` : "";
 const link = (entry, route, viewerId, unread) => `<a href="${routePath(entry.page, viewerId)}"${isActive(route, entry.page) ? ' aria-current="page"' : ""}>${entry.label}${badge(entry.page, unread)}</a>`;
 
-export function renderDesktopNavigation(route, viewerId, unread = 0) {
-  const groups = [...new Set(navigationModel.map(({ group }) => group))];
-  return `<nav class="nav-links" aria-label="Primary">${groups.map((group) => `<section class="nav-group"><h2>${group}</h2>${navigationModel.filter((entry) => entry.group === group).map((entry) => link(entry, route, viewerId, unread)).join("")}</section>`).join("")}</nav>`;
+export function renderDesktopNavigation(route, viewerId, unread = 0, fullNetworkAccess = false) {
+  const entries = navigationEntries(fullNetworkAccess);
+  const groups = [...new Set(entries.map(({ group }) => group))];
+  return `<nav class="nav-links" aria-label="Primary">${groups.map((group) => `<section class="nav-group"><h2>${group}</h2>${entries.filter((entry) => entry.group === group).map((entry) => link(entry, route, viewerId, unread)).join("")}</section>`).join("")}</nav>`;
 }
 
-export function renderMobileNavigation(route, viewerId, unread = 0) {
-  const primary = navigationModel.filter(({ mobile }) => mobile);
-  const secondary = navigationModel.filter(({ mobile }) => !mobile);
+export function renderMobileNavigation(route, viewerId, unread = 0, fullNetworkAccess = false) {
+  const entries = navigationEntries(fullNetworkAccess);
+  const primary = entries.filter(({ mobile }) => mobile);
+  const secondary = entries.filter(({ mobile }) => !mobile);
   const secondaryActive = secondary.some(({ page }) => isActive(route, page));
   return `<nav class="mobile-nav" aria-label="Mobile primary">${primary.map((entry) => link(entry, route, viewerId, unread)).join("")}<details class="mobile-more"${secondaryActive ? " open" : ""}><summary${secondaryActive ? ' aria-current="page"' : ""}>More${badge("notifications", unread)}</summary><div class="mobile-more-menu" role="navigation" aria-label="More destinations">${secondary.map((entry) => link(entry, route, viewerId, unread)).join("")}</div></details></nav>`;
 }
 
-export function renderNavigation(route, viewerId, className = "nav-links", unread = 0) {
-  return className === "mobile-nav" ? renderMobileNavigation(route, viewerId, unread) : renderDesktopNavigation(route, viewerId, unread);
+export function renderNavigation(route, viewerId, className = "nav-links", unread = 0, fullNetworkAccess = false) {
+  return className === "mobile-nav" ? renderMobileNavigation(route, viewerId, unread, fullNetworkAccess) : renderDesktopNavigation(route, viewerId, unread, fullNetworkAccess);
 }
