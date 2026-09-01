@@ -352,6 +352,7 @@ test("production browser read boundary stays read-only and cannot select either 
     .sort();
   assert.deepEqual(fetchedPaths, [
     "/auth/authority",
+    "/auth/full-directory",
     "/auth/logout",
     "/auth/session",
     "/auth/social-publish-config",

@@ -3,10 +3,12 @@ import {
   renderPageFrame,
   renderStatusBadge,
   renderUnavailableState
-} from "./components.mjs?v=1.23.0";
+} from "./components.mjs?v=1.24.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const CANONICAL_EVENT_ID = /^[0-9a-f]{64}$/;
+const UNSAFE_PRIVATE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;
+const BITCOIN_BASE58_ADDRESS = /^(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|[mn2][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
 const PRODUCT_STATUSES = new Set(["limited", "full"]);
 const PUBLIC_READ_STATES = new Set([
   "loading",
@@ -43,6 +45,15 @@ const DEFAULT_PUBLIC_WRITE = Object.freeze({
   relayHost: null,
   signerState: "disabled",
   operation: "idle"
+});
+const FULL_DIRECTORY_STATES = new Set([
+  "loading",
+  "available",
+  "unavailable"
+]);
+const DEFAULT_FULL_DIRECTORY = Object.freeze({
+  state: "unavailable",
+  participants: EMPTY
 });
 
 const plainObject = (value) =>
@@ -194,6 +205,42 @@ const normalizePublicWrite = (value) => {
     relayHost: value.relayHost,
     signerState: value.signerState,
     operation: value.operation
+  });
+};
+
+const normalizeFullDirectory = (value) => {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ["participants", "state"]) ||
+    !FULL_DIRECTORY_STATES.has(value.state) ||
+    !Array.isArray(value.participants) ||
+    value.participants.length > 4096 ||
+    (value.state !== "available" && value.participants.length !== 0)
+  ) {
+    throw new TypeError("invalid authenticated Full directory");
+  }
+  const participants = [];
+  const aliases = new Set();
+  for (const participant of value.participants) {
+    if (
+      !plainObject(participant) ||
+      !exactKeys(participant, ["alias"]) ||
+      typeof participant.alias !== "string" ||
+      !/^[A-Za-z0-9._~-]{1,128}$/.test(participant.alias) ||
+      UNSAFE_PRIVATE_ALIAS.test(participant.alias) ||
+      BITCOIN_BASE58_ADDRESS.test(participant.alias) ||
+      /^\d{7,15}$/.test(participant.alias) ||
+      participant.alias.includes("@") ||
+      aliases.has(participant.alias)
+    ) {
+      throw new TypeError("invalid authenticated Full directory");
+    }
+    aliases.add(participant.alias);
+    participants.push(Object.freeze({ alias: participant.alias }));
+  }
+  return Object.freeze({
+    state: value.state,
+    participants: Object.freeze(participants)
   });
 };
 
@@ -519,7 +566,37 @@ const directoryPage = (model, title, mode) => {
   });
 };
 
-const fullNetworkPage = () =>
+const fullNetworkDirectory = (model) => {
+  if (model.fullDirectory.state === "loading") {
+    return surfaceEmpty({
+      icon: "…",
+      title: "Connecting to the private directory",
+      detail: "Social is performing one authenticated, viewer-bound directory request."
+    });
+  }
+  if (model.fullDirectory.state === "unavailable") {
+    return surfaceEmpty({
+      icon: "!",
+      title: "Private directory unavailable",
+      detail: "No participant information is shown when the private directory cannot be accepted."
+    });
+  }
+  if (model.fullDirectory.participants.length === 0) {
+    return surfaceEmpty({
+      icon: "◌",
+      title: "No private aliases available",
+      detail: "The accepted viewer-private directory contains no aliases to present."
+    });
+  }
+  return `<div class="full-network-aliases" aria-label="Viewer-private Full Network aliases">` +
+    model.fullDirectory.participants.map((participant) =>
+      `<article class="full-network-alias"><strong>${escapeHtml(participant.alias)}</strong>` +
+      `<span>Private alias</span></article>`
+    ).join("") +
+    `</div>`;
+};
+
+const fullNetworkPage = (model) =>
   renderPageFrame({
     eyebrow: "Private member network",
     title: "Full Network",
@@ -534,13 +611,9 @@ const fullNetworkPage = () =>
       `<div><p class="eyebrow">Privacy boundary</p><h2>Participant identity keys are not exposed here</h2>` +
       `<p>This browser shell does not receive or render other participants’ public keys or private directory records.</p></div></article>` +
       `<section class="full-network-directory" aria-label="Full Network directory state">` +
-      `<div><p class="eyebrow">Directory state</p><h2>Private directory not connected yet</h2>` +
-      `<p>The viewer-private directory remains outside this release.</p></div>` +
-      surfaceEmpty({
-        icon: "◌",
-        title: "Live private aliases will be connected next",
-        detail: "The next integration step will connect real viewer-private aliases. No participant records or substitute data are shown now."
-      }) +
+      `<div><p class="eyebrow">Directory state</p><h2>Viewer-private aliases</h2>` +
+      `<p>Aliases are opaque presentation identifiers for this viewer only.</p></div>` +
+      fullNetworkDirectory(model) +
       `</section></section>`
   });
 
@@ -689,7 +762,8 @@ export function createAuthenticatedProductModel({
   status,
   authorityValid,
   publicRead = DEFAULT_PUBLIC_READ,
-  publicWrite = DEFAULT_PUBLIC_WRITE
+  publicWrite = DEFAULT_PUBLIC_WRITE,
+  fullDirectory = DEFAULT_FULL_DIRECTORY
 }) {
   if (
     typeof subject !== "string" ||
@@ -705,7 +779,8 @@ export function createAuthenticatedProductModel({
     status,
     authorityValid,
     publicRead: normalizePublicRead(publicRead),
-    publicWrite: normalizePublicWrite(publicWrite)
+    publicWrite: normalizePublicWrite(publicWrite),
+    fullDirectory: normalizeFullDirectory(fullDirectory)
   });
 }
 
@@ -724,7 +799,7 @@ export function renderAuthenticatedProductPage(route, model) {
   if (route.page === "search") return searchPage(model, route.searchQuery);
   if (route.page === "discover") return directoryPage(model, "Discover", "discover");
   if (route.page === "full-network" && hasFullNetworkAccess(model)) {
-    return fullNetworkPage();
+    return fullNetworkPage(model);
   }
   if (route.page === "friends") return directoryPage(model, "Friends", "friends");
   if (route.page === "discovery") return directoryPage(model, "Friends of Friends", "discovery");

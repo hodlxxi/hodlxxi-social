@@ -19,4 +19,4 @@ V1.23 adds the first browser-visible Full Network area to the ordinary authentic
 - Payments.
 - Nostr membership publication.
 
-The next integration step will connect real viewer-private aliases. This release does not add a directory provider, Social-to-UBID request, service credential, synthetic participant fallback, messaging, protected Full posts, encryption/decryption, or key disclosure.
+V1.24 adds the disabled-by-default, source-only [Full Directory BFF](FULL_DIRECTORY_BFF_V1.md). When separately configured and activated, the existing surface can render only accepted viewer-private opaque aliases. No production activation, synthetic participant fallback, names, presence, messaging, protected Full posts, encryption/decryption, or participant-key disclosure is included.

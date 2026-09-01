@@ -104,7 +104,10 @@ test("exchange and introspection use exact confidential endpoints and forms", as
       ? { access_token: "token", id_token: "header.payload.signature", token_type: "Bearer" }
       : { active: true, sub: "a".repeat(64), client_id: "social", scope: "openid" });
   });
-  assert.equal(await client.authenticate(credentials), "a".repeat(64));
+  assert.deepEqual(await client.authenticate(credentials), {
+    subject: "a".repeat(64),
+    accessToken: "token"
+  });
   assert.deepEqual(calls.map(([url]) => url), [
     "https://authority.example/oauth/token",
     "https://authority.example/oauth/introspect"
@@ -397,7 +400,10 @@ test("fully accepted responses stay un-aborted through bounded consumption and v
       clearObservations.push([signals[index].aborted, records[index].state.consumed, records[index].state.cancelCalls]);
     }
   });
-  assert.equal(await client.authenticate(credentials), "a".repeat(64));
+  assert.deepEqual(await client.authenticate(credentials), {
+    subject: "a".repeat(64),
+    accessToken: "token"
+  });
   assert.equal(calls, 2);
   assert.deepEqual(abortedDuringRead, [false, false, false, false]);
   assert.deepEqual(signals.map((signal) => signal.aborted), [false, false]);

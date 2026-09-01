@@ -15,6 +15,18 @@ const error = (status = 400, headers) => json(status, { error: "request_rejected
 const randomId = (random) => base64url(random(32));
 const SUBJECT = /^[0-9a-f]{64}$/;
 const AUTHORITY_FIELDS = Object.freeze(["status", "subject", "valid"]);
+const AUTHENTICATION_FIELDS = Object.freeze(["accessToken", "subject"]);
+const FULL_DIRECTORY_UNAVAILABLE = Object.freeze({ state: "unavailable" });
+const SAFE_ALIAS = /^[A-Za-z0-9._~-]{1,128}$/;
+const UNSAFE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;
+const BITCOIN_BASE58_ADDRESS = /^(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|[mn2][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
+const privacySafeAlias = (value) =>
+  typeof value === "string" &&
+  SAFE_ALIAS.test(value) &&
+  !UNSAFE_ALIAS.test(value) &&
+  !BITCOIN_BASE58_ADDRESS.test(value) &&
+  !/^\d{7,15}$/.test(value) &&
+  !value.includes("@");
 
 const failClosedAuthority = (subject) =>
   Object.freeze({ subject, status: "limited", valid: false });
@@ -82,6 +94,95 @@ const normalizeAuthorityProjection = (subject, value) => {
   return failClosedAuthority(subject);
 };
 
+const normalizeAuthentication = (value) => {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) return null;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(descriptors);
+  if (
+    keys.length !== AUTHENTICATION_FIELDS.length ||
+    keys.some((key) =>
+      typeof key !== "string" ||
+      !AUTHENTICATION_FIELDS.includes(key) ||
+      !descriptors[key].enumerable ||
+      !Object.hasOwn(descriptors[key], "value")
+    )
+  ) return null;
+  const subject = descriptors.subject.value;
+  const accessToken = descriptors.accessToken.value;
+  if (
+    typeof subject !== "string" ||
+    !SUBJECT.test(subject) ||
+    typeof accessToken !== "string" ||
+    accessToken.length === 0 ||
+    accessToken.length > 8192 ||
+    /[\u0000-\u0020\u007f]/.test(accessToken)
+  ) return null;
+  return Object.freeze({ subject, accessToken });
+};
+
+const normalizeBrowserDirectory = (value) => {
+  try {
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.getPrototypeOf(value) !== Object.prototype
+    ) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (
+      keys.length !== 2 ||
+      !keys.includes("state") ||
+      !keys.includes("participants") ||
+      keys.some((key) =>
+        typeof key !== "string" ||
+        !descriptors[key].enumerable ||
+        !Object.hasOwn(descriptors[key], "value")
+      ) ||
+      descriptors.state.value !== "available"
+    ) return null;
+    const participants = descriptors.participants.value;
+    if (
+      !Array.isArray(participants) ||
+      Object.getPrototypeOf(participants) !== Array.prototype ||
+      participants.length > 4096
+    ) return null;
+    const aliases = [];
+    const seen = new Set();
+    for (const valueParticipant of participants) {
+      if (
+        valueParticipant === null ||
+        typeof valueParticipant !== "object" ||
+        Array.isArray(valueParticipant) ||
+        Object.getPrototypeOf(valueParticipant) !== Object.prototype
+      ) return null;
+      const fields = Object.getOwnPropertyDescriptors(valueParticipant);
+      const participantKeys = Reflect.ownKeys(fields);
+      if (
+        participantKeys.length !== 1 ||
+        participantKeys[0] !== "alias" ||
+        !fields.alias.enumerable ||
+        !Object.hasOwn(fields.alias, "value") ||
+        !privacySafeAlias(fields.alias.value) ||
+        seen.has(fields.alias.value)
+      ) return null;
+      seen.add(fields.alias.value);
+      aliases.push(Object.freeze({ alias: fields.alias.value }));
+    }
+    return Object.freeze({
+      state: "available",
+      participants: Object.freeze(aliases)
+    });
+  } catch {
+    return null;
+  }
+};
+
 const invalidRequestTarget = () => INVALID_REQUEST_TARGET;
 const decodeQueryComponent = (raw) => {
   if (!RAW_QUERY_COMPONENT.test(raw)) return null;
@@ -146,7 +247,7 @@ const exactQuery = (entries, names) => {
   return names.every((name) => Object.hasOwn(values, name)) ? Object.freeze(values) : null;
 };
 
-export function createSocialOAuthBff({ config, pendingTransactions, sessions, oauthClient, authorityReader, random = randomBytes }) {
+export function createSocialOAuthBff({ config, pendingTransactions, sessions, oauthClient, authorityReader, fullDirectoryClient, random = randomBytes }) {
   if (
     ![pendingTransactions, sessions, oauthClient].every(Boolean) ||
     typeof random !== "function" ||
@@ -170,7 +271,7 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
   const configuredPublishRelayUrl = configuredRelay(
     config?.nostrPublishRelayUrl
   );
-  const authenticatedSubject = (cookieHeader) => {
+  const authenticatedSession = (cookieHeader) => {
     let id;
     try {
       id = parseCookieHeader(cookieHeader).get(SESSION_COOKIE_NAME);
@@ -179,9 +280,11 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
     }
     const session = id ? sessions.get(id) : null;
     return session && typeof session.subject === "string" && SUBJECT.test(session.subject)
-      ? session.subject
+      ? session
       : null;
   };
+  const authenticatedSubject = (cookieHeader) =>
+    authenticatedSession(cookieHeader)?.subject ?? null;
   const callbackHeaders = (extra = {}) => ({ "Set-Cookie": expireTransactionCookie(), ...extra });
   return async function handle(request) {
     const method = request.method;
@@ -206,8 +309,14 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
       const transaction = pendingTransactions.consumeIf(transactionId, (candidate) => candidate.state === query.state);
       if (!transaction) return terminal();
       try {
-        const subject = await oauthClient.authenticate({ code: query.code, verifier: transaction.verifier });
-        let sessionId; for (let attempt = 0; attempt < 4; attempt += 1) { sessionId = randomId(random); if (sessions.create(sessionId, { subject })) break; sessionId = null; }
+        const authentication = normalizeAuthentication(
+          await oauthClient.authenticate({
+            code: query.code,
+            verifier: transaction.verifier
+          })
+        );
+        if (!authentication) return terminal(502);
+        let sessionId; for (let attempt = 0; attempt < 4; attempt += 1) { sessionId = randomId(random); if (sessions.create(sessionId, { subject: authentication.subject, viewerAccessToken: authentication.accessToken })) break; sessionId = null; }
         if (!sessionId) return terminal(503);
         return response(303, "", callbackHeaders({ Location: "/", "Set-Cookie": [expireTransactionCookie(), serializeHostCookie(SESSION_COOKIE_NAME, sessionId, config.sessionTtlSeconds)] }));
       } catch { return terminal(502); }
@@ -270,6 +379,55 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
       }
 
       return json(200, projection);
+    }
+
+    if (target.path === "/auth/full-directory") {
+      if (method !== "GET" || target.query.length !== 0) {
+        return json(
+          method === "GET" ? 400 : 405,
+          FULL_DIRECTORY_UNAVAILABLE
+        );
+      }
+      const session = authenticatedSession(cookieHeader);
+      if (!session) return json(401, FULL_DIRECTORY_UNAVAILABLE);
+      if (
+        typeof session.viewerAccessToken !== "string" ||
+        session.viewerAccessToken.length === 0 ||
+        session.viewerAccessToken.length > 8192 ||
+        /[\u0000-\u0020\u007f]/.test(session.viewerAccessToken)
+      ) return json(403, FULL_DIRECTORY_UNAVAILABLE);
+
+      let projection = failClosedAuthority(session.subject);
+      if (authorityReader) {
+        try {
+          projection = normalizeAuthorityProjection(
+            session.subject,
+            await authorityReader(session.subject)
+          );
+        } catch {
+          projection = failClosedAuthority(session.subject);
+        }
+      }
+      if (projection.valid !== true || projection.status !== "full") {
+        return json(403, FULL_DIRECTORY_UNAVAILABLE);
+      }
+      if (
+        config?.fullDirectory?.enabled !== true ||
+        typeof fullDirectoryClient?.readForViewer !== "function"
+      ) return json(503, FULL_DIRECTORY_UNAVAILABLE);
+
+      try {
+        const directory = normalizeBrowserDirectory(
+          await fullDirectoryClient.readForViewer({
+            viewerAccessToken: session.viewerAccessToken
+          })
+        );
+        return directory
+          ? json(200, directory)
+          : json(503, FULL_DIRECTORY_UNAVAILABLE);
+      } catch {
+        return json(503, FULL_DIRECTORY_UNAVAILABLE);
+      }
     }
 
     if (target.path === "/auth/logout") {

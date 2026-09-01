@@ -8,10 +8,12 @@ import {
   logoutSocialSession,
   parseAuthenticatedRoute,
   parseAuthorityDocument,
+  parseFullDirectoryDocument,
   parseSocialPublishConfigDocument,
   parseSocialReadConfigDocument,
   parseSessionDocument,
   readSocialAuthority,
+  readSocialFullDirectory,
   readSocialPublishConfig,
   readSocialPublicReadConfig,
   readSocialSession
@@ -313,6 +315,55 @@ test("publish config has the same exact shape but a separate failure boundary", 
   }
 });
 
+test("Full directory browser contract accepts only bounded opaque aliases", () => {
+  assert.deepEqual(parseFullDirectoryDocument({
+    state: "available",
+    participants: [
+      { alias: "pairwise.alias-1" },
+      { alias: "member~7" }
+    ]
+  }), {
+    state: "available",
+    participants: [
+      { alias: "pairwise.alias-1" },
+      { alias: "member~7" }
+    ]
+  });
+  for (const malformed of [
+    { state: "unavailable" },
+    { state: "available", participants: [], count: 0 },
+    {
+      state: "available",
+      participants: [{ alias: "safe", subject: "d".repeat(64) }]
+    },
+    {
+      state: "available",
+      participants: [{ alias: "d".repeat(64) }]
+    },
+    {
+      state: "available",
+      participants: [{ alias: "npub1syntheticidentity" }]
+    },
+    {
+      state: "available",
+      participants: [{ alias: "1234567890" }]
+    },
+    {
+      state: "available",
+      participants: [{ alias: `1${"A".repeat(25)}` }]
+    },
+    {
+      state: "available",
+      participants: [{ alias: "duplicate" }, { alias: "duplicate" }]
+    }
+  ]) {
+    assert.throws(
+      () => parseFullDirectoryDocument(malformed),
+      /invalid Social Full directory/
+    );
+  }
+});
+
 test("session authority and logout use exact same-origin endpoints", async () => {
   const calls = [];
 
@@ -348,6 +399,13 @@ test("session authority and logout use exact same-origin endpoints", async () =>
       });
     }
 
+    if (url === "/auth/full-directory") {
+      return response({
+        state: "available",
+        participants: [{ alias: "pairwise.alias-1" }]
+      });
+    }
+
     assert.equal(url, "/auth/logout");
 
     return response({
@@ -362,6 +420,7 @@ test("session authority and logout use exact same-origin endpoints", async () =>
   );
   await readSocialPublicReadConfig(fetchImpl);
   await readSocialPublishConfig(fetchImpl);
+  await readSocialFullDirectory(fetchImpl);
   await logoutSocialSession(fetchImpl);
 
   assert.deepEqual(
@@ -371,6 +430,7 @@ test("session authority and logout use exact same-origin endpoints", async () =>
       "/auth/authority",
       "/auth/social-read-config",
       "/auth/social-publish-config",
+      "/auth/full-directory",
       "/auth/logout"
     ]
   );
@@ -394,13 +454,13 @@ test("session authority and logout use exact same-origin endpoints", async () =>
   }
 
   assert.equal(
-    calls[4][1].method,
+    calls[5][1].method,
     "POST"
   );
 
   assert.equal(
     Object.hasOwn(
-      calls[4][1].headers,
+      calls[5][1].headers,
       "Origin"
     ),
     false
@@ -532,7 +592,7 @@ test("authenticated routes render complete truthful product surfaces instead of 
     ["#/circle", /auth-circle-title/],
     ["#/search?q=you", /1 permitted result/],
     ["#/discover", /directory-product/],
-    ["#/full-network", /Private directory not connected yet/],
+    ["#/full-network", /Private directory unavailable/],
     ["#/friends", /No direct friends yet/],
     ["#/friends-of-friends", /friends of friends/i],
     ["#/messages", /authenticated-split/],
@@ -584,13 +644,76 @@ test("accepted Full authority exposes the Full Network navigation and honest emp
   assert.match(view.page, /Current access<\/span><strong>Full<\/strong>/);
   assert.match(view.page, /private HODLXXI Full-member network/i);
   assert.match(view.page, /Participant identity keys are not exposed here/);
-  assert.match(view.page, /Private directory not connected yet/);
-  assert.match(view.page, /Live private aliases will be connected next/);
+  assert.match(view.page, /Viewer-private aliases/);
+  assert.match(view.page, /Private directory unavailable/);
   assert.doesNotMatch(productMarkup, new RegExp(targetSubject));
   assert.doesNotMatch(
     productMarkup,
     /Ada · synthetic|Ben · synthetic|Cy · synthetic|Dia · synthetic|synthetic-note|fixture participant|synthetic participant|xpub|x25519|covenant key/i
   );
+});
+
+test("accepted viewer-private aliases render without raw participant identity", () => {
+  const targetSubject = "d".repeat(64);
+  const view = buildAuthenticatedProductView(
+    { authenticated: true, subject },
+    { subject, status: "full", valid: true },
+    "#/full-network",
+    undefined,
+    undefined,
+    {
+      state: "available",
+      participants: [
+        { alias: "pairwise.alias-1" },
+        { alias: "member~7" }
+      ]
+    }
+  );
+  assert.match(view.page, /pairwise\.alias-1/);
+  assert.match(view.page, /member~7/);
+  assert.match(view.page, /Private alias/);
+  assert.doesNotMatch(view.page, new RegExp(targetSubject));
+  assert.doesNotMatch(
+    view.page,
+    /subject|public key:|xpub|x25519|email|phone|presence|avatar/i
+  );
+});
+
+test("authenticated Full Network loads aliases through the same-origin Social BFF only", async () => {
+  const document = fakeDocument();
+  const calls = [];
+  const binding = bindAuthenticatedEntry(document, {
+    browser: fakeBrowser("#/full-network"),
+    fetchImpl: async (url, options) => {
+      calls.push([url, options]);
+      if (url === "/auth/session") {
+        return response({ authenticated: true, subject });
+      }
+      if (url === "/auth/authority") {
+        return response({ subject, status: "full", valid: true });
+      }
+      if (url === "/auth/full-directory") {
+        return response({
+          state: "available",
+          participants: [{ alias: "pairwise.alias-9" }]
+        });
+      }
+      return response({ enabled: false });
+    }
+  });
+  await binding.ready;
+  assert.deepEqual(binding.currentFullDirectory(), {
+    state: "available",
+    participants: [{ alias: "pairwise.alias-9" }]
+  });
+  assert.match(document.elements["#app-page"].innerHTML, /pairwise\.alias-9/);
+  assert.equal(
+    calls.filter(([url]) => url === "/auth/full-directory").length,
+    1
+  );
+  assert.ok(calls.every(([url]) => url.startsWith("/auth/")));
+  assert.ok(calls.every(([, options]) => options.credentials === "same-origin"));
+  assert.doesNotMatch(JSON.stringify(calls), /internal\/v1\/social|Bearer /);
 });
 
 test("Limited and fail-closed authority cannot enter or discover the Full Network surface", () => {
@@ -1360,27 +1483,27 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/components\.mjs\?v=1\.23\.0"/
+    /from "\.\/components\.mjs\?v=1\.24\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/shell\.mjs\?v=1\.23\.0"/
+    /from "\.\/shell\.mjs\?v=1\.24\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs\?v=1\.23\.0"/
+    /from "\.\/auth-product\.mjs\?v=1\.24\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-read\.mjs\?v=1\.23\.0"/
+    /from "\.\/authenticated-public-read\.mjs\?v=1\.24\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-write\.mjs\?v=1\.23\.0"/
+    /from "\.\/authenticated-public-write\.mjs\?v=1\.24\.0"/
   );
 
   assert.match(
@@ -1400,12 +1523,12 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.23\.0"/
+    /src="\.\/auth-entry\.mjs\?v=1\.24\.0"/
   );
 
   assert.match(
     html,
-    /href="\.\/styles\.css\?v=1\.23\.0"/
+    /href="\.\/styles\.css\?v=1\.24\.0"/
   );
 
   assert.match(
@@ -1469,7 +1592,7 @@ test("authenticated browser graph uses one explicit release revision and no unve
   assert.equal(references.length, 11);
   assert.deepEqual(
     [...new Set(references.map((match) => match[1]))],
-    ["1.23.0"]
+    ["1.24.0"]
   );
   assert.doesNotMatch(
     html,
