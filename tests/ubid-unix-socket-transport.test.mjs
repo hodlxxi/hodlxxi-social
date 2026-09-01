@@ -94,6 +94,94 @@ const consume = async (response) => {
   return Buffer.concat(chunks).toString("utf8");
 };
 
+const fixedFactoryFailure = (configuration, dependencies, secrets = []) => {
+  assert.throws(
+    () => createUbidUnixSocketTransport(configuration, dependencies),
+    (error) => {
+      assert.equal(error?.message, "full_directory_unavailable");
+      assert.equal(String(error), "Error: full_directory_unavailable");
+      for (const secret of secrets) {
+        assert.equal(String(error).includes(secret), false);
+      }
+      return true;
+    }
+  );
+};
+
+test("factory reads only own data properties and fixes hostile-input diagnostics", () => {
+  const configFields = ["socketPath", "serviceTokenUrl", "directoryUrl"];
+  for (const field of configFields) {
+    const secret = `secret-${field}-getter`;
+    const configuration = { ...transportConfig };
+    Object.defineProperty(configuration, field, {
+      enumerable: true,
+      get() {
+        throw new Error(secret);
+      }
+    });
+    fixedFactoryFailure(configuration, undefined, [secret, socketPath]);
+  }
+
+  const dependencySecret = "secret-request-implementation-getter";
+  const dependencies = {};
+  Object.defineProperty(dependencies, "requestImpl", {
+    enumerable: true,
+    get() {
+      throw new Error(dependencySecret);
+    }
+  });
+  fixedFactoryFailure(transportConfig, dependencies, [dependencySecret]);
+
+  const inherited = Object.create(transportConfig);
+  fixedFactoryFailure(inherited);
+
+  const inheritedDependency = Object.create({ requestImpl() {} });
+  fixedFactoryFailure(transportConfig, inheritedDependency);
+
+  const accessor = { ...transportConfig };
+  Object.defineProperty(accessor, "socketPath", {
+    enumerable: true,
+    get: () => socketPath
+  });
+  fixedFactoryFailure(accessor);
+
+  fixedFactoryFailure({ ...transportConfig, unexpected: true });
+  fixedFactoryFailure([]);
+  fixedFactoryFailure(Object.assign(
+    { ...transportConfig },
+    { [Symbol("hostile")]: true }
+  ));
+  fixedFactoryFailure(Object.assign(
+    Object.create(null),
+    transportConfig
+  ));
+  fixedFactoryFailure(Object.assign(
+    Object.create({ hostile: true }),
+    transportConfig
+  ));
+  fixedFactoryFailure(new Proxy(transportConfig, {
+    ownKeys() {
+      throw new Error("secret-proxy-trap");
+    }
+  }), undefined, ["secret-proxy-trap"]);
+  fixedFactoryFailure(transportConfig, {
+    requestImpl() {},
+    unexpected: true
+  });
+  fixedFactoryFailure(transportConfig, Object.assign(
+    { requestImpl() {} },
+    { [Symbol("hostile-dependency")]: true }
+  ));
+
+  assert.equal(
+    typeof createUbidUnixSocketTransport(
+      Object.freeze({ ...transportConfig }),
+      Object.freeze({ requestImpl() {} })
+    ),
+    "function"
+  );
+});
+
 test("Unix transport uses only socketPath and exact logical Host", async () => {
   const harness = requestHarness(({ callback }) => callback(nodeResponse()));
   const transport = createUbidUnixSocketTransport(

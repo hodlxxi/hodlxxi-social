@@ -73,7 +73,7 @@ const inputHeaders = (value, expected) => {
   }
 };
 
-const exactInit = (value, fields) => {
+const exactRecord = (value, fields) => {
   try {
     if (
       value === null ||
@@ -172,12 +172,22 @@ const outgoingHeaders = (headers, logicalHost) => {
   return result;
 };
 
-export function createUbidUnixSocketTransport(
-  { socketPath, serviceTokenUrl, directoryUrl },
-  { requestImpl = http.request } = {}
-) {
-  if (typeof requestImpl !== "function") failure();
+export function createUbidUnixSocketTransport(configuration, dependencies) {
+  let socketPath;
+  let serviceTokenUrl;
+  let directoryUrl;
+  let requestImpl;
   try {
+    ({ socketPath, serviceTokenUrl, directoryUrl } = exactRecord(
+      configuration,
+      ["socketPath", "serviceTokenUrl", "directoryUrl"]
+    ));
+    if (dependencies === undefined) {
+      requestImpl = http.request;
+    } else {
+      ({ requestImpl } = exactRecord(dependencies, ["requestImpl"]));
+    }
+    if (typeof requestImpl !== "function") failure();
     socketPath = canonicalUnixSocketPath(socketPath);
   } catch {
     failure();
@@ -196,12 +206,12 @@ export function createUbidUnixSocketTransport(
       let selected;
       if (url === serviceTokenEndpoint.href) {
         selected = serviceTokenEndpoint;
-        init = exactInit(init, [
+        init = exactRecord(init, [
           "method", "headers", "body", "credentials", "redirect", "signal"
         ]);
       } else if (url === directoryEndpoint.href) {
         selected = directoryEndpoint;
-        init = exactInit(init, [
+        init = exactRecord(init, [
           "method", "headers", "credentials", "redirect", "signal"
         ]);
       } else {
