@@ -515,7 +515,7 @@ const readPrivateKeyFile = async (path, openFileImpl) => {
 export async function createUbidFullDirectoryClient(
   config,
   {
-    fetchImpl = globalThis.fetch,
+    fetchImpl,
     openFileImpl = openFile,
     createPrivateKeyImpl = createPrivateKey,
     now = Date.now,

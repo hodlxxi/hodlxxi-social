@@ -23,6 +23,8 @@ The RSA service-authentication key is loaded only from an explicit absolute serv
 
 Service-token and directory requests use separate bounded timeouts, strict status/content-type/size/JSON handling, no redirects, no retry, no caching, and no stale token or directory fallback. The service bearer exists only for the request flow.
 
+The production-intended request implementation is the dependency-free [Full Directory Unix socket transport V1](FULL_DIRECTORY_UNIX_SOCKET_TRANSPORT_V1.md). Canonical HTTPS URLs remain exact logical endpoint identities, but the active server composition derives only their path and logical Host and connects solely through the configured Unix socket. There is no DNS, TCP, public-URL, proxy, HTTPS-agent, or ambient-fetch fallback.
+
 ## Privacy response contract
 
 The accepted UBID document has exactly `schema`, `version`, and `participants`. Each participant has exactly `alias`, `identity_class`, and `current_full_relation_satisfied`; exact schema `hodlxxi.privacy_safe_full_directory.v1`, version `1`, `identity_class == "full"`, and `current_full_relation_satisfied == true` are required. Social immediately minimizes accepted entries to opaque pairwise aliases.
@@ -37,6 +39,7 @@ Denial, disabled configuration, missing authority, malformed data, or upstream u
 
 - `SOCIAL_UBID_SERVICE_TOKEN_URL`
 - `SOCIAL_UBID_FULL_DIRECTORY_URL`
+- `SOCIAL_UBID_PRIVATE_SOCKET_PATH`
 - `SOCIAL_UBID_SERVICE_CLIENT_ID`
 - `SOCIAL_UBID_SERVICE_CLIENT_SIGNING_KEY_ID`
 - `SOCIAL_UBID_SERVICE_TOKEN_ENDPOINT_AUDIENCE`
@@ -44,11 +47,11 @@ Denial, disabled configuration, missing authority, malformed data, or upstream u
 - `SOCIAL_UBID_SERVICE_TOKEN_TIMEOUT_MS`
 - `SOCIAL_UBID_FULL_DIRECTORY_TIMEOUT_MS`
 
-The token-endpoint audience is an exact credential string and may be HTTPS or opaque/URN-style; it is not derived from the service-token HTTP URL. Incomplete or unsafe enabled configuration fails startup closed. The configured `kid` must select exactly one matching RSA public JWK in UBID. Node's portable file API cannot atomically prohibit symlinks in every parent component, so trusted non-symlink parent directories and deployment ownership remain activation prerequisites.
+The two URLs are canonical HTTPS logical identities, not TCP destinations. The token-endpoint audience is an exact credential string and may be HTTPS or opaque/URN-style; it is not derived from the service-token HTTP URL. The private socket path must be a bounded canonical absolute Linux path. Incomplete or unsafe enabled configuration fails startup closed. The configured `kid` must select exactly one matching RSA public JWK in UBID. Node's portable file API cannot atomically prohibit symlinks in every signing-key parent component, so trusted non-symlink parent directories and deployment ownership remain activation prerequisites.
 
 ## Still not implemented or activated
 
-- Production configuration, credentials, key provisioning, deployment, or service restart.
+- Production socket/nginx wiring, configuration, credentials, key provisioning, deployment, activation, or service restart.
 - Browser access to UBID internal endpoints or a public identity-resolution endpoint.
 - Names, profiles, avatars, presence, graph edges, messaging, or contact information.
 - Protected content transport, encryption, X25519, payments, or Nostr membership publication.

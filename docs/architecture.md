@@ -1,5 +1,11 @@
 # Architecture
 
+## V1.25 Full-directory Unix socket transport (source only)
+
+The production-intended private path is `browser → same-origin Social BFF → Social Node-core Unix-socket HTTP transport → private nginx Unix socket → UBID loopback gunicorn`. `SOCIAL_UBID_SERVICE_TOKEN_URL` and `SOCIAL_UBID_FULL_DIRECTORY_URL` remain canonical HTTPS logical endpoint identities, but only their exact path and derived logical Host enter the request. The sole physical destination is `SOCIAL_UBID_PRIVATE_SOCKET_PATH`; production composition has no DNS, TCP, ordinary loopback, public URL, HTTPS-agent, proxy, or ambient-fetch fallback.
+
+The transport allowlists only POST `/internal/v1/social/service-token` and GET `/internal/v1/social/full-directory`, propagates aborts, bounds response metadata, rejects redirects and caller-controlled Host values, and feeds the unchanged bounded JSON/privacy validator. Unix-socket reachability supplies no authority: Social confidential service authentication, the canonical session-bound human viewer bearer, and current UBID/CRT Full entitlement remain three independent requirements. The feature remains disabled by default and unactivated. See [Full Directory Unix socket transport V1](FULL_DIRECTORY_UNIX_SOCKET_TRANSPORT_V1.md).
+
 ## V1.24 privacy-safe Full directory BFF (source only)
 
 The disabled dependency path is `opaque Social session → retained canonical human OAuth bearer + independently accepted current-Full Social authority projection → backend-only RS256 confidential service client → UBID service token → UBID viewer-private directory → strict alias-only minimization → same-origin no-store /auth/full-directory → existing Full Network surface`. The browser never receives either bearer or calls UBID internal endpoints. Service authentication, human identity, and current Full authority remain three separate checks; the service credential cannot substitute for either viewer check.

@@ -1,4 +1,4 @@
-import test from "node:test"; import assert from "node:assert/strict"; import { classifyRequestTarget, createHttpHandler } from "../scripts/hodlxxi-social-server.mjs"; import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
+import test from "node:test"; import assert from "node:assert/strict"; import { classifyRequestTarget, createFullDirectoryIntegration, createHttpHandler } from "../scripts/hodlxxi-social-server.mjs"; import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 const invoke=async({url,method="GET",headers={},rawHeaders=[]},bff=async()=>{throw new Error("must not route");})=>{const incoming={url,method,headers,rawHeaders}; const result={headers:{},setHeader(k,v){this.headers[k]=v;},end(body){this.body=body;}}; await createHttpHandler({publicOrigin:"https://social.example",bff})(incoming,result); return result;};
 test("request-target recognition is bounded and exact",()=>{assert.deepEqual(classifyRequestTarget("/auth/callback?code=x&state=y","https://social.example"),{valid:true,callback:true}); for(const target of ["/auth/callback-extra","/auth/callback/","/auth/callback%2fextra","/x/%2e%2e/auth/callback","/auth/callback#x","//auth/callback","https://foreign.example/auth/callback","/bad target","/"+"a".repeat(4097)]) assert.equal(classifyRequestTarget(target,"https://social.example").callback,false);});
 test("framed exact callback rejects, clears transaction cookie, sanitizes, and performs zero routing",async()=>{let calls=0; for(const url of ["/auth/callback","/auth/callback?code=secret&state=hidden"]){const result=await invoke({url,headers:{"content-length":"1"},rawHeaders:["Content-Length","1"]},async()=>{calls++;}); assert.equal(result.statusCode,413); assert.equal(result.headers["Set-Cookie"],expireTransactionCookie()); assert.equal(result.headers["Cache-Control"],"no-store"); assert.doesNotMatch(result.body,/secret|hidden|Content-Length/);} assert.equal(calls,0);});
@@ -107,4 +107,67 @@ test("exact zero-length framing permits a bodyless POST while duplicate or nonze
   }
 
   assert.equal(calls,1);
+});
+
+test("disabled server composition creates no Full-directory transport or client", async()=>{
+  let calls=0;
+  const disabled={enabled:false};
+  Object.defineProperty(disabled,"socketPath",{
+    get(){throw new Error("disabled socket path must not be inspected");}
+  });
+  const result=await createFullDirectoryIntegration(disabled,{
+    transportFactory(){calls++;throw new Error("must not create transport");},
+    clientFactory(){calls++;throw new Error("must not create client");}
+  });
+  assert.equal(result,undefined);
+  assert.equal(calls,0);
+});
+
+test("enabled server composition explicitly injects the Unix-socket transport", async()=>{
+  const fullDirectory={
+    enabled:true,
+    socketPath:"/run/hodlxxi/ubid-social-private.sock",
+    serviceTokenUrl:"https://private-ubid.invalid/internal/v1/social/service-token",
+    directoryUrl:"https://private-ubid.invalid/internal/v1/social/full-directory"
+  };
+  const transport=async()=>{throw new Error("synthetic transport not invoked");};
+  const client={readForViewer(){}};
+  let transportCalls=0;
+  let clientCalls=0;
+  const result=await createFullDirectoryIntegration(fullDirectory,{
+    transportFactory(config){
+      transportCalls++;
+      assert.deepEqual(config,{
+        socketPath:fullDirectory.socketPath,
+        serviceTokenUrl:fullDirectory.serviceTokenUrl,
+        directoryUrl:fullDirectory.directoryUrl
+      });
+      return transport;
+    },
+    clientFactory(config,dependencies){
+      clientCalls++;
+      assert.equal(config,fullDirectory);
+      assert.equal(dependencies.fetchImpl,transport);
+      return client;
+    }
+  });
+  assert.equal(result,client);
+  assert.equal(transportCalls,1);
+  assert.equal(clientCalls,1);
+});
+
+test("unsafe enabled socket configuration fails before client key loading", async()=>{
+  let clientCalls=0;
+  await assert.rejects(
+    createFullDirectoryIntegration({
+      enabled:true,
+      socketPath:"relative/private.sock",
+      serviceTokenUrl:"https://private-ubid.invalid/internal/v1/social/service-token",
+      directoryUrl:"https://private-ubid.invalid/internal/v1/social/full-directory"
+    },{
+      clientFactory(){clientCalls++;throw new Error("must not load key");}
+    }),
+    {message:"full_directory_unavailable"}
+  );
+  assert.equal(clientCalls,0);
 });
