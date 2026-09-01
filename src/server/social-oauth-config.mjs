@@ -4,6 +4,11 @@ const LIMITS = Object.freeze({ port: [1, 65535], ttl: [1, 86400], capacity: [1, 
 
 const fail = () => { throw new TypeError("invalid Social OAuth configuration"); };
 const text = (value, max = 512) => typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value) ? value : fail();
+const exactCredentialString = (value, maximum) => {
+  const parsed = text(value, maximum);
+  if (parsed.trim() !== parsed) fail();
+  return parsed;
+};
 const integer = (value, [minimum, maximum]) => {
   if ((typeof value !== "string" && typeof value !== "number") || !/^[0-9]+$/.test(String(value))) fail();
   const parsed = Number(value);
@@ -64,22 +69,24 @@ const fullDirectoryConfig = (input) => {
 
   const signingKeyPath = text(input.fullDirectorySigningKeyPath, 2048);
   if (!isAbsolute(signingKeyPath)) fail();
-  const expectedSchema = text(input.fullDirectoryExpectedSchema, 128);
-  if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(expectedSchema)) fail();
 
   return Object.freeze({
     enabled: true,
     serviceTokenUrl: canonicalHttpsUrl(input.fullDirectoryServiceTokenUrl),
     directoryUrl: canonicalHttpsUrl(input.fullDirectoryUrl),
-    clientId: text(input.fullDirectoryServiceClientId, 256),
-    principal: text(input.fullDirectoryServicePrincipal, 256),
-    issuer: text(input.fullDirectoryServiceIssuer, 512),
-    audience: canonicalHttpsUrl(input.fullDirectoryServiceAudience),
-    purpose: text(input.fullDirectoryServiceAssertionPurpose, 128),
-    tokenUse: text(input.fullDirectoryServiceAssertionTokenUse, 128),
+    clientId: exactCredentialString(
+      input.fullDirectoryServiceClientId,
+      256
+    ),
+    clientSigningKeyId: exactCredentialString(
+      input.fullDirectoryServiceClientSigningKeyId,
+      255
+    ),
+    tokenEndpointAudience: exactCredentialString(
+      input.fullDirectoryServiceTokenEndpointAudience,
+      2048
+    ),
     signingKeyPath,
-    expectedSchema,
-    expectedVersion: integer(input.fullDirectoryExpectedVersion, [1, 1000]),
     tokenTimeoutMs: integer(input.fullDirectoryTokenTimeoutMs, LIMITS.timeout),
     requestTimeoutMs: integer(input.fullDirectoryRequestTimeoutMs, LIMITS.timeout)
   });
@@ -121,16 +128,11 @@ export function configFromEnvironment(env) {
     fullDirectoryServiceTokenUrl: env.SOCIAL_UBID_SERVICE_TOKEN_URL,
     fullDirectoryUrl: env.SOCIAL_UBID_FULL_DIRECTORY_URL,
     fullDirectoryServiceClientId: env.SOCIAL_UBID_SERVICE_CLIENT_ID,
-    fullDirectoryServicePrincipal: env.SOCIAL_UBID_SERVICE_PRINCIPAL,
-    fullDirectoryServiceIssuer: env.SOCIAL_UBID_SERVICE_ISSUER,
-    fullDirectoryServiceAudience: env.SOCIAL_UBID_SERVICE_AUDIENCE,
-    fullDirectoryServiceAssertionPurpose:
-      env.SOCIAL_UBID_SERVICE_ASSERTION_PURPOSE,
-    fullDirectoryServiceAssertionTokenUse:
-      env.SOCIAL_UBID_SERVICE_ASSERTION_TOKEN_USE,
+    fullDirectoryServiceClientSigningKeyId:
+      env.SOCIAL_UBID_SERVICE_CLIENT_SIGNING_KEY_ID,
+    fullDirectoryServiceTokenEndpointAudience:
+      env.SOCIAL_UBID_SERVICE_TOKEN_ENDPOINT_AUDIENCE,
     fullDirectorySigningKeyPath: env.SOCIAL_UBID_SERVICE_SIGNING_KEY_PATH,
-    fullDirectoryExpectedSchema: env.SOCIAL_UBID_FULL_DIRECTORY_SCHEMA,
-    fullDirectoryExpectedVersion: env.SOCIAL_UBID_FULL_DIRECTORY_VERSION,
     fullDirectoryTokenTimeoutMs: env.SOCIAL_UBID_SERVICE_TOKEN_TIMEOUT_MS,
     fullDirectoryRequestTimeoutMs: env.SOCIAL_UBID_FULL_DIRECTORY_TIMEOUT_MS });
 }

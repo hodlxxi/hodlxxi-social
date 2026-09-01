@@ -1,5 +1,5 @@
 import test from "node:test"; import assert from "node:assert/strict";
-import { canonicalHttpsUrl, canonicalWssRelayUrl, parseSocialOAuthConfig } from "../src/server/social-oauth-config.mjs";
+import { canonicalHttpsUrl, canonicalWssRelayUrl, configFromEnvironment, parseSocialOAuthConfig } from "../src/server/social-oauth-config.mjs";
 const valid = { publicOrigin:"https://social.example", authorityOrigin:"https://authority.example", clientId:"social", clientSecret:"test-secret", bindHost:"127.0.0.1", port:"8080", transactionTtlSeconds:"300", sessionTtlSeconds:"3600", maxPendingTransactions:"20", maxSessions:"20", outboundTimeoutMs:"1000" };
 test("configuration is explicit, canonical, loopback, bounded, and derives callback", () => { const value=parseSocialOAuthConfig(valid); assert.equal(value.callbackUri,"https://social.example/auth/callback"); assert.equal(value.port,8080); });
 test("configuration rejects non-origins, unsafe bind, missing values, and bad bounds without secret disclosure", () => { for (const patch of [{publicOrigin:"http://social.example"},{authorityOrigin:"https://u:p@authority.example"},{bindHost:"0.0.0.0"},{port:"0"},{clientSecret:""}]) assert.throws(()=>parseSocialOAuthConfig({...valid,...patch}), error=>!String(error).includes("test-secret")); });
@@ -77,17 +77,12 @@ const fullDirectory = {
     "https://ubid.internal.example/internal/v1/social/service-token",
   fullDirectoryUrl:
     "https://ubid.internal.example/internal/v1/social/full-directory",
-  fullDirectoryServiceClientId: "hodlxxi-social",
-  fullDirectoryServicePrincipal: "social-service",
-  fullDirectoryServiceIssuer: "hodlxxi-social-service-client",
-  fullDirectoryServiceAudience:
+  fullDirectoryServiceClientId: "social-confidential-backend",
+  fullDirectoryServiceClientSigningKeyId: "social-client-key-1",
+  fullDirectoryServiceTokenEndpointAudience:
     "https://ubid.internal.example/internal/v1/social/service-token",
-  fullDirectoryServiceAssertionPurpose: "social-full-directory",
-  fullDirectoryServiceAssertionTokenUse: "client-assertion",
   fullDirectorySigningKeyPath:
     "/run/credentials/hodlxxi-social/full-directory.pem",
-  fullDirectoryExpectedSchema: "hodlxxi.social.full_directory.v1",
-  fullDirectoryExpectedVersion: "1",
   fullDirectoryTokenTimeoutMs: "1000",
   fullDirectoryRequestTimeoutMs: "1500"
 };
@@ -102,15 +97,11 @@ test("Full directory client is disabled by default and exact when enabled", () =
       enabled: true,
       serviceTokenUrl: fullDirectory.fullDirectoryServiceTokenUrl,
       directoryUrl: fullDirectory.fullDirectoryUrl,
-      clientId: "hodlxxi-social",
-      principal: "social-service",
-      issuer: "hodlxxi-social-service-client",
-      audience: fullDirectory.fullDirectoryServiceAudience,
-      purpose: "social-full-directory",
-      tokenUse: "client-assertion",
+      clientId: "social-confidential-backend",
+      clientSigningKeyId: "social-client-key-1",
+      tokenEndpointAudience:
+        fullDirectory.fullDirectoryServiceTokenEndpointAudience,
       signingKeyPath: fullDirectory.fullDirectorySigningKeyPath,
-      expectedSchema: "hodlxxi.social.full_directory.v1",
-      expectedVersion: 1,
       tokenTimeoutMs: 1000,
       requestTimeoutMs: 1500
     }
@@ -128,14 +119,12 @@ test("enabled Full directory configuration fails closed when incomplete or unsaf
     { fullDirectoryServiceTokenUrl: undefined },
     { fullDirectoryUrl: "http://ubid.internal.example/directory" },
     { fullDirectoryServiceClientId: "" },
-    { fullDirectoryServicePrincipal: "" },
-    { fullDirectoryServiceIssuer: "" },
-    { fullDirectoryServiceAudience: "https://user:pass@ubid.example/token" },
-    { fullDirectoryServiceAssertionPurpose: "" },
-    { fullDirectoryServiceAssertionTokenUse: "" },
+    { fullDirectoryServiceClientSigningKeyId: "" },
+    { fullDirectoryServiceClientSigningKeyId: "x".repeat(256) },
+    { fullDirectoryServiceTokenEndpointAudience: "" },
+    { fullDirectoryServiceTokenEndpointAudience: " unsafe" },
+    { fullDirectoryServiceTokenEndpointAudience: "unsafe\u0000audience" },
     { fullDirectorySigningKeyPath: "relative.pem" },
-    { fullDirectoryExpectedSchema: "Bad Schema" },
-    { fullDirectoryExpectedVersion: "0" },
     { fullDirectoryTokenTimeoutMs: "249" },
     { fullDirectoryRequestTimeoutMs: "30001" }
   ]) {
@@ -154,4 +143,63 @@ test("enabled Full directory configuration fails closed when incomplete or unsaf
       fullDirectoryEnabled
     }));
   }
+});
+
+test("Full directory token audience is an exact credential string, not an endpoint URL", () => {
+  for (const tokenEndpointAudience of [
+    "https://ubid.internal.example/internal/v1/social/service-token",
+    "urn:hodlxxi:ubid:confidential-service-token"
+  ]) {
+    const parsed = parseSocialOAuthConfig({
+      ...valid,
+      ...fullDirectory,
+      fullDirectoryServiceTokenEndpointAudience: tokenEndpointAudience
+    });
+    assert.equal(
+      parsed.fullDirectory.tokenEndpointAudience,
+      tokenEndpointAudience
+    );
+  }
+});
+
+test("environment mapping uses only exact UBID client-credential names", () => {
+  const parsed = configFromEnvironment({
+    SOCIAL_PUBLIC_ORIGIN: valid.publicOrigin,
+    HODLXXI_AUTHORITY_ORIGIN: valid.authorityOrigin,
+    HODLXXI_OAUTH_CLIENT_ID: valid.clientId,
+    HODLXXI_OAUTH_CLIENT_SECRET: valid.clientSecret,
+    SOCIAL_BIND_HOST: valid.bindHost,
+    SOCIAL_PORT: valid.port,
+    SOCIAL_TRANSACTION_TTL_SECONDS: valid.transactionTtlSeconds,
+    SOCIAL_SESSION_TTL_SECONDS: valid.sessionTtlSeconds,
+    SOCIAL_MAX_PENDING_TRANSACTIONS: valid.maxPendingTransactions,
+    SOCIAL_MAX_SESSIONS: valid.maxSessions,
+    SOCIAL_OUTBOUND_TIMEOUT_MS: valid.outboundTimeoutMs,
+    SOCIAL_FULL_DIRECTORY_ENABLED: "true",
+    SOCIAL_UBID_SERVICE_TOKEN_URL:
+      fullDirectory.fullDirectoryServiceTokenUrl,
+    SOCIAL_UBID_FULL_DIRECTORY_URL: fullDirectory.fullDirectoryUrl,
+    SOCIAL_UBID_SERVICE_CLIENT_ID:
+      fullDirectory.fullDirectoryServiceClientId,
+    SOCIAL_UBID_SERVICE_CLIENT_SIGNING_KEY_ID:
+      fullDirectory.fullDirectoryServiceClientSigningKeyId,
+    SOCIAL_UBID_SERVICE_TOKEN_ENDPOINT_AUDIENCE:
+      fullDirectory.fullDirectoryServiceTokenEndpointAudience,
+    SOCIAL_UBID_SERVICE_SIGNING_KEY_PATH:
+      fullDirectory.fullDirectorySigningKeyPath,
+    SOCIAL_UBID_SERVICE_TOKEN_TIMEOUT_MS:
+      fullDirectory.fullDirectoryTokenTimeoutMs,
+    SOCIAL_UBID_FULL_DIRECTORY_TIMEOUT_MS:
+      fullDirectory.fullDirectoryRequestTimeoutMs
+  });
+  assert.equal(
+    parsed.fullDirectory.clientSigningKeyId,
+    "social-client-key-1"
+  );
+  assert.equal(
+    parsed.fullDirectory.tokenEndpointAudience,
+    fullDirectory.fullDirectoryServiceTokenEndpointAudience
+  );
+  assert.equal(Object.hasOwn(parsed.fullDirectory, "issuer"), false);
+  assert.equal(Object.hasOwn(parsed.fullDirectory, "principal"), false);
 });

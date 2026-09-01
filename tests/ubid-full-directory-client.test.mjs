@@ -1,16 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  createPublicKey,
   generateKeyPairSync,
+  sign as cryptoSign,
   verify
 } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import {
+  chmod,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
+  CLIENT_ASSERTION_GRANT_TYPE,
   CLIENT_ASSERTION_LIFETIME_SECONDS,
+  CLIENT_ASSERTION_PURPOSE,
+  CLIENT_ASSERTION_TOKEN_USE,
   CLIENT_ASSERTION_TYPE,
+  createClientAssertion,
   createUbidFullDirectoryClient,
   FULL_DIRECTORY_SCOPE,
   normalizeUbidFullDirectory,
+  UBID_FULL_DIRECTORY_SCHEMA,
+  UBID_FULL_DIRECTORY_VERSION,
   validateServiceTokenResponse
 } from "../src/server/ubid-full-directory-client.mjs";
 
@@ -26,18 +44,15 @@ const config = Object.freeze({
   enabled: true,
   serviceTokenUrl: "https://ubid.internal.example/internal/v1/social/service-token",
   directoryUrl: "https://ubid.internal.example/internal/v1/social/full-directory",
-  clientId: "hodlxxi-social",
-  principal: "social-service",
-  issuer: "hodlxxi-social-service-client",
-  audience: "https://ubid.internal.example/internal/v1/social/service-token",
-  purpose: "social-full-directory",
-  tokenUse: "client-assertion",
+  clientId: "social-confidential-backend",
+  clientSigningKeyId: "social-client-key-1",
+  tokenEndpointAudience:
+    "https://ubid.internal.example/internal/v1/social/service-token",
   signingKeyPath: "/run/credentials/hodlxxi-social/full-directory.pem",
-  expectedSchema: "hodlxxi.social.full_directory.v1",
-  expectedVersion: 1,
   tokenTimeoutMs: 1000,
   requestTimeoutMs: 1500
 });
+const SERVICE_PRINCIPAL = "service:social-full-directory";
 
 const reply = (value, status = 200) => new Response(
   JSON.stringify(value),
@@ -62,18 +77,56 @@ const directoryDocument = (participants = [
     current_full_relation_satisfied: true
   }
 ]) => ({
-  schema: config.expectedSchema,
-  version: config.expectedVersion,
+  schema: UBID_FULL_DIRECTORY_SCHEMA,
+  version: UBID_FULL_DIRECTORY_VERSION,
   participants
 });
 
+const privatePemBytes = Buffer.from(privatePem);
+const memoryKeyFile = (
+  content,
+  { mode = 0o100600, regular = true } = {}
+) => {
+  const bytes = Buffer.from(content);
+  return async (path, flags) => {
+    assert.equal(path, config.signingKeyPath);
+    assert.equal((flags & fsConstants.O_NOFOLLOW) !== 0, true);
+    let offset = 0;
+    let closed = false;
+    return {
+      async stat() {
+        return {
+          isFile: () => regular,
+          mode,
+          size: bytes.byteLength
+        };
+      },
+      async read(target, targetOffset, length) {
+        assert.equal(closed, false);
+        const bytesRead = Math.min(length, bytes.byteLength - offset);
+        if (bytesRead > 0) {
+          bytes.copy(
+            target,
+            targetOffset,
+            offset,
+            offset + bytesRead
+          );
+          offset += bytesRead;
+        }
+        return { bytesRead, buffer: target };
+      },
+      async close() {
+        assert.equal(closed, false);
+        closed = true;
+      }
+    };
+  };
+};
+const inMemoryPrivateKeyFile = memoryKeyFile(privatePemBytes);
+
 const dependencies = (fetchImpl, overrides = {}) => ({
   fetchImpl,
-  readFileImpl: async (path, encoding) => {
-    assert.equal(path, config.signingKeyPath);
-    assert.equal(encoding, "utf8");
-    return privatePem;
-  },
+  openFileImpl: inMemoryPrivateKeyFile,
   now: () => 1_800_000_000_000,
   setTimeoutImpl: () => 1,
   clearTimeoutImpl() {},
@@ -82,7 +135,154 @@ const dependencies = (fetchImpl, overrides = {}) => ({
 
 const decode = (part) => JSON.parse(Buffer.from(part, "base64url"));
 
-test("fresh RS256 assertion carries exact short-lived service claims", async () => {
+const ubidClientJwks = Object.freeze([Object.freeze({
+  ...publicKey.export({ format: "jwk" }),
+  kid: config.clientSigningKeyId,
+  use: "sig",
+  alg: "RS256"
+})]);
+
+const ubidContractAccepts = (
+  assertion,
+  {
+    clientId = config.clientId,
+    tokenEndpointAudience = config.tokenEndpointAudience,
+    clientJwks = ubidClientJwks,
+    now = 1_800_000_000
+  } = {}
+) => {
+  try {
+    const [encodedHeader, encodedClaims, encodedSignature, extra] =
+      assertion.split(".");
+    if (extra !== undefined) return false;
+    const header = decode(encodedHeader);
+    if (
+      header.alg !== "RS256" ||
+      typeof header.kid !== "string" ||
+      header.kid.length === 0 ||
+      header.kid.length > 255 ||
+      header.kid.trim() !== header.kid
+    ) return false;
+    const matches = clientJwks.filter((key) =>
+      key?.kid === header.kid
+    );
+    if (matches.length !== 1) return false;
+    const selected = matches[0];
+    if (
+      selected.kty !== "RSA" ||
+      selected.use !== "sig" ||
+      selected.alg !== "RS256"
+    ) return false;
+    const verificationKey = createPublicKey({
+      key: selected,
+      format: "jwk"
+    });
+    if (!verify(
+      "RSA-SHA256",
+      Buffer.from(`${encodedHeader}.${encodedClaims}`, "ascii"),
+      verificationKey,
+      Buffer.from(encodedSignature, "base64url")
+    )) return false;
+    const claims = decode(encodedClaims);
+    return claims.iss === clientId &&
+      claims.sub === clientId &&
+      claims.aud === tokenEndpointAudience &&
+      typeof claims.aud === "string" &&
+      claims.token_use === CLIENT_ASSERTION_TOKEN_USE &&
+      claims.grant_type === CLIENT_ASSERTION_GRANT_TYPE &&
+      claims.purpose === CLIENT_ASSERTION_PURPOSE &&
+      Number.isSafeInteger(claims.iat) &&
+      Number.isSafeInteger(claims.exp) &&
+      claims.exp > claims.iat &&
+      claims.exp - claims.iat <= CLIENT_ASSERTION_LIFETIME_SECONDS &&
+      claims.iat <= now + 5 &&
+      claims.iat >= now - CLIENT_ASSERTION_LIFETIME_SECONDS - 5 &&
+      claims.exp >= now - 5 &&
+      typeof claims.jti === "string" &&
+      claims.jti.length > 0 &&
+      claims.jti.length <= 128 &&
+      claims.jti.trim() === claims.jti;
+  } catch {
+    return false;
+  }
+};
+
+const signedContractFixture = ({
+  headerPatch = {},
+  claimPatch = {},
+  omit = []
+} = {}) => {
+  const header = {
+    alg: "RS256",
+    typ: "JWT",
+    kid: config.clientSigningKeyId,
+    ...headerPatch
+  };
+  const claims = {
+    iss: config.clientId,
+    sub: config.clientId,
+    aud: config.tokenEndpointAudience,
+    token_use: CLIENT_ASSERTION_TOKEN_USE,
+    grant_type: CLIENT_ASSERTION_GRANT_TYPE,
+    purpose: CLIENT_ASSERTION_PURPOSE,
+    iat: 1_800_000_000,
+    exp: 1_800_000_060,
+    jti: "synthetic-cross-contract-jti",
+    ...claimPatch
+  };
+  for (const name of omit) delete claims[name];
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString(
+    "base64url"
+  );
+  const encodedClaims = Buffer.from(JSON.stringify(claims)).toString(
+    "base64url"
+  );
+  const signingInput = `${encodedHeader}.${encodedClaims}`;
+  const signature = cryptoSign(
+    "RSA-SHA256",
+    Buffer.from(signingInput, "ascii"),
+    privateKey
+  );
+  return `${signingInput}.${signature.toString("base64url")}`;
+};
+
+test("UBID contract compatibility rejects every PR-head assertion mismatch", () => {
+  const accepted = createClientAssertion(config, privateKey, {
+    now: () => 1_800_000_000_000,
+    random: (size) => Buffer.alloc(size, 0x51)
+  });
+  assert.equal(ubidContractAccepts(accepted), true);
+
+  const rejected = [
+    signedContractFixture({ headerPatch: { kid: undefined } }),
+    signedContractFixture({ headerPatch: { kid: "wrong-key" } }),
+    signedContractFixture({ headerPatch: { alg: "HS256" } }),
+    signedContractFixture({ claimPatch: { iss: "service-token-issuer" } }),
+    signedContractFixture({ claimPatch: { sub: SERVICE_PRINCIPAL } }),
+    signedContractFixture({ omit: ["grant_type"] }),
+    signedContractFixture({ claimPatch: { purpose: "wrong" } }),
+    signedContractFixture({ claimPatch: { token_use: "wrong" } }),
+    signedContractFixture({ claimPatch: { aud: "wrong-audience" } })
+  ];
+  for (const assertion of rejected) {
+    assert.equal(ubidContractAccepts(assertion), false);
+  }
+  assert.equal(ubidContractAccepts(accepted, {
+    clientJwks: [ubidClientJwks[0], { ...ubidClientJwks[0] }]
+  }), false);
+
+  const prHeadContract = signedContractFixture({
+    headerPatch: { kid: undefined },
+    claimPatch: {
+      iss: "configured-service-token-issuer",
+      sub: SERVICE_PRINCIPAL
+    },
+    omit: ["grant_type"]
+  });
+  assert.equal(ubidContractAccepts(prHeadContract), false);
+});
+
+test("fresh RS256 assertion carries the exact UBID client-authentication contract", async () => {
   const calls = [];
   let entropy = 0x31;
   const client = await createUbidFullDirectoryClient(
@@ -110,27 +310,28 @@ test("fresh RS256 assertion carries exact short-lived service claims", async () 
       assertion.split(".");
     assert.deepEqual(decode(encodedHeader), {
       alg: "RS256",
-      typ: "JWT"
+      typ: "JWT",
+      kid: config.clientSigningKeyId
     });
     const claims = decode(encodedClaims);
-    assert.deepEqual(
-      {
-        iss: claims.iss,
-        sub: claims.sub,
-        aud: claims.aud,
-        client_id: claims.client_id,
-        purpose: claims.purpose,
-        token_use: claims.token_use
-      },
-      {
-        iss: config.issuer,
-        sub: config.principal,
-        aud: config.audience,
-        client_id: config.clientId,
-        purpose: config.purpose,
-        token_use: config.tokenUse
-      }
-    );
+    assert.deepEqual(Object.keys(claims), [
+      "iss",
+      "sub",
+      "aud",
+      "token_use",
+      "grant_type",
+      "purpose",
+      "iat",
+      "exp",
+      "jti"
+    ]);
+    assert.equal(claims.iss, config.clientId);
+    assert.equal(claims.sub, config.clientId);
+    assert.notEqual(claims.sub, SERVICE_PRINCIPAL);
+    assert.equal(claims.aud, config.tokenEndpointAudience);
+    assert.equal(claims.token_use, CLIENT_ASSERTION_TOKEN_USE);
+    assert.equal(claims.grant_type, CLIENT_ASSERTION_GRANT_TYPE);
+    assert.equal(claims.purpose, CLIENT_ASSERTION_PURPOSE);
     assert.equal(
       claims.exp - claims.iat,
       CLIENT_ASSERTION_LIFETIME_SECONDS
@@ -210,7 +411,10 @@ test("configuration and signing key loading fail closed with fixed diagnostics",
     undefined,
     { ...config, enabled: false },
     { ...config, clientId: "" },
-    { ...config, audience: "http://ubid.internal.example/token" },
+    { ...config, clientSigningKeyId: "" },
+    { ...config, clientSigningKeyId: "x".repeat(256) },
+    { ...config, tokenEndpointAudience: "" },
+    { ...config, tokenEndpointAudience: "unsafe\u0000audience" },
     { ...config, signingKeyPath: "relative.pem" },
     { ...config, tokenTimeoutMs: 10 }
   ]) {
@@ -225,7 +429,7 @@ test("configuration and signing key loading fail closed with fixed diagnostics",
   await assert.rejects(
     createUbidFullDirectoryClient(config, {
       ...dependencies(async () => assert.fail("must not fetch")),
-      readFileImpl: async () => "not a private key"
+      openFileImpl: memoryKeyFile("not a private key")
     }),
     { message: "full_directory_unavailable" }
   );
@@ -235,7 +439,8 @@ test("service token validation is exact short-lived and has no stale fallback", 
   for (const value of [
     { ...tokenDocument(), token_type: "bearer" },
     { ...tokenDocument(), expires_in: 0 },
-    { ...tokenDocument(), expires_in: 301 },
+    { ...tokenDocument(), expires_in: 59 },
+    { ...tokenDocument(), expires_in: 61 },
     { ...tokenDocument(), expires_in: 1.5 },
     { ...tokenDocument(), scope: "openid" },
     { ...tokenDocument(), extra: true },
@@ -385,4 +590,71 @@ test("a service token cannot be substituted for the human viewer credential", as
     { message: "full_directory_unavailable" }
   );
   assert.equal(calls, 1);
+});
+
+test("opaque token-endpoint audiences are preserved exactly", async () => {
+  const tokenEndpointAudience =
+    "urn:hodlxxi:ubid:confidential-service-token";
+  const assertion = createClientAssertion(
+    { ...config, tokenEndpointAudience },
+    privateKey,
+    {
+      now: () => 1_800_000_000_000,
+      random: (size) => Buffer.alloc(size, 0x61)
+    }
+  );
+  assert.equal(decode(assertion.split(".")[1]).aud, tokenEndpointAudience);
+  assert.equal(ubidContractAccepts(assertion, {
+    tokenEndpointAudience
+  }), true);
+});
+
+test("Linux private-key loading rejects symlinks unsafe modes non-files oversize and weak RSA", async () => {
+  const directory = await mkdtemp(join(
+    tmpdir(),
+    "hodlxxi-social-service-key-"
+  ));
+  const securePath = join(directory, "client-private.pem");
+  const symlinkPath = join(directory, "client-private-link.pem");
+  const oversizedPath = join(directory, "oversized.pem");
+  const weakPath = join(directory, "weak.pem");
+  const rejectPath = async (signingKeyPath) => {
+    await assert.rejects(
+      createUbidFullDirectoryClient({ ...config, signingKeyPath }),
+      { message: "full_directory_unavailable" }
+    );
+  };
+
+  try {
+    await writeFile(securePath, privatePemBytes, { mode: 0o600 });
+    await createUbidFullDirectoryClient({
+      ...config,
+      signingKeyPath: securePath
+    });
+
+    for (const mode of [0o640, 0o620, 0o604]) {
+      await chmod(securePath, mode);
+      await rejectPath(securePath);
+    }
+    await chmod(securePath, 0o600);
+
+    await symlink(securePath, symlinkPath);
+    await rejectPath(symlinkPath);
+    await rejectPath(directory);
+
+    await writeFile(
+      oversizedPath,
+      Buffer.alloc(32 * 1024 + 1, 0x41),
+      { mode: 0o600 }
+    );
+    await rejectPath(oversizedPath);
+
+    const weakPrivateKey = generateKeyPairSync("rsa", {
+      modulusLength: 1024
+    }).privateKey.export({ type: "pkcs8", format: "pem" });
+    await writeFile(weakPath, weakPrivateKey, { mode: 0o600 });
+    await rejectPath(weakPath);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

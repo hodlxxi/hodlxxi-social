@@ -3,18 +3,28 @@ import {
   randomBytes,
   sign
 } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 export const FULL_DIRECTORY_SCOPE = "social:full-directory:read";
 export const CLIENT_ASSERTION_TYPE =
   "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+export const CLIENT_ASSERTION_TOKEN_USE = "client_assertion";
+export const CLIENT_ASSERTION_GRANT_TYPE = "client_credentials";
+export const CLIENT_ASSERTION_PURPOSE =
+  "service_client_authentication";
 export const CLIENT_ASSERTION_LIFETIME_SECONDS = 60;
-export const MAX_SERVICE_TOKEN_LIFETIME_SECONDS = 300;
+export const SERVICE_TOKEN_LIFETIME_SECONDS = 60;
+export const UBID_FULL_DIRECTORY_SCHEMA =
+  "hodlxxi.privacy_safe_full_directory.v1";
+export const UBID_FULL_DIRECTORY_VERSION = 1;
 export const MAX_PRIVACY_SAFE_PARTICIPANTS = 4096;
 
 const MAX_TOKEN_RESPONSE_BYTES = 16 * 1024;
 const MAX_DIRECTORY_RESPONSE_BYTES = 1024 * 1024;
+const MAX_PRIVATE_KEY_FILE_BYTES = 32 * 1024;
+const MAX_CLIENT_SIGNING_KEY_ID_LENGTH = 255;
 const JSON_CONTENT_TYPE =
   /^application\/json(?:[\t ]*;[\t ]*charset[\t ]*=[\t ]*(?:utf-8|"utf-8"))?[\t ]*$/i;
 const RAW_IDENTITY_KEY = /^[0-9a-f]{64}$/i;
@@ -100,6 +110,9 @@ const boundedText = (value, maximum) =>
   value.length <= maximum &&
   !/[\u0000-\u001f\u007f]/.test(value);
 
+const exactCredentialString = (value, maximum) =>
+  boundedText(value, maximum) && value.trim() === value;
+
 const canonicalHttpsUrl = (value) => {
   try {
     const url = new URL(value);
@@ -120,17 +133,14 @@ const validConfig = (config) =>
   config?.enabled === true &&
   canonicalHttpsUrl(config.serviceTokenUrl) &&
   canonicalHttpsUrl(config.directoryUrl) &&
-  boundedText(config.clientId, 256) &&
-  boundedText(config.principal, 256) &&
-  boundedText(config.issuer, 512) &&
-  canonicalHttpsUrl(config.audience) &&
-  boundedText(config.purpose, 128) &&
-  boundedText(config.tokenUse, 128) &&
+  exactCredentialString(config.clientId, 256) &&
+  exactCredentialString(
+    config.clientSigningKeyId,
+    MAX_CLIENT_SIGNING_KEY_ID_LENGTH
+  ) &&
+  exactCredentialString(config.tokenEndpointAudience, 2048) &&
   boundedText(config.signingKeyPath, 2048) &&
   isAbsolute(config.signingKeyPath) &&
-  boundedText(config.expectedSchema, 128) &&
-  Number.isSafeInteger(config.expectedVersion) &&
-  config.expectedVersion >= 1 &&
   Number.isSafeInteger(config.tokenTimeoutMs) &&
   config.tokenTimeoutMs >= 250 &&
   config.tokenTimeoutMs <= 30000 &&
@@ -175,14 +185,18 @@ export function createClientAssertion(
     entropy.byteLength !== 32
   ) failure();
 
-  const header = Object.freeze({ alg: "RS256", typ: "JWT" });
+  const header = Object.freeze({
+    alg: "RS256",
+    typ: "JWT",
+    kid: config.clientSigningKeyId
+  });
   const claims = Object.freeze({
-    iss: config.issuer,
-    sub: config.principal,
-    aud: config.audience,
-    client_id: config.clientId,
-    purpose: config.purpose,
-    token_use: config.tokenUse,
+    iss: config.clientId,
+    sub: config.clientId,
+    aud: config.tokenEndpointAudience,
+    token_use: CLIENT_ASSERTION_TOKEN_USE,
+    grant_type: CLIENT_ASSERTION_GRANT_TYPE,
+    purpose: CLIENT_ASSERTION_PURPOSE,
     iat: issuedAt,
     exp: issuedAt + CLIENT_ASSERTION_LIFETIME_SECONDS,
     jti: Buffer.from(entropy).toString("base64url")
@@ -217,19 +231,18 @@ export function validateServiceTokenResponse(value) {
     record.token_type !== "Bearer" ||
     record.scope !== FULL_DIRECTORY_SCOPE ||
     !Number.isSafeInteger(record.expires_in) ||
-    record.expires_in < 1 ||
-    record.expires_in > MAX_SERVICE_TOKEN_LIFETIME_SECONDS
+    record.expires_in !== SERVICE_TOKEN_LIFETIME_SECONDS
   ) failure();
   return record.access_token;
 }
 
-export function normalizeUbidFullDirectory(value, config) {
+export function normalizeUbidFullDirectory(value) {
   const document = plainRecord(value, ["schema", "version", "participants"]);
   const rawParticipants = denseArray(document?.participants);
   if (
     !document ||
-    document.schema !== config?.expectedSchema ||
-    document.version !== config?.expectedVersion ||
+    document.schema !== UBID_FULL_DIRECTORY_SCHEMA ||
+    document.version !== UBID_FULL_DIRECTORY_VERSION ||
     !rawParticipants
   ) failure();
 
@@ -428,11 +441,82 @@ const readJson = async (
   }
 };
 
+const readPrivateKeyFile = async (path, openFileImpl) => {
+  const noFollow = fsConstants.O_NOFOLLOW;
+  if (!Number.isSafeInteger(noFollow) || noFollow <= 0) failure();
+  const closeOnExec = Number.isSafeInteger(fsConstants.O_CLOEXEC)
+    ? fsConstants.O_CLOEXEC
+    : 0;
+  const flags = fsConstants.O_RDONLY | noFollow | closeOnExec;
+  let handle;
+  let source;
+  let failed = false;
+  try {
+    handle = await openFileImpl(path, flags);
+    if (
+      !handle ||
+      typeof handle.stat !== "function" ||
+      typeof handle.read !== "function" ||
+      typeof handle.close !== "function"
+    ) failure();
+    const info = await handle.stat();
+    if (
+      !info ||
+      typeof info.isFile !== "function" ||
+      info.isFile() !== true ||
+      !Number.isSafeInteger(info.mode) ||
+      (info.mode & 0o077) !== 0 ||
+      !Number.isSafeInteger(info.size) ||
+      info.size <= 0 ||
+      info.size > MAX_PRIVATE_KEY_FILE_BYTES
+    ) failure();
+
+    const bytes = Buffer.alloc(MAX_PRIVATE_KEY_FILE_BYTES + 1);
+    let length = 0;
+    while (length < bytes.byteLength) {
+      const result = await handle.read(
+        bytes,
+        length,
+        bytes.byteLength - length,
+        null
+      );
+      if (
+        !result ||
+        !Number.isSafeInteger(result.bytesRead) ||
+        result.bytesRead < 0 ||
+        result.bytesRead > bytes.byteLength - length
+      ) failure();
+      if (result.bytesRead === 0) break;
+      length += result.bytesRead;
+    }
+    if (length === 0 || length > MAX_PRIVATE_KEY_FILE_BYTES) failure();
+    try {
+      source = new TextDecoder("utf-8", { fatal: true })
+        .decode(bytes.subarray(0, length));
+    } catch {
+      failure();
+    }
+  } catch {
+    failed = true;
+  }
+  if (handle) {
+    try {
+      await handle.close();
+    } catch {
+      failed = true;
+    }
+  }
+  if (failed || typeof source !== "string" || source.length === 0) {
+    failure();
+  }
+  return source;
+};
+
 export async function createUbidFullDirectoryClient(
   config,
   {
     fetchImpl = globalThis.fetch,
-    readFileImpl = readFile,
+    openFileImpl = openFile,
     createPrivateKeyImpl = createPrivateKey,
     now = Date.now,
     random = randomBytes,
@@ -444,26 +528,24 @@ export async function createUbidFullDirectoryClient(
   if (
     !validConfig(config) ||
     typeof fetchImpl !== "function" ||
-    typeof readFileImpl !== "function" ||
+    typeof openFileImpl !== "function" ||
     typeof createPrivateKeyImpl !== "function"
   ) failure();
 
   let privateKey;
   try {
-    const source = await readFileImpl(config.signingKeyPath, "utf8");
-    if (
-      typeof source !== "string" ||
-      source.length === 0 ||
-      Buffer.byteLength(source, "utf8") > 32 * 1024
-    ) failure();
+    const source = await readPrivateKeyFile(
+      config.signingKeyPath,
+      openFileImpl
+    );
     privateKey = createPrivateKeyImpl(source);
     if (
       privateKey?.type !== "private" ||
       privateKey?.asymmetricKeyType !== "rsa" ||
-      (
-        Number.isSafeInteger(privateKey.asymmetricKeyDetails?.modulusLength) &&
-        privateKey.asymmetricKeyDetails.modulusLength < 2048
-      )
+      !Number.isSafeInteger(
+        privateKey.asymmetricKeyDetails?.modulusLength
+      ) ||
+      privateKey.asymmetricKeyDetails.modulusLength < 2048
     ) failure();
   } catch {
     failure();
@@ -478,7 +560,7 @@ export async function createUbidFullDirectoryClient(
         signImpl
       });
       const form = new URLSearchParams([
-        ["grant_type", "client_credentials"],
+        ["grant_type", CLIENT_ASSERTION_GRANT_TYPE],
         ["client_id", config.clientId],
         ["scope", FULL_DIRECTORY_SCOPE],
         ["client_assertion_type", CLIENT_ASSERTION_TYPE],
@@ -525,7 +607,7 @@ export async function createUbidFullDirectoryClient(
           clearTimeoutImpl
         }
       );
-      return normalizeUbidFullDirectory(directoryDocument, config);
+      return normalizeUbidFullDirectory(directoryDocument);
     }
   });
 }
