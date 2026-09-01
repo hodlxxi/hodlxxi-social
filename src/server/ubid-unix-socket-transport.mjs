@@ -1,5 +1,6 @@
 import http from "node:http";
 import { Readable } from "node:stream";
+import { types as utilTypes } from "node:util";
 import { canonicalUnixSocketPath } from "./social-oauth-config.mjs";
 
 export const UBID_SERVICE_TOKEN_PATH =
@@ -79,6 +80,7 @@ const exactRecord = (value, fields) => {
       value === null ||
       typeof value !== "object" ||
       Array.isArray(value) ||
+      utilTypes.isProxy(value) ||
       Object.getPrototypeOf(value) !== Object.prototype
     ) failure();
     const descriptors = Object.getOwnPropertyDescriptors(value);

@@ -164,6 +164,11 @@ test("factory reads only own data properties and fixes hostile-input diagnostics
       throw new Error("secret-proxy-trap");
     }
   }), undefined, ["secret-proxy-trap"]);
+  fixedFactoryFailure(new Proxy({ ...transportConfig }, {}));
+  fixedFactoryFailure(
+    transportConfig,
+    new Proxy({ requestImpl() {} }, {})
+  );
   fixedFactoryFailure(transportConfig, {
     requestImpl() {},
     unexpected: true
@@ -431,6 +436,11 @@ test("transport source imports no fallback network stack, proxy, dependency, or 
   ]) assert.doesNotMatch(source, forbidden);
   assert.deepEqual(
     [...source.matchAll(/from "([^"]+)"/g)].map((match) => match[1]),
-    ["node:http", "node:stream", "./social-oauth-config.mjs"]
+    [
+      "node:http",
+      "node:stream",
+      "node:util",
+      "./social-oauth-config.mjs"
+    ]
   );
 });
