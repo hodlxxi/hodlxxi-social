@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, posix } from "node:path";
 
 const LIMITS = Object.freeze({ port: [1, 65535], ttl: [1, 86400], capacity: [1, 10000], timeout: [250, 30000] });
 
@@ -62,16 +62,37 @@ const fullDirectoryEnabled = (value) => {
   fail();
 };
 
+const MAX_UNIX_SOCKET_PATH_BYTES = 107;
+
+export function canonicalUnixSocketPath(value) {
+  const raw = text(value, MAX_UNIX_SOCKET_PATH_BYTES);
+  const segments = raw.split("/");
+  if (
+    !posix.isAbsolute(raw) ||
+    raw === "/" ||
+    raw.endsWith("/") ||
+    Buffer.byteLength(raw, "utf8") > MAX_UNIX_SOCKET_PATH_BYTES ||
+    posix.normalize(raw) !== raw ||
+    !/^[A-Za-z0-9._/-]+$/.test(raw) ||
+    segments.slice(1).some((segment) =>
+      segment.length === 0 || segment === "." || segment === ".."
+    )
+  ) fail();
+  return raw;
+}
+
 const fullDirectoryConfig = (input) => {
   if (!fullDirectoryEnabled(input.fullDirectoryEnabled)) {
     return Object.freeze({ enabled: false });
   }
 
+  const socketPath = canonicalUnixSocketPath(input.fullDirectorySocketPath);
   const signingKeyPath = text(input.fullDirectorySigningKeyPath, 2048);
   if (!isAbsolute(signingKeyPath)) fail();
 
   return Object.freeze({
     enabled: true,
+    socketPath,
     serviceTokenUrl: canonicalHttpsUrl(input.fullDirectoryServiceTokenUrl),
     directoryUrl: canonicalHttpsUrl(input.fullDirectoryUrl),
     clientId: exactCredentialString(
@@ -125,6 +146,7 @@ export function configFromEnvironment(env) {
     outboundTimeoutMs: env.SOCIAL_OUTBOUND_TIMEOUT_MS, nostrRelayUrl: env.SOCIAL_NOSTR_RELAY_URL,
     nostrPublishRelayUrl: env.SOCIAL_NOSTR_PUBLISH_RELAY_URL,
     fullDirectoryEnabled: env.SOCIAL_FULL_DIRECTORY_ENABLED,
+    fullDirectorySocketPath: env.SOCIAL_UBID_PRIVATE_SOCKET_PATH,
     fullDirectoryServiceTokenUrl: env.SOCIAL_UBID_SERVICE_TOKEN_URL,
     fullDirectoryUrl: env.SOCIAL_UBID_FULL_DIRECTORY_URL,
     fullDirectoryServiceClientId: env.SOCIAL_UBID_SERVICE_CLIENT_ID,

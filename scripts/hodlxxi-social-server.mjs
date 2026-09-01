@@ -8,6 +8,23 @@ import { createSocialAuthorityReader } from "../src/server/social-authority-read
 import { createSocialOAuthBff, parseRawRequestTarget, SECURITY_HEADERS } from "../src/server/social-oauth-bff.mjs";
 import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 import { createUbidFullDirectoryClient } from "../src/server/ubid-full-directory-client.mjs";
+import { createUbidUnixSocketTransport } from "../src/server/ubid-unix-socket-transport.mjs";
+
+export async function createFullDirectoryIntegration(
+  fullDirectory,
+  {
+    transportFactory = createUbidUnixSocketTransport,
+    clientFactory = createUbidFullDirectoryClient
+  } = {}
+) {
+  if (fullDirectory?.enabled !== true) return undefined;
+  const fetchImpl = transportFactory({
+    socketPath: fullDirectory.socketPath,
+    serviceTokenUrl: fullDirectory.serviceTokenUrl,
+    directoryUrl: fullDirectory.directoryUrl
+  });
+  return clientFactory(fullDirectory, { fetchImpl });
+}
 
 export function classifyRequestTarget(target, publicOrigin) {
   const parsed = parseRawRequestTarget(target, publicOrigin);
@@ -70,7 +87,7 @@ export async function runServer({ env = process.env, stdout = console.log, stder
   let fullDirectoryClient;
   if (config.fullDirectory.enabled) {
     try {
-      fullDirectoryClient = await createUbidFullDirectoryClient(
+      fullDirectoryClient = await createFullDirectoryIntegration(
         config.fullDirectory
       );
     } catch {

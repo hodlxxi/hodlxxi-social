@@ -1,5 +1,5 @@
 import test from "node:test"; import assert from "node:assert/strict";
-import { canonicalHttpsUrl, canonicalWssRelayUrl, configFromEnvironment, parseSocialOAuthConfig } from "../src/server/social-oauth-config.mjs";
+import { canonicalHttpsUrl, canonicalUnixSocketPath, canonicalWssRelayUrl, configFromEnvironment, parseSocialOAuthConfig } from "../src/server/social-oauth-config.mjs";
 const valid = { publicOrigin:"https://social.example", authorityOrigin:"https://authority.example", clientId:"social", clientSecret:"test-secret", bindHost:"127.0.0.1", port:"8080", transactionTtlSeconds:"300", sessionTtlSeconds:"3600", maxPendingTransactions:"20", maxSessions:"20", outboundTimeoutMs:"1000" };
 test("configuration is explicit, canonical, loopback, bounded, and derives callback", () => { const value=parseSocialOAuthConfig(valid); assert.equal(value.callbackUri,"https://social.example/auth/callback"); assert.equal(value.port,8080); });
 test("configuration rejects non-origins, unsafe bind, missing values, and bad bounds without secret disclosure", () => { for (const patch of [{publicOrigin:"http://social.example"},{authorityOrigin:"https://u:p@authority.example"},{bindHost:"0.0.0.0"},{port:"0"},{clientSecret:""}]) assert.throws(()=>parseSocialOAuthConfig({...valid,...patch}), error=>!String(error).includes("test-secret")); });
@@ -73,6 +73,8 @@ test("Nostr publish relay is separate optional explicit and wss-only", () => {
 
 const fullDirectory = {
   fullDirectoryEnabled: "true",
+  fullDirectorySocketPath:
+    "/run/hodlxxi/ubid-social-private.sock",
   fullDirectoryServiceTokenUrl:
     "https://ubid.internal.example/internal/v1/social/service-token",
   fullDirectoryUrl:
@@ -95,6 +97,7 @@ test("Full directory client is disabled by default and exact when enabled", () =
     parseSocialOAuthConfig({ ...valid, ...fullDirectory }).fullDirectory,
     {
       enabled: true,
+      socketPath: fullDirectory.fullDirectorySocketPath,
       serviceTokenUrl: fullDirectory.fullDirectoryServiceTokenUrl,
       directoryUrl: fullDirectory.fullDirectoryUrl,
       clientId: "social-confidential-backend",
@@ -116,6 +119,17 @@ test("Full directory client is disabled by default and exact when enabled", () =
 
 test("enabled Full directory configuration fails closed when incomplete or unsafe", () => {
   for (const patch of [
+    { fullDirectorySocketPath: undefined },
+    { fullDirectorySocketPath: "" },
+    { fullDirectorySocketPath: "relative.sock" },
+    { fullDirectorySocketPath: "/" },
+    { fullDirectorySocketPath: "/run/../tmp/ubid.sock" },
+    { fullDirectorySocketPath: "/run//ubid.sock" },
+    { fullDirectorySocketPath: "/run/./ubid.sock" },
+    { fullDirectorySocketPath: "/run/ubid.sock/" },
+    { fullDirectorySocketPath: "/run/ubid socket.sock" },
+    { fullDirectorySocketPath: "/run/ubid\u0000.sock" },
+    { fullDirectorySocketPath: `/${"x".repeat(107)}` },
     { fullDirectoryServiceTokenUrl: undefined },
     { fullDirectoryUrl: "http://ubid.internal.example/directory" },
     { fullDirectoryServiceClientId: "" },
@@ -143,6 +157,29 @@ test("enabled Full directory configuration fails closed when incomplete or unsaf
       fullDirectoryEnabled
     }));
   }
+});
+
+test("disabled Full directory preserves its exact shape without inspecting a socket path", () => {
+  let inspections = 0;
+  const input = { ...valid };
+  Object.defineProperty(input, "fullDirectorySocketPath", {
+    enumerable: true,
+    get() {
+      inspections += 1;
+      throw new Error("must not inspect disabled socket configuration");
+    }
+  });
+  assert.deepEqual(parseSocialOAuthConfig(input).fullDirectory, {
+    enabled: false
+  });
+  assert.equal(inspections, 0);
+});
+
+test("private socket paths are absolute canonical bounded Linux paths", () => {
+  assert.equal(
+    canonicalUnixSocketPath("/run/hodlxxi/ubid-social-private.sock"),
+    "/run/hodlxxi/ubid-social-private.sock"
+  );
 });
 
 test("Full directory token audience is an exact credential string, not an endpoint URL", () => {
@@ -176,6 +213,8 @@ test("environment mapping uses only exact UBID client-credential names", () => {
     SOCIAL_MAX_SESSIONS: valid.maxSessions,
     SOCIAL_OUTBOUND_TIMEOUT_MS: valid.outboundTimeoutMs,
     SOCIAL_FULL_DIRECTORY_ENABLED: "true",
+    SOCIAL_UBID_PRIVATE_SOCKET_PATH:
+      fullDirectory.fullDirectorySocketPath,
     SOCIAL_UBID_SERVICE_TOKEN_URL:
       fullDirectory.fullDirectoryServiceTokenUrl,
     SOCIAL_UBID_FULL_DIRECTORY_URL: fullDirectory.fullDirectoryUrl,
@@ -192,6 +231,10 @@ test("environment mapping uses only exact UBID client-credential names", () => {
     SOCIAL_UBID_FULL_DIRECTORY_TIMEOUT_MS:
       fullDirectory.fullDirectoryRequestTimeoutMs
   });
+  assert.equal(
+    parsed.fullDirectory.socketPath,
+    fullDirectory.fullDirectorySocketPath
+  );
   assert.equal(
     parsed.fullDirectory.clientSigningKeyId,
     "social-client-key-1"

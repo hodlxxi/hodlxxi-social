@@ -433,6 +433,18 @@ test("configuration and signing key loading fail closed with fixed diagnostics",
     }),
     { message: "full_directory_unavailable" }
   );
+
+  let keyLoads = 0;
+  await assert.rejects(
+    createUbidFullDirectoryClient(config, {
+      openFileImpl: async () => {
+        keyLoads += 1;
+        throw new Error("must not load a key without an explicit transport");
+      }
+    }),
+    { message: "full_directory_unavailable" }
+  );
+  assert.equal(keyLoads, 0);
 });
 
 test("service token validation is exact short-lived and has no stale fallback", async () => {
@@ -620,17 +632,23 @@ test("Linux private-key loading rejects symlinks unsafe modes non-files oversize
   const weakPath = join(directory, "weak.pem");
   const rejectPath = async (signingKeyPath) => {
     await assert.rejects(
-      createUbidFullDirectoryClient({ ...config, signingKeyPath }),
+      createUbidFullDirectoryClient(
+        { ...config, signingKeyPath },
+        { fetchImpl: async () => assert.fail("must not fetch") }
+      ),
       { message: "full_directory_unavailable" }
     );
   };
 
   try {
     await writeFile(securePath, privatePemBytes, { mode: 0o600 });
-    await createUbidFullDirectoryClient({
-      ...config,
-      signingKeyPath: securePath
-    });
+    await createUbidFullDirectoryClient(
+      {
+        ...config,
+        signingKeyPath: securePath
+      },
+      { fetchImpl: async () => assert.fail("must not fetch") }
+    );
 
     for (const mode of [0o640, 0o620, 0o604]) {
       await chmod(securePath, mode);
