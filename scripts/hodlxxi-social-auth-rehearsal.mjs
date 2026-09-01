@@ -16,7 +16,7 @@ export const REHEARSAL_CODE = "hodlxxi-social-rehearsal-code";
 const WEB_ROOT = fileURLToPath(new URL("../web/", import.meta.url));
 const STATUS = new Set(["limited", "full"]);
 const VERIFIER = /^[A-Za-z0-9_-]{43}$/;
-const AUTHENTICATED_ASSET_REVISION = "1.23.0";
+const AUTHENTICATED_ASSET_REVISION = "1.24.0";
 const REVISIONED_AUTHENTICATED_ASSETS = new Set([
   "/styles.css",
   "/auth-entry.mjs",
@@ -123,7 +123,10 @@ export function createRehearsalRuntime({
       if (code !== REHEARSAL_CODE || typeof verifier !== "string" || !VERIFIER.test(verifier)) {
         throw new Error("rehearsal authentication rejected");
       }
-      return REHEARSAL_SUBJECT;
+      return Object.freeze({
+        subject: REHEARSAL_SUBJECT,
+        accessToken: "local-rehearsal-human-bearer"
+      });
     }
   });
 

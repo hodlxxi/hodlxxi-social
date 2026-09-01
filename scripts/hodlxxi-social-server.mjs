@@ -7,6 +7,7 @@ import { createHodlxxiOAuthClient } from "../src/server/hodlxxi-oauth-client.mjs
 import { createSocialAuthorityReader } from "../src/server/social-authority-reader.mjs";
 import { createSocialOAuthBff, parseRawRequestTarget, SECURITY_HEADERS } from "../src/server/social-oauth-bff.mjs";
 import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
+import { createUbidFullDirectoryClient } from "../src/server/ubid-full-directory-client.mjs";
 
 export function classifyRequestTarget(target, publicOrigin) {
   const parsed = parseRawRequestTarget(target, publicOrigin);
@@ -66,12 +67,24 @@ export async function runServer({ env = process.env, stdout = console.log, stder
   const sessions = createBoundedStore({ ttlSeconds: config.sessionTtlSeconds, capacity: config.maxSessions });
   const oauthClient = createHodlxxiOAuthClient(config);
   const authorityReader = createSocialAuthorityReader(config);
+  let fullDirectoryClient;
+  if (config.fullDirectory.enabled) {
+    try {
+      fullDirectoryClient = await createUbidFullDirectoryClient(
+        config.fullDirectory
+      );
+    } catch {
+      stderr("invalid configuration");
+      return 2;
+    }
+  }
   const bff = createSocialOAuthBff({
     config,
     pendingTransactions,
     sessions,
     oauthClient,
-    authorityReader
+    authorityReader,
+    fullDirectoryClient
   });
   const server = createServer(createHttpHandler({ publicOrigin: config.publicOrigin, bff }));
   try { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(config.port, config.bindHost, resolve); }); }

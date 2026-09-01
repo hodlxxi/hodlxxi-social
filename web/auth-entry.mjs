@@ -1,33 +1,36 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs?v=1.23.0";
+} from "./components.mjs?v=1.24.0";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.23.0";
+} from "./auth-product.mjs?v=1.24.0";
 
-import { renderNavigation } from "./shell.mjs?v=1.23.0";
+import { renderNavigation } from "./shell.mjs?v=1.24.0";
 
 import {
   canonicalNostrRelayUrl,
   createPendingAuthenticatedPublicRead,
   createUnavailableAuthenticatedPublicRead,
   loadAuthenticatedPublicRead
-} from "./authenticated-public-read.mjs?v=1.23.0";
+} from "./authenticated-public-read.mjs?v=1.24.0";
 
 import {
   AUTHENTICATED_SIGNER_STATES,
   connectAuthenticatedNip07Signer,
   publishAuthenticatedNote,
   publishAuthenticatedProfile
-} from "./authenticated-public-write.mjs?v=1.23.0";
+} from "./authenticated-public-write.mjs?v=1.24.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
+const UNSAFE_PRIVATE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;
+const BITCOIN_BASE58_ADDRESS = /^(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|[mn2][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
 const MAX_JSON_BODY_BYTES = 1024;
+const MAX_FULL_DIRECTORY_BODY_BYTES = 1024 * 1024;
 
 const PRODUCT_ROUTES = Object.freeze({
   "/home": "home",
@@ -49,6 +52,14 @@ const DISABLED_PUBLIC_WRITE = Object.freeze({
   relayHost: null,
   signerState: "disabled",
   operation: "idle"
+});
+const UNAVAILABLE_FULL_DIRECTORY = Object.freeze({
+  state: "unavailable",
+  participants: Object.freeze([])
+});
+const LOADING_FULL_DIRECTORY = Object.freeze({
+  state: "loading",
+  participants: Object.freeze([])
 });
 
 const publicWriteState = (
@@ -86,7 +97,10 @@ const failClosedAuthority = (subject) =>
 const shortKey = (subject) =>
   `${subject.slice(0, 8)}…${subject.slice(-6)}`;
 
-async function decodeJsonResponse(response) {
+async function decodeJsonResponse(
+  response,
+  maximumBodyBytes = MAX_JSON_BODY_BYTES
+) {
   if (
     !response ||
     response.status !== 200 ||
@@ -110,7 +124,7 @@ async function decodeJsonResponse(response) {
 
   if (
     body.length === 0 ||
-    new TextEncoder().encode(body).byteLength > MAX_JSON_BODY_BYTES
+    new TextEncoder().encode(body).byteLength > maximumBodyBytes
   ) {
     throw new TypeError("Social read unavailable");
   }
@@ -224,6 +238,41 @@ export function parseSocialPublishConfigDocument(value) {
   }
 }
 
+export function parseFullDirectoryDocument(value) {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ["participants", "state"]) ||
+    value.state !== "available" ||
+    !Array.isArray(value.participants) ||
+    value.participants.length > 4096
+  ) {
+    throw new TypeError("invalid Social Full directory");
+  }
+  const participants = [];
+  const aliases = new Set();
+  for (const participant of value.participants) {
+    if (
+      !plainObject(participant) ||
+      !exactKeys(participant, ["alias"]) ||
+      typeof participant.alias !== "string" ||
+      !/^[A-Za-z0-9._~-]{1,128}$/.test(participant.alias) ||
+      UNSAFE_PRIVATE_ALIAS.test(participant.alias) ||
+      BITCOIN_BASE58_ADDRESS.test(participant.alias) ||
+      /^\d{7,15}$/.test(participant.alias) ||
+      participant.alias.includes("@") ||
+      aliases.has(participant.alias)
+    ) {
+      throw new TypeError("invalid Social Full directory");
+    }
+    aliases.add(participant.alias);
+    participants.push(Object.freeze({ alias: participant.alias }));
+  }
+  return Object.freeze({
+    state: "available",
+    participants: Object.freeze(participants)
+  });
+}
+
 export async function readSocialSession(fetchImpl = globalThis.fetch) {
   if (typeof fetchImpl !== "function") {
     throw new TypeError("Social session unavailable");
@@ -311,6 +360,26 @@ export async function readSocialPublishConfig(
 
   return parseSocialPublishConfigDocument(
     await decodeJsonResponse(response)
+  );
+}
+
+export async function readSocialFullDirectory(
+  fetchImpl = globalThis.fetch
+) {
+  if (typeof fetchImpl !== "function") {
+    throw new TypeError("Social Full directory unavailable");
+  }
+  const response = await fetchImpl("/auth/full-directory", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+  return parseFullDirectoryDocument(
+    await decodeJsonResponse(response, MAX_FULL_DIRECTORY_BODY_BYTES)
   );
 }
 
@@ -426,7 +495,8 @@ export function buildAuthenticatedProductView(
   authority,
   hash = "",
   publicRead = createUnavailableAuthenticatedPublicRead(),
-  publicWrite = DISABLED_PUBLIC_WRITE
+  publicWrite = DISABLED_PUBLIC_WRITE,
+  fullDirectory = UNAVAILABLE_FULL_DIRECTORY
 ) {
   if (
     !session ||
@@ -461,7 +531,8 @@ export function buildAuthenticatedProductView(
     status,
     authorityValid: checkedAuthority.valid,
     publicRead,
-    publicWrite
+    publicWrite,
+    fullDirectory
   });
 
   return Object.freeze({
@@ -562,6 +633,8 @@ export function bindAuthenticatedEntry(
   let currentReadConfig = Object.freeze({ enabled: false });
   let currentPublishConfig = Object.freeze({ enabled: false });
   let currentPublicWrite = DISABLED_PUBLIC_WRITE;
+  let currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
+  let fullDirectoryAttempted = false;
 
   const clearProduct = () => {
     desktopNavigation.innerHTML = "";
@@ -581,6 +654,8 @@ export function bindAuthenticatedEntry(
     currentReadConfig = Object.freeze({ enabled: false });
     currentPublishConfig = Object.freeze({ enabled: false });
     currentPublicWrite = DISABLED_PUBLIC_WRITE;
+    currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
+    fullDirectoryAttempted = false;
 
     clearProduct();
 
@@ -619,6 +694,8 @@ export function bindAuthenticatedEntry(
     currentReadConfig = Object.freeze({ enabled: false });
     currentPublishConfig = Object.freeze({ enabled: false });
     currentPublicWrite = DISABLED_PUBLIC_WRITE;
+    currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
+    fullDirectoryAttempted = false;
 
     clearProduct();
 
@@ -663,7 +740,8 @@ export function bindAuthenticatedEntry(
       currentAuthority,
       browser?.location?.hash ?? "",
       currentPublicRead ?? createUnavailableAuthenticatedPublicRead(),
-      currentPublicWrite
+      currentPublicWrite,
+      currentFullDirectory
     );
 
     desktopNavigation.innerHTML =
@@ -693,6 +771,39 @@ export function bindAuthenticatedEntry(
   const renderAuthority = (authority) => {
     currentAuthority = authority;
     paintProduct();
+  };
+
+  const loadFullDirectoryForRoute = async () => {
+    if (
+      fullDirectoryAttempted ||
+      currentSession?.authenticated !== true ||
+      currentAuthority?.valid !== true ||
+      currentAuthority.status !== "full" ||
+      parseAuthenticatedRoute(
+        browser?.location?.hash ?? "",
+        currentSession.subject
+      ).page !== "full-network"
+    ) return false;
+
+    fullDirectoryAttempted = true;
+    const session = currentSession;
+    const authority = currentAuthority;
+    currentFullDirectory = LOADING_FULL_DIRECTORY;
+    paintProduct();
+    try {
+      const directory = await readSocialFullDirectory(fetchImpl);
+      if (currentSession === session && currentAuthority === authority) {
+        currentFullDirectory = directory;
+        paintProduct();
+        return true;
+      }
+    } catch {
+      if (currentSession === session && currentAuthority === authority) {
+        currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
+        paintProduct();
+      }
+    }
+    return false;
   };
 
   const ready = readSocialSession(fetchImpl)
@@ -733,6 +844,7 @@ export function bindAuthenticatedEntry(
       }
 
       renderAuthority(authority);
+      await loadFullDirectoryForRoute();
 
       currentPublishConfig = await publishConfig;
       currentPublicWrite = currentPublishConfig.enabled
@@ -998,6 +1110,7 @@ export function bindAuthenticatedEntry(
 
   browser?.addEventListener?.("hashchange", () => {
     paintProduct();
+    void loadFullDirectoryForRoute();
   });
 
   return Object.freeze({
@@ -1013,7 +1126,8 @@ export function bindAuthenticatedEntry(
     currentSession: () => currentSession,
     currentAuthority: () => currentAuthority,
     currentPublicRead: () => currentPublicRead,
-    currentPublicWrite: () => currentPublicWrite
+    currentPublicWrite: () => currentPublicWrite,
+    currentFullDirectory: () => currentFullDirectory
   });
 }
 

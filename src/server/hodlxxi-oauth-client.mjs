@@ -145,9 +145,13 @@ export function createHodlxxiOAuthClient(config, dependencies = {}) {
         grant_type: "authorization_code", code, redirect_uri: config.callbackUri, client_id: config.clientId,
         client_secret: config.clientSecret, code_verifier: verifier
       }, validateTokenResponse, transport);
-      return postForm(`${config.authorityOrigin}/oauth/introspect`, {
+      const subject = await postForm(`${config.authorityOrigin}/oauth/introspect`, {
         token, client_id: config.clientId, client_secret: config.clientSecret
       }, (value) => validateIntrospectionResponse(value, config), transport);
+      return Object.freeze({
+        subject,
+        accessToken: token
+      });
     }
   });
 }
