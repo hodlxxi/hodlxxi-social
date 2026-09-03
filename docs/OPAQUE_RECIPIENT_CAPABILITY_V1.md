@@ -2,14 +2,16 @@
 
 ## Status
 
-V1.27 Phases A and B are source-only.
+V1.27 Phases A and B are source-only. Phase C defines an uncomposed BFF
+recipient-selection route contract.
 
 It defines a bounded process-local capability contract for selecting one
 viewer-private Full Directory alias for a future direct-message action.
 
-It adds no HTTP route, production composition, deployment, UI, raw recipient
-resolution, message transport, encryption, decryption, X25519 use, Nostr use,
-database write, durable persistence, or browser persistence.
+Phase C adds the BFF route contract but does not add production server
+composition, deployment, UI, raw recipient resolution, message transport,
+encryption, decryption, X25519 use, Nostr use, database write, durable
+persistence, or browser persistence.
 
 ## Trusted caller boundary
 
@@ -216,3 +218,53 @@ opening additional login sessions.
 
 These quotas are resource-isolation controls only. They are not Full authority,
 identity, reputation, rate-based trust, or permission to message.
+
+
+## Phase C BFF selection route
+
+Phase C defines one same-origin BFF route:
+
+`POST /auth/recipient-capability`
+
+The request must have:
+
+- no query string;
+- the exact configured Social origin in the `Origin` header;
+- the current opaque Social session cookie;
+- one privacy-safe viewer-pairwise alias in
+  `X-HODLXXI-Recipient-Alias`; and
+- no request body.
+
+The selected alias is intentionally not placed in the URL or query string.
+
+The existing HTTP body-framing boundary remains unchanged. Phase C does not add
+a JSON body parser or permit a non-zero request body.
+
+The BFF derives the opaque session identifier exclusively from the authenticated
+session cookie. Browser-supplied subject, Full status, viewer bearer, current
+directory, target raw identity, or server time are not authority inputs.
+
+After basic request validation, the BFF passes exactly:
+
+- `sessionId`; and
+- `alias`
+
+to the injected trusted Phase B issuer.
+
+The issuer remains responsible for re-reading the current server-side session,
+checking current Full authority, obtaining a fresh alias-only Full Directory,
+checking target presence, deriving trusted server time, and applying capability
+quotas.
+
+Successful BFF output is minimized again to exactly:
+
+- `state`;
+- `capability`;
+- `expiresAt`.
+
+Malformed or throwing issuer results collapse to the same
+`{"state":"unavailable"}` response and cannot inject alias, subject, participant
+counts, keys, or other metadata into the browser response.
+
+Phase C does not yet inject an issuer into the production server composition.
+Consequently this phase is not a production activation step and does not add UI.
