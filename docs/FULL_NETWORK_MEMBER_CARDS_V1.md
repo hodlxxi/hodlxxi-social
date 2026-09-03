@@ -17,7 +17,7 @@ downgrade, infer or persist Full membership.
 For an accepted current Full viewer, each accepted directory alias is rendered
 as a Full Network member card with:
 
-- a presentation-only avatar derived from the alias;
+- a presentation-only monogram derived from the alias;
 - the label `Full Network member`;
 - `Current Full`;
 - a shortened viewer-private identifier;
