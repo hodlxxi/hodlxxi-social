@@ -19,6 +19,10 @@ import {
   readSocialSession
 } from "../web/auth-entry.mjs";
 
+import {
+  createUnavailableAuthenticatedPublicRead
+} from "../web/authenticated-public-read.mjs";
+
 const subject = "c".repeat(64);
 const livePublicRead = () => ({
   relayHost: "relay.example",
@@ -1487,27 +1491,27 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/components\.mjs\?v=1\.25\.0"/
+    /from "\.\/components\.mjs\?v=1\.26\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/shell\.mjs\?v=1\.25\.0"/
+    /from "\.\/shell\.mjs\?v=1\.26\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs\?v=1\.25\.0"/
+    /from "\.\/auth-product\.mjs\?v=1\.26\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-read\.mjs\?v=1\.25\.0"/
+    /from "\.\/authenticated-public-read\.mjs\?v=1\.26\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-write\.mjs\?v=1\.25\.0"/
+    /from "\.\/authenticated-public-write\.mjs\?v=1\.26\.0"/
   );
 
   assert.match(
@@ -1527,12 +1531,12 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.25\.0"/
+    /src="\.\/auth-entry\.mjs\?v=1\.26\.0"/
   );
 
   assert.match(
     html,
-    /href="\.\/styles\.css\?v=1\.25\.0"/
+    /href="\.\/styles\.css\?v=1\.26\.0"/
   );
 
   assert.match(
@@ -1587,16 +1591,16 @@ test("authenticated browser graph uses one explicit release revision and no unve
 
   const references = [
     ...html.matchAll(/(?:styles\.css|auth-entry\.mjs)\?v=([0-9.]+)/g),
-    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs|authenticated-public-read\.mjs|authenticated-public-write\.mjs)\?v=([0-9.]+)/g),
+    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs|authenticated-public-read\.mjs|authenticated-public-write\.mjs|private-label-store\.mjs)\?v=([0-9.]+)/g),
     ...product.matchAll(/components\.mjs\?v=([0-9.]+)/g),
     ...publicRead.matchAll(/nostr-event-verifier\.mjs\?v=([0-9.]+)/g),
     ...publicWrite.matchAll(/(?:authenticated-public-read\.mjs|nostr-event-verifier\.mjs)\?v=([0-9.]+)/g)
   ];
 
-  assert.equal(references.length, 11);
+  assert.equal(references.length, 12);
   assert.deepEqual(
     [...new Set(references.map((match) => match[1]))],
-    ["1.25.0"]
+    ["1.26.0"]
   );
   assert.doesNotMatch(
     html,
@@ -1604,7 +1608,7 @@ test("authenticated browser graph uses one explicit release revision and no unve
   );
   assert.doesNotMatch(
     module,
-    /from "\.\/(?:components|auth-product|shell|authenticated-public-read|authenticated-public-write)\.mjs"/
+    /from "\.\/(?:components|auth-product|shell|authenticated-public-read|authenticated-public-write|private-label-store)\.mjs"/
   );
   assert.doesNotMatch(product, /from "\.\/components\.mjs"/);
   assert.doesNotMatch(publicRead, /from "\.\/nostr-event-verifier\.mjs"/);
@@ -1678,3 +1682,511 @@ test("browser product contract contains no token secret private key or hard-code
     /type=["']password["']|email input|phone input/i
   );
 });
+
+test(
+  "Full Network renders a viewer-private device label without changing participant identity",
+  () => {
+    const subject = "a".repeat(64);
+    const alias = "pairwise.member-7";
+
+    const view = buildAuthenticatedProductView(
+      {
+        authenticated: true,
+        subject
+      },
+      {
+        subject,
+        status: "full",
+        valid: true
+      },
+      "#/full-network",
+      createUnavailableAuthenticatedPublicRead(),
+      {
+        relayHost: null,
+        signerState: "disabled",
+        operation: "idle"
+      },
+      {
+        state: "available",
+        participants: [
+          { alias }
+        ]
+      },
+      [
+        {
+          alias,
+          label: "Внук Алексей"
+        }
+      ]
+    );
+
+    assert.match(
+      view.page,
+      /Внук Алексей/
+    );
+
+    assert.match(
+      view.page,
+      /Private label · this device only/
+    );
+
+    assert.match(
+      view.page,
+      /Full Network member/
+    );
+
+    assert.match(
+      view.page,
+      /Current Full/
+    );
+
+    assert.match(
+      view.page,
+      /pairwise\.member-7/
+    );
+
+    assert.match(
+      view.page,
+      /not a profile name/i
+    );
+
+    assert.doesNotMatch(
+      view.page,
+      /email|phone|xpub|x25519|nsec/i
+    );
+  }
+);
+
+test(
+  "private labels are accepted only for aliases already present in the viewer directory",
+  () => {
+    const subject = "b".repeat(64);
+
+    assert.throws(
+      () =>
+        buildAuthenticatedProductView(
+          {
+            authenticated: true,
+            subject
+          },
+          {
+            subject,
+            status: "full",
+            valid: true
+          },
+          "#/full-network",
+          createUnavailableAuthenticatedPublicRead(),
+          {
+            relayHost: null,
+            signerState: "disabled",
+            operation: "idle"
+          },
+          {
+            state: "available",
+            participants: [
+              {
+                alias: "member~7"
+              }
+            ]
+          },
+          [
+            {
+              alias: "different-member",
+              label: "Brother"
+            }
+          ]
+        ),
+      TypeError
+    );
+  }
+);
+
+test(
+  "private label presentation escapes human text and preserves the opaque directory alias",
+  () => {
+    const subject = "c".repeat(64);
+    const alias = "opaque.member";
+
+    const view = buildAuthenticatedProductView(
+      {
+        authenticated: true,
+        subject
+      },
+      {
+        subject,
+        status: "full",
+        valid: true
+      },
+      "#/full-network",
+      createUnavailableAuthenticatedPublicRead(),
+      {
+        relayHost: null,
+        signerState: "disabled",
+        operation: "idle"
+      },
+      {
+        state: "available",
+        participants: [
+          { alias }
+        ]
+      },
+      [
+        {
+          alias,
+          label: "<Grandson>"
+        }
+      ]
+    );
+
+    assert.match(
+      view.page,
+      /&lt;Grandson&gt;/
+    );
+
+    assert.doesNotMatch(
+      view.page,
+      /<Grandson>/
+    );
+
+    assert.match(
+      view.page,
+      /opaque\.member/
+    );
+  }
+);
+
+test(
+  "Full Network private-label save is device-local and performs no network request",
+  async () => {
+    const viewer = "d".repeat(64);
+    const alias =
+      "p_privateViewerAlias123";
+
+    const document = fakeDocument();
+    const browser =
+      fakeBrowser("#/full-network");
+
+    const calls = [];
+    const values = new Map();
+    const writes = [];
+
+    const privateLabelStore = {
+      read({ subject, alias }) {
+        return (
+          values.get(
+            `${subject}:${alias}`
+          ) ?? null
+        );
+      },
+
+      write({
+        subject,
+        alias,
+        label
+      }) {
+        writes.push({
+          subject,
+          alias,
+          label
+        });
+
+        const key =
+          `${subject}:${alias}`;
+
+        const normalized =
+          label.trim();
+
+        if (normalized) {
+          values.set(
+            key,
+            normalized
+          );
+        } else {
+          values.delete(key);
+        }
+
+        return true;
+      },
+
+      remove() {
+        return true;
+      },
+
+      clearViewer() {
+        return true;
+      }
+    };
+
+    const fetchImpl = async (url) => {
+      calls.push(url);
+
+      if (url === "/auth/session") {
+        return response({
+          authenticated: true,
+          subject: viewer
+        });
+      }
+
+      if (url === "/auth/authority") {
+        return response({
+          subject: viewer,
+          status: "full",
+          valid: true
+        });
+      }
+
+      if (
+        url ===
+        "/auth/social-read-config"
+      ) {
+        return response({
+          enabled: false
+        });
+      }
+
+      if (
+        url ===
+        "/auth/social-publish-config"
+      ) {
+        return response({
+          enabled: false
+        });
+      }
+
+      if (
+        url ===
+        "/auth/full-directory"
+      ) {
+        return response({
+          state: "available",
+          participants: [
+            { alias }
+          ]
+        });
+      }
+
+      if (url === "/auth/logout") {
+        return response({
+          authenticated: false
+        });
+      }
+
+      throw new Error(
+        `unexpected network call: ${url}`
+      );
+    };
+
+    const binding =
+      bindAuthenticatedEntry(
+        document,
+        {
+          browser,
+          fetchImpl,
+          privateLabelStore
+        }
+      );
+
+    await binding.ready;
+
+    assert.match(
+      document.elements[
+        "#app-page"
+      ].innerHTML,
+      /Private label on this device/
+    );
+
+    const callsBeforeSave =
+      calls.length;
+
+    assert.equal(
+      binding.savePrivateLabel(
+        alias,
+        "Внук Алексей"
+      ),
+      true
+    );
+
+    assert.equal(
+      calls.length,
+      callsBeforeSave
+    );
+
+    assert.deepEqual(
+      writes.at(-1),
+      {
+        subject: viewer,
+        alias,
+        label: "Внук Алексей"
+      }
+    );
+
+    assert.match(
+      document.elements[
+        "#app-page"
+      ].innerHTML,
+      /Внук Алексей/
+    );
+
+    assert.match(
+      document.elements[
+        "#app-page"
+      ].innerHTML,
+      /Private label · this device only/
+    );
+
+    assert.equal(
+      values.get(
+        `${viewer}:${alias}`
+      ),
+      "Внук Алексей"
+    );
+
+    const submit =
+      document.listeners.get(
+        "submit"
+      );
+
+    let prevented = false;
+
+    submit({
+      target: {
+        dataset: {
+          privateLabelAlias: alias
+        },
+        elements: {
+          namedItem(name) {
+            return name === "label"
+              ? { value: "Брат" }
+              : null;
+          }
+        }
+      },
+      preventDefault() {
+        prevented = true;
+      }
+    });
+
+    assert.equal(
+      prevented,
+      true
+    );
+
+    assert.equal(
+      calls.length,
+      callsBeforeSave
+    );
+
+    assert.equal(
+      values.get(
+        `${viewer}:${alias}`
+      ),
+      "Брат"
+    );
+
+    assert.match(
+      document.elements[
+        "#app-page"
+      ].innerHTML,
+      /Брат/
+    );
+
+    assert.equal(
+      await binding.logout(),
+      true
+    );
+
+    assert.equal(
+      values.get(
+        `${viewer}:${alias}`
+      ),
+      "Брат"
+    );
+  }
+);
+
+test(
+  "Full Network refuses private-label writes for aliases outside the current directory",
+  async () => {
+    const viewer = "e".repeat(64);
+    const directoryAlias =
+      "accepted.private.alias";
+
+    let writes = 0;
+
+    const binding =
+      bindAuthenticatedEntry(
+        fakeDocument(),
+        {
+          browser:
+            fakeBrowser(
+              "#/full-network"
+            ),
+
+          privateLabelStore: {
+            read() {
+              return null;
+            },
+            write() {
+              writes += 1;
+              return true;
+            }
+          },
+
+          fetchImpl:
+            async (url) => {
+              if (
+                url ===
+                "/auth/session"
+              ) {
+                return response({
+                  authenticated: true,
+                  subject: viewer
+                });
+              }
+
+              if (
+                url ===
+                "/auth/authority"
+              ) {
+                return response({
+                  subject: viewer,
+                  status: "full",
+                  valid: true
+                });
+              }
+
+              if (
+                url ===
+                "/auth/full-directory"
+              ) {
+                return response({
+                  state: "available",
+                  participants: [
+                    {
+                      alias:
+                        directoryAlias
+                    }
+                  ]
+                });
+              }
+
+              return response({
+                enabled: false
+              });
+            }
+        }
+      );
+
+    await binding.ready;
+
+    assert.equal(
+      binding.savePrivateLabel(
+        "not-in-directory",
+        "Someone"
+      ),
+      false
+    );
+
+    assert.equal(writes, 0);
+  }
+);

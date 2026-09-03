@@ -1,30 +1,34 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs?v=1.25.0";
+} from "./components.mjs?v=1.26.0";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.25.0";
+} from "./auth-product.mjs?v=1.26.0";
 
-import { renderNavigation } from "./shell.mjs?v=1.25.0";
+import {
+  createBrowserPrivateLabelStore
+} from "./private-label-store.mjs?v=1.26.0";
+
+import { renderNavigation } from "./shell.mjs?v=1.26.0";
 
 import {
   canonicalNostrRelayUrl,
   createPendingAuthenticatedPublicRead,
   createUnavailableAuthenticatedPublicRead,
   loadAuthenticatedPublicRead
-} from "./authenticated-public-read.mjs?v=1.25.0";
+} from "./authenticated-public-read.mjs?v=1.26.0";
 
 import {
   AUTHENTICATED_SIGNER_STATES,
   connectAuthenticatedNip07Signer,
   publishAuthenticatedNote,
   publishAuthenticatedProfile
-} from "./authenticated-public-write.mjs?v=1.25.0";
+} from "./authenticated-public-write.mjs?v=1.26.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const UNSAFE_PRIVATE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;
@@ -496,7 +500,8 @@ export function buildAuthenticatedProductView(
   hash = "",
   publicRead = createUnavailableAuthenticatedPublicRead(),
   publicWrite = DISABLED_PUBLIC_WRITE,
-  fullDirectory = UNAVAILABLE_FULL_DIRECTORY
+  fullDirectory = UNAVAILABLE_FULL_DIRECTORY,
+  privateLabels = []
 ) {
   if (
     !session ||
@@ -532,7 +537,8 @@ export function buildAuthenticatedProductView(
     authorityValid: checkedAuthority.valid,
     publicRead,
     publicWrite,
-    fullDirectory
+    fullDirectory,
+    privateLabels
   });
 
   return Object.freeze({
@@ -576,14 +582,22 @@ export function bindAuthenticatedEntry(
     publicReadLoader = loadAuthenticatedPublicRead,
     signerConnector = connectAuthenticatedNip07Signer,
     notePublisher = publishAuthenticatedNote,
-    profilePublisher = publishAuthenticatedProfile
+    profilePublisher = publishAuthenticatedProfile,
+    privateLabelStore = null
   } = {}
 ) {
+  const labelStore =
+    privateLabelStore ??
+    createBrowserPrivateLabelStore(browser);
+
   if (
     typeof publicReadLoader !== "function" ||
     typeof signerConnector !== "function" ||
     typeof notePublisher !== "function" ||
-    typeof profilePublisher !== "function"
+    typeof profilePublisher !== "function" ||
+    !labelStore ||
+    typeof labelStore.read !== "function" ||
+    typeof labelStore.write !== "function"
   ) {
     throw new TypeError("authenticated entry unavailable");
   }
@@ -735,13 +749,48 @@ export function bindAuthenticatedEntry(
       return;
     }
 
+    const privateLabels = [];
+
+    if (
+      currentFullDirectory?.state === "available"
+    ) {
+      for (
+        const participant of
+        currentFullDirectory.participants
+      ) {
+        let label = null;
+
+        try {
+          label = labelStore.read({
+            subject: currentSession.subject,
+            alias: participant.alias
+          });
+        } catch {
+          label = null;
+        }
+
+        if (
+          typeof label === "string" &&
+          label.length > 0
+        ) {
+          privateLabels.push(
+            Object.freeze({
+              alias: participant.alias,
+              label
+            })
+          );
+        }
+      }
+    }
+
     const view = buildAuthenticatedProductView(
       currentSession,
       currentAuthority,
       browser?.location?.hash ?? "",
       currentPublicRead ?? createUnavailableAuthenticatedPublicRead(),
       currentPublicWrite,
-      currentFullDirectory
+      currentFullDirectory,
+      Object.freeze(privateLabels)
     );
 
     desktopNavigation.innerHTML =
@@ -771,6 +820,44 @@ export function bindAuthenticatedEntry(
   const renderAuthority = (authority) => {
     currentAuthority = authority;
     paintProduct();
+  };
+
+  const savePrivateLabel = (
+    alias,
+    label
+  ) => {
+    if (
+      currentSession?.authenticated !== true ||
+      currentAuthority?.valid !== true ||
+      currentAuthority.status !== "full" ||
+      currentFullDirectory?.state !== "available" ||
+      typeof alias !== "string" ||
+      !currentFullDirectory.participants.some(
+        (participant) =>
+          participant.alias === alias
+      ) ||
+      typeof label !== "string"
+    ) {
+      return false;
+    }
+
+    let saved = false;
+
+    try {
+      saved = labelStore.write({
+        subject: currentSession.subject,
+        alias,
+        label
+      }) === true;
+    } catch {
+      saved = false;
+    }
+
+    if (saved) {
+      paintProduct();
+    }
+
+    return saved;
   };
 
   const loadFullDirectoryForRoute = async () => {
@@ -1059,6 +1146,34 @@ export function bindAuthenticatedEntry(
   });
 
   root.addEventListener?.("submit", (event) => {
+    const privateLabelAlias =
+      event.target?.dataset?.privateLabelAlias;
+
+    if (
+      typeof privateLabelAlias === "string"
+    ) {
+      event.preventDefault?.();
+
+      const input =
+        event.target?.elements?.namedItem?.(
+          "label"
+        );
+
+      if (
+        !input ||
+        typeof input.value !== "string"
+      ) {
+        return;
+      }
+
+      savePrivateLabel(
+        privateLabelAlias,
+        input.value
+      );
+
+      return;
+    }
+
     const formId = event.target?.id;
     if (![
       "authenticated-search",
@@ -1122,6 +1237,7 @@ export function bindAuthenticatedEntry(
       "profile",
       { displayName, about }
     ),
+    savePrivateLabel,
     repaint: paintProduct,
     currentSession: () => currentSession,
     currentAuthority: () => currentAuthority,

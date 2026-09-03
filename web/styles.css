@@ -77,3 +77,62 @@ body{overflow-x:hidden}.mobile-product-label{display:none;color:var(--muted);fon
   .full-network-members{grid-template-columns:1fr}
   .full-network-member-card{padding:.9rem}
 }
+
+/* V1.26 private device-local labels */
+.full-network-private-label{
+  display:grid;
+  gap:.05rem;
+  margin-bottom:.45rem
+}
+.full-network-private-label strong{
+  font-size:1.05rem;
+  color:var(--ink)
+}
+.full-network-private-label small,
+.full-network-private-label-help{
+  color:var(--muted);
+  font-size:.68rem
+}
+.full-network-private-label-form{
+  display:flex;
+  align-items:end;
+  gap:.5rem;
+  margin-top:.75rem
+}
+.full-network-private-label-form label{
+  display:grid;
+  gap:.25rem;
+  flex:1;
+  min-width:0;
+  color:var(--muted);
+  font-size:.68rem;
+  font-weight:750
+}
+.full-network-private-label-form input{
+  width:100%;
+  min-width:0;
+  padding:.55rem .65rem;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:#fff;
+  color:var(--ink);
+  font:inherit
+}
+.full-network-private-label-form button{
+  border:0;
+  border-radius:9px;
+  padding:.58rem .8rem;
+  background:var(--accent);
+  color:#fff;
+  font-weight:850
+}
+.full-network-private-label-help{
+  display:block;
+  margin-top:.35rem
+}
+@media(max-width:520px){
+  .full-network-private-label-form{
+    align-items:stretch;
+    flex-direction:column
+  }
+}
