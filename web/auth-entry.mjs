@@ -1,30 +1,30 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs?v=1.24.0";
+} from "./components.mjs?v=1.25.0";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.24.0";
+} from "./auth-product.mjs?v=1.25.0";
 
-import { renderNavigation } from "./shell.mjs?v=1.24.0";
+import { renderNavigation } from "./shell.mjs?v=1.25.0";
 
 import {
   canonicalNostrRelayUrl,
   createPendingAuthenticatedPublicRead,
   createUnavailableAuthenticatedPublicRead,
   loadAuthenticatedPublicRead
-} from "./authenticated-public-read.mjs?v=1.24.0";
+} from "./authenticated-public-read.mjs?v=1.25.0";
 
 import {
   AUTHENTICATED_SIGNER_STATES,
   connectAuthenticatedNip07Signer,
   publishAuthenticatedNote,
   publishAuthenticatedProfile
-} from "./authenticated-public-write.mjs?v=1.24.0";
+} from "./authenticated-public-write.mjs?v=1.25.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const UNSAFE_PRIVATE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;

@@ -644,7 +644,7 @@ test("accepted Full authority exposes the Full Network navigation and honest emp
   assert.match(view.page, /Current access<\/span><strong>Full<\/strong>/);
   assert.match(view.page, /private HODLXXI Full-member network/i);
   assert.match(view.page, /Participant identity keys are not exposed here/);
-  assert.match(view.page, /Viewer-private aliases/);
+  assert.match(view.page, /People in your Full Network/);
   assert.match(view.page, /Private directory unavailable/);
   assert.doesNotMatch(productMarkup, new RegExp(targetSubject));
   assert.doesNotMatch(
@@ -669,9 +669,13 @@ test("accepted viewer-private aliases render without raw participant identity", 
       ]
     }
   );
+  assert.match(view.page, /2 other Full members/);
+  assert.match(view.page, /Full Network member/);
+  assert.match(view.page, /Current Full/);
   assert.match(view.page, /pairwise\.alias-1/);
   assert.match(view.page, /member~7/);
-  assert.match(view.page, /Private alias/);
+  assert.match(view.page, /Viewer-private identifier/);
+  assert.match(view.page, /not participant public keys/i);
   assert.doesNotMatch(view.page, new RegExp(targetSubject));
   assert.doesNotMatch(
     view.page,
@@ -1483,27 +1487,27 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/components\.mjs\?v=1\.24\.0"/
+    /from "\.\/components\.mjs\?v=1\.25\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/shell\.mjs\?v=1\.24\.0"/
+    /from "\.\/shell\.mjs\?v=1\.25\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs\?v=1\.24\.0"/
+    /from "\.\/auth-product\.mjs\?v=1\.25\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-read\.mjs\?v=1\.24\.0"/
+    /from "\.\/authenticated-public-read\.mjs\?v=1\.25\.0"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-write\.mjs\?v=1\.24\.0"/
+    /from "\.\/authenticated-public-write\.mjs\?v=1\.25\.0"/
   );
 
   assert.match(
@@ -1523,12 +1527,12 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.24\.0"/
+    /src="\.\/auth-entry\.mjs\?v=1\.25\.0"/
   );
 
   assert.match(
     html,
-    /href="\.\/styles\.css\?v=1\.24\.0"/
+    /href="\.\/styles\.css\?v=1\.25\.0"/
   );
 
   assert.match(
@@ -1592,7 +1596,7 @@ test("authenticated browser graph uses one explicit release revision and no unve
   assert.equal(references.length, 11);
   assert.deepEqual(
     [...new Set(references.map((match) => match[1]))],
-    ["1.24.0"]
+    ["1.25.0"]
   );
   assert.doesNotMatch(
     html,

@@ -55,3 +55,25 @@ body{overflow-x:hidden}.mobile-product-label{display:none;color:var(--muted);fon
 @media(max-width:720px){.full-network-hero{grid-template-columns:1fr}.full-network-access{min-width:0}.full-network-privacy{grid-template-columns:1fr}.full-network-directory{padding:1rem}}
 .full-network-aliases{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.full-network-alias{display:grid;gap:.2rem;padding:.9rem 1rem;border:1px solid var(--line);border-radius:12px;background:var(--soft)}.full-network-alias strong{overflow-wrap:anywhere}.full-network-alias span{color:var(--muted);font-size:.7rem;font-weight:800}
 @media(max-width:720px){.full-network-aliases{grid-template-columns:1fr}}
+
+/* V1.25 live Full Network member cards */
+.full-network-directory-live{display:grid;gap:1rem}
+.full-network-directory-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.8rem 1rem;border-radius:12px;background:var(--soft)}
+.full-network-directory-summary strong{font-size:.92rem}
+.full-network-directory-summary span{color:var(--muted);font-size:.7rem;font-weight:750}
+.full-network-members{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem}
+.full-network-member-card{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.85rem;align-items:center;padding:1rem;border:1px solid var(--line);border-radius:15px;background:#fff;box-shadow:0 7px 24px rgba(47,38,29,.04)}
+.full-network-member-monogram{width:48px;height:48px;display:grid;place-items:center;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:.82rem;font-weight:900;letter-spacing:.04em}
+.full-network-member-main{display:grid;gap:.3rem;min-width:0}
+.full-network-member-heading{display:flex;align-items:center;justify-content:space-between;gap:.6rem}
+.full-network-member-heading>strong{font-size:.86rem}
+.full-network-member-status{flex:none;padding:.16rem .46rem;border:1px solid #c7e3d2;border-radius:99px;background:#f4fbf6;color:var(--success);font-size:.61rem;font-weight:850;text-transform:uppercase;letter-spacing:.04em}
+.full-network-member-main code{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);font:700 .76rem/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+.full-network-member-main small,.full-network-directory-note{color:var(--muted);font-size:.68rem}
+.full-network-directory-note{margin:0;padding:.8rem 1rem;border-left:3px solid var(--accent);background:var(--soft);border-radius:0 10px 10px 0}
+
+@media(max-width:720px){
+  .full-network-directory-summary{display:grid}
+  .full-network-members{grid-template-columns:1fr}
+  .full-network-member-card{padding:.9rem}
+}

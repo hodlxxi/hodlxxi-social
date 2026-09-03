@@ -3,7 +3,7 @@ import {
   renderPageFrame,
   renderStatusBadge,
   renderUnavailableState
-} from "./components.mjs?v=1.24.0";
+} from "./components.mjs?v=1.25.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const CANONICAL_EVENT_ID = /^[0-9a-f]{64}$/;
@@ -566,6 +566,20 @@ const directoryPage = (model, title, mode) => {
   });
 };
 
+const privateAliasSummary = (alias) => {
+  if (alias.length <= 22) return alias;
+  return `${alias.slice(0, 10)}…${alias.slice(-8)}`;
+};
+
+const privateAliasInitials = (alias) => {
+  const visible = [...alias]
+    .filter((character) => /[A-Za-z0-9]/.test(character))
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  return visible || "H";
+};
+
 const fullNetworkDirectory = (model) => {
   if (model.fullDirectory.state === "loading") {
     return surfaceEmpty({
@@ -584,15 +598,36 @@ const fullNetworkDirectory = (model) => {
   if (model.fullDirectory.participants.length === 0) {
     return surfaceEmpty({
       icon: "◌",
-      title: "No private aliases available",
-      detail: "The accepted viewer-private directory contains no aliases to present."
+      title: "No other Full members are visible",
+      detail: "The accepted viewer-private directory currently contains no other Full-member aliases."
     });
   }
-  return `<div class="full-network-aliases" aria-label="Viewer-private Full Network aliases">` +
-    model.fullDirectory.participants.map((participant) =>
-      `<article class="full-network-alias"><strong>${escapeHtml(participant.alias)}</strong>` +
-      `<span>Private alias</span></article>`
-    ).join("") +
+
+  const count = model.fullDirectory.participants.length;
+  const summary = `${count} other Full ${count === 1 ? "member" : "members"}`;
+
+  return `<div class="full-network-directory-live">` +
+    `<div class="full-network-directory-summary">` +
+    `<strong>${escapeHtml(summary)}</strong>` +
+    `<span>Current viewer-private directory</span>` +
+    `</div>` +
+    `<div class="full-network-members" aria-label="Viewer-private Full Network members">` +
+    model.fullDirectory.participants.map((participant) => {
+      const alias = participant.alias;
+      return `<article class="full-network-member-card">` +
+        `<div class="full-network-member-monogram" aria-hidden="true">${escapeHtml(privateAliasInitials(alias))}</div>` +
+        `<div class="full-network-member-main">` +
+        `<div class="full-network-member-heading">` +
+        `<strong>Full Network member</strong>` +
+        `<span class="full-network-member-status">Current Full</span>` +
+        `</div>` +
+        `<code title="${escapeHtml(alias)}">${escapeHtml(privateAliasSummary(alias))}</code>` +
+        `<small>Viewer-private identifier</small>` +
+        `</div>` +
+        `</article>`;
+    }).join("") +
+    `</div>` +
+    `<p class="full-network-directory-note">These identifiers are private presentation aliases for this viewer. They are not participant public keys, names, payment addresses, or identity-resolution handles.</p>` +
     `</div>`;
 };
 
@@ -611,8 +646,8 @@ const fullNetworkPage = (model) =>
       `<div><p class="eyebrow">Privacy boundary</p><h2>Participant identity keys are not exposed here</h2>` +
       `<p>This browser shell does not receive or render other participants’ public keys or private directory records.</p></div></article>` +
       `<section class="full-network-directory" aria-label="Full Network directory state">` +
-      `<div><p class="eyebrow">Directory state</p><h2>Viewer-private aliases</h2>` +
-      `<p>Aliases are opaque presentation identifiers for this viewer only.</p></div>` +
+      `<div><p class="eyebrow">Full Directory</p><h2>People in your Full Network</h2>` +
+      `<p>Only current Full participants accepted for this authenticated viewer are shown here.</p></div>` +
       fullNetworkDirectory(model) +
       `</section></section>`
   });
