@@ -2,7 +2,7 @@
 
 ## Status
 
-V1.27 Phase A is source-only.
+V1.27 Phases A and B are source-only.
 
 It defines a bounded process-local capability contract for selecting one
 viewer-private Full Directory alias for a future direct-message action.
@@ -134,3 +134,85 @@ not expose an X25519 public key.
 
 Recipient cryptographic readiness and client-side encrypted direct messaging
 remain separate V1.28 work.
+
+
+## Phase B trusted issuance adapter
+
+Phase B adds a source-only server-side issuance adapter.
+
+Its external input is intentionally limited to:
+
+- the opaque current Social session identifier; and
+- one selected viewer-private alias.
+
+The adapter itself obtains all authority-bearing values from trusted
+server-side dependencies.
+
+It reads the session from the Social session store and obtains:
+
+- the authenticated canonical viewer subject;
+- the retained human OAuth viewer bearer;
+- the server-side session issuance time; and
+- the server-side session expiry time.
+
+It then independently requires an exact current Full authority projection and
+reads a fresh privacy-safe Full Directory through the existing private
+Full Directory client.
+
+The selected alias must occur in that freshly accepted alias-only directory.
+
+Only after those checks does the adapter call the Phase A capability store with
+the server-derived subject, exact session identifier, current aliases, exact
+`direct-message` purpose, and trusted server time.
+
+The caller must not supply:
+
+- subject;
+- viewer bearer;
+- Full status;
+- current alias set;
+- server time;
+- target raw identity;
+- X25519 binding;
+- Nostr identity.
+
+The Phase B issuance result remains only:
+
+- `state`;
+- `capability`;
+- `expiresAt`.
+
+Malformed dependency results, exceptions, stale sessions, non-Full viewers,
+unsafe directories, target absence, and malformed capability-store results all
+collapse to the same `{"state":"unavailable"}` response.
+
+Phase B does not add an HTTP route and does not change the current request-body
+framing policy.
+
+## Per-session outstanding capability quota
+
+The process-local capability store applies three nested capacities:
+
+- global process capacity;
+- per-subject outstanding-capability capacity; and
+- per-session outstanding-capability capacity.
+
+The default limits are:
+
+- 4096 globally;
+- 64 per canonical authenticated subject; and
+- 16 per Social session.
+
+Configuration maxima are 4096 globally, 1024 per subject, and 256 per session.
+
+The per-session capacity may not exceed the per-subject capacity, and neither
+may exceed the global capacity.
+
+Expired capabilities are swept before quota evaluation.
+
+One authenticated Social session therefore cannot fill the complete global
+store, and one canonical subject cannot bypass resource isolation merely by
+opening additional login sessions.
+
+These quotas are resource-isolation controls only. They are not Full authority,
+identity, reputation, rate-based trust, or permission to message.

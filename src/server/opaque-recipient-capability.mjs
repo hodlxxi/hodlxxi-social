@@ -15,6 +15,18 @@ export const MAX_OPAQUE_RECIPIENT_CAPABILITY_TTL_MS =
 export const MAX_OPAQUE_RECIPIENT_CAPABILITIES =
   4096;
 
+export const DEFAULT_OPAQUE_RECIPIENT_CAPABILITIES_PER_SESSION =
+  16;
+
+export const MAX_OPAQUE_RECIPIENT_CAPABILITIES_PER_SESSION =
+  256;
+
+export const DEFAULT_OPAQUE_RECIPIENT_CAPABILITIES_PER_SUBJECT =
+  64;
+
+export const MAX_OPAQUE_RECIPIENT_CAPABILITIES_PER_SUBJECT =
+  1024;
+
 const SUBJECT = /^[0-9a-f]{64}$/;
 const SESSION_ID = /^[A-Za-z0-9_-]{43}$/;
 const SAFE_ALIAS = /^[A-Za-z0-9._~-]{1,128}$/;
@@ -247,8 +259,26 @@ export function createOpaqueRecipientCapabilityStore({
   ttlMs =
     DEFAULT_OPAQUE_RECIPIENT_CAPABILITY_TTL_MS,
   capacity =
-    MAX_OPAQUE_RECIPIENT_CAPABILITIES
+    MAX_OPAQUE_RECIPIENT_CAPABILITIES,
+  perSessionCapacity,
+  perSubjectCapacity
 } = {}) {
+  const sessionCapacity =
+    perSessionCapacity === undefined
+      ? Math.min(
+          DEFAULT_OPAQUE_RECIPIENT_CAPABILITIES_PER_SESSION,
+          capacity
+        )
+      : perSessionCapacity;
+
+  const subjectCapacity =
+    perSubjectCapacity === undefined
+      ? Math.min(
+          DEFAULT_OPAQUE_RECIPIENT_CAPABILITIES_PER_SUBJECT,
+          capacity
+        )
+      : perSubjectCapacity;
+
   if (
     typeof random !== "function" ||
     !Number.isSafeInteger(ttlMs) ||
@@ -258,7 +288,22 @@ export function createOpaqueRecipientCapabilityStore({
     !Number.isSafeInteger(capacity) ||
     capacity < 1 ||
     capacity >
-      MAX_OPAQUE_RECIPIENT_CAPABILITIES
+      MAX_OPAQUE_RECIPIENT_CAPABILITIES ||
+    !Number.isSafeInteger(
+      sessionCapacity
+    ) ||
+    sessionCapacity < 1 ||
+    sessionCapacity >
+      MAX_OPAQUE_RECIPIENT_CAPABILITIES_PER_SESSION ||
+    sessionCapacity > capacity ||
+    !Number.isSafeInteger(
+      subjectCapacity
+    ) ||
+    subjectCapacity < 1 ||
+    subjectCapacity >
+      MAX_OPAQUE_RECIPIENT_CAPABILITIES_PER_SUBJECT ||
+    subjectCapacity > capacity ||
+    sessionCapacity > subjectCapacity
   ) {
     throw new TypeError(
       "invalid opaque recipient capability configuration"
@@ -333,6 +378,32 @@ export function createOpaqueRecipientCapabilityStore({
     sweep(now);
 
     if (records.size >= capacity) {
+      return OPAQUE_RECIPIENT_CAPABILITY_UNAVAILABLE;
+    }
+
+    let sessionOutstanding = 0;
+    let subjectOutstanding = 0;
+
+    for (const stored of records.values()) {
+      if (
+        stored.subject === subject
+      ) {
+        subjectOutstanding += 1;
+      }
+
+      if (
+        stored.sessionId === sessionId
+      ) {
+        sessionOutstanding += 1;
+      }
+    }
+
+    if (
+      sessionOutstanding >=
+        sessionCapacity ||
+      subjectOutstanding >=
+        subjectCapacity
+    ) {
       return OPAQUE_RECIPIENT_CAPABILITY_UNAVAILABLE;
     }
 

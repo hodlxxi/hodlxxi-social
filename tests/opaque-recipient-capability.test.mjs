@@ -517,6 +517,171 @@ test(
 );
 
 test(
+  "per-session quota prevents one authenticated session from exhausting global capacity",
+  () => {
+    let seed = 1;
+
+    const store =
+      createOpaqueRecipientCapabilityStore({
+        capacity: 4,
+        perSessionCapacity: 2,
+        random() {
+          return Buffer.alloc(
+            32,
+            seed++
+          );
+        }
+      });
+
+    const first = store.issue({
+      subject: viewerA,
+      sessionId: sessionA,
+      alias: aliasA,
+      purpose:
+        OPAQUE_RECIPIENT_CAPABILITY_PURPOSE,
+      currentAliases:
+        currentAliases(aliasA),
+      now: 1
+    });
+
+    const second = store.issue({
+      subject: viewerA,
+      sessionId: sessionA,
+      alias: aliasB,
+      purpose:
+        OPAQUE_RECIPIENT_CAPABILITY_PURPOSE,
+      currentAliases:
+        currentAliases(aliasB),
+      now: 2
+    });
+
+    assert.equal(
+      first.state,
+      "available"
+    );
+
+    assert.equal(
+      second.state,
+      "available"
+    );
+
+    assert.strictEqual(
+      store.issue({
+        subject: viewerA,
+        sessionId: sessionA,
+        alias: aliasA,
+        purpose:
+          OPAQUE_RECIPIENT_CAPABILITY_PURPOSE,
+        currentAliases:
+          currentAliases(aliasA),
+        now: 3
+      }),
+      OPAQUE_RECIPIENT_CAPABILITY_UNAVAILABLE
+    );
+
+    assert.equal(
+      store.issue({
+        subject: viewerA,
+        sessionId: sessionB,
+        alias: aliasA,
+        purpose:
+          OPAQUE_RECIPIENT_CAPABILITY_PURPOSE,
+        currentAliases:
+          currentAliases(aliasA),
+        now: 3
+      }).state,
+      "available"
+    );
+  }
+);
+
+test(
+  "per-subject quota cannot be bypassed by opening additional sessions",
+  () => {
+    let seed = 1;
+
+    const otherSubject =
+      "c".repeat(64);
+
+    const sessionC =
+      "D".repeat(43);
+
+    const store =
+      createOpaqueRecipientCapabilityStore({
+        capacity: 6,
+        perSessionCapacity: 2,
+        perSubjectCapacity: 3,
+        random() {
+          return Buffer.alloc(
+            32,
+            seed++
+          );
+        }
+      });
+
+    for (const [
+      selectedSession,
+      selectedAlias,
+      selectedNow
+    ] of [
+      [sessionA, aliasA, 1],
+      [sessionA, aliasB, 2],
+      [sessionB, aliasA, 3]
+    ]) {
+      assert.equal(
+        store.issue({
+          subject: viewerA,
+          sessionId:
+            selectedSession,
+          alias:
+            selectedAlias,
+          purpose:
+            OPAQUE_RECIPIENT_CAPABILITY_PURPOSE,
+          currentAliases:
+            currentAliases(
+              selectedAlias
+            ),
+          now:
+            selectedNow
+        }).state,
+        "available"
+      );
+    }
+
+    assert.strictEqual(
+      store.issue({
+        subject: viewerA,
+        sessionId: sessionB,
+        alias: aliasB,
+        purpose:
+          OPAQUE_RECIPIENT_CAPABILITY_PURPOSE,
+        currentAliases:
+          currentAliases(aliasB),
+        now: 4
+      }),
+      OPAQUE_RECIPIENT_CAPABILITY_UNAVAILABLE
+    );
+
+    assert.equal(
+      store.issue({
+        subject:
+          otherSubject,
+        sessionId:
+          sessionC,
+        alias:
+          aliasA,
+        purpose:
+          OPAQUE_RECIPIENT_CAPABILITY_PURPOSE,
+        currentAliases:
+          currentAliases(aliasA),
+        now: 4
+      }).state,
+      "available"
+    );
+  }
+);
+
+test(
   "capability core has no transport persistence authority X25519 or Nostr path",
   async () => {
     const source = await readFile(
