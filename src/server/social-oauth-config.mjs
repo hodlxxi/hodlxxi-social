@@ -56,7 +56,7 @@ export function canonicalHttpsUrl(value) {
   return url.href;
 }
 
-const fullDirectoryEnabled = (value) => {
+const featureEnabled = (value) => {
   if ([undefined, null, "", false, "false"].includes(value)) return false;
   if ([true, "true"].includes(value)) return true;
   fail();
@@ -82,7 +82,7 @@ export function canonicalUnixSocketPath(value) {
 }
 
 const fullDirectoryConfig = (input) => {
-  if (!fullDirectoryEnabled(input.fullDirectoryEnabled)) {
+  if (!featureEnabled(input.fullDirectoryEnabled)) {
     return Object.freeze({ enabled: false });
   }
 
@@ -113,6 +113,27 @@ const fullDirectoryConfig = (input) => {
   });
 };
 
+const recipientCapabilityConfig = (
+  input,
+  fullDirectory
+) => {
+  const enabled =
+    featureEnabled(
+      input.recipientCapabilityEnabled
+    );
+
+  if (
+    enabled &&
+    fullDirectory?.enabled !== true
+  ) {
+    fail();
+  }
+
+  return Object.freeze({
+    enabled
+  });
+};
+
 export function parseSocialOAuthConfig(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) fail();
   const publicOrigin = canonicalHttpsOrigin(input.publicOrigin);
@@ -127,13 +148,23 @@ export function parseSocialOAuthConfig(input) {
   const nostrPublishRelayUrl = [undefined, null, ""].includes(input.nostrPublishRelayUrl)
     ? null
     : canonicalWssRelayUrl(input.nostrPublishRelayUrl);
+  const fullDirectory =
+    fullDirectoryConfig(input);
+
+  const recipientCapability =
+    recipientCapabilityConfig(
+      input,
+      fullDirectory
+    );
+
   const result = {
     publicOrigin, authorityOrigin, clientId, clientSecret: input.clientSecret, bindHost, nostrRelayUrl, nostrPublishRelayUrl,
     port: integer(input.port, LIMITS.port), transactionTtlSeconds: integer(input.transactionTtlSeconds, LIMITS.ttl),
     sessionTtlSeconds: integer(input.sessionTtlSeconds, LIMITS.ttl), maxPendingTransactions: integer(input.maxPendingTransactions, LIMITS.capacity),
     maxSessions: integer(input.maxSessions, LIMITS.capacity), outboundTimeoutMs: integer(input.outboundTimeoutMs, LIMITS.timeout),
     callbackUri: `${publicOrigin}/auth/callback`, scope: "openid",
-    fullDirectory: fullDirectoryConfig(input)
+    fullDirectory,
+    recipientCapability
   };
   return Object.freeze(result);
 }
@@ -145,6 +176,8 @@ export function configFromEnvironment(env) {
     maxPendingTransactions: env.SOCIAL_MAX_PENDING_TRANSACTIONS, maxSessions: env.SOCIAL_MAX_SESSIONS,
     outboundTimeoutMs: env.SOCIAL_OUTBOUND_TIMEOUT_MS, nostrRelayUrl: env.SOCIAL_NOSTR_RELAY_URL,
     nostrPublishRelayUrl: env.SOCIAL_NOSTR_PUBLISH_RELAY_URL,
+    recipientCapabilityEnabled:
+      env.SOCIAL_RECIPIENT_CAPABILITY_ENABLED,
     fullDirectoryEnabled: env.SOCIAL_FULL_DIRECTORY_ENABLED,
     fullDirectorySocketPath: env.SOCIAL_UBID_PRIVATE_SOCKET_PATH,
     fullDirectoryServiceTokenUrl: env.SOCIAL_UBID_SERVICE_TOKEN_URL,

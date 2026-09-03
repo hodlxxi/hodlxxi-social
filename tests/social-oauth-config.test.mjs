@@ -213,6 +213,7 @@ test("environment mapping uses only exact UBID client-credential names", () => {
     SOCIAL_MAX_SESSIONS: valid.maxSessions,
     SOCIAL_OUTBOUND_TIMEOUT_MS: valid.outboundTimeoutMs,
     SOCIAL_FULL_DIRECTORY_ENABLED: "true",
+    SOCIAL_RECIPIENT_CAPABILITY_ENABLED: "true",
     SOCIAL_UBID_PRIVATE_SOCKET_PATH:
       fullDirectory.fullDirectorySocketPath,
     SOCIAL_UBID_SERVICE_TOKEN_URL:
@@ -245,4 +246,55 @@ test("environment mapping uses only exact UBID client-credential names", () => {
   );
   assert.equal(Object.hasOwn(parsed.fullDirectory, "issuer"), false);
   assert.equal(Object.hasOwn(parsed.fullDirectory, "principal"), false);
+  assert.deepEqual(
+    parsed.recipientCapability,
+    { enabled: true }
+  );
 });
+
+
+test(
+  "recipient capability composition is disabled by default and requires enabled Full directory",
+  () => {
+    assert.deepEqual(
+      parseSocialOAuthConfig(valid)
+        .recipientCapability,
+      { enabled: false }
+    );
+
+    assert.deepEqual(
+      parseSocialOAuthConfig({
+        ...valid,
+        ...fullDirectory,
+        recipientCapabilityEnabled:
+          "true"
+      }).recipientCapability,
+      { enabled: true }
+    );
+
+    assert.throws(
+      () =>
+        parseSocialOAuthConfig({
+          ...valid,
+          recipientCapabilityEnabled:
+            "true"
+        }),
+      /invalid Social OAuth configuration/
+    );
+
+    for (
+      const recipientCapabilityEnabled
+      of ["1", "TRUE", "yes", 1]
+    ) {
+      assert.throws(
+        () =>
+          parseSocialOAuthConfig({
+            ...valid,
+            ...fullDirectory,
+            recipientCapabilityEnabled
+          }),
+        /invalid Social OAuth configuration/
+      );
+    }
+  }
+);

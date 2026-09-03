@@ -9,6 +9,8 @@ import { createSocialOAuthBff, parseRawRequestTarget, SECURITY_HEADERS } from ".
 import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 import { createUbidFullDirectoryClient } from "../src/server/ubid-full-directory-client.mjs";
 import { createUbidUnixSocketTransport } from "../src/server/ubid-unix-socket-transport.mjs";
+import { createOpaqueRecipientCapabilityStore } from "../src/server/opaque-recipient-capability.mjs";
+import { createOpaqueRecipientCapabilityIssuer } from "../src/server/opaque-recipient-capability-issuer.mjs";
 
 export async function createFullDirectoryIntegration(
   fullDirectory,
@@ -24,6 +26,51 @@ export async function createFullDirectoryIntegration(
     directoryUrl: fullDirectory.directoryUrl
   });
   return clientFactory(fullDirectory, { fetchImpl });
+}
+
+export function createRecipientCapabilityIntegration(
+  recipientCapability,
+  {
+    sessions,
+    authorityReader,
+    fullDirectoryClient,
+    storeFactory =
+      createOpaqueRecipientCapabilityStore,
+    issuerFactory =
+      createOpaqueRecipientCapabilityIssuer
+  } = {}
+) {
+  if (
+    recipientCapability?.enabled !== true
+  ) {
+    return undefined;
+  }
+
+  if (
+    !sessions ||
+    typeof authorityReader !==
+      "function" ||
+    typeof fullDirectoryClient?.
+      readForViewer !== "function" ||
+    typeof storeFactory !==
+      "function" ||
+    typeof issuerFactory !==
+      "function"
+  ) {
+    throw new TypeError(
+      "invalid recipient capability integration"
+    );
+  }
+
+  const capabilityStore =
+    storeFactory();
+
+  return issuerFactory({
+    sessions,
+    authorityReader,
+    fullDirectoryClient,
+    capabilityStore
+  });
 }
 
 export function classifyRequestTarget(target, publicOrigin) {
@@ -95,13 +142,35 @@ export async function runServer({ env = process.env, stdout = console.log, stder
       return 2;
     }
   }
+  let recipientCapabilityIssuer;
+
+  if (
+    config.recipientCapability.enabled
+  ) {
+    try {
+      recipientCapabilityIssuer =
+        createRecipientCapabilityIntegration(
+          config.recipientCapability,
+          {
+            sessions,
+            authorityReader,
+            fullDirectoryClient
+          }
+        );
+    } catch {
+      stderr("invalid configuration");
+      return 2;
+    }
+  }
+
   const bff = createSocialOAuthBff({
     config,
     pendingTransactions,
     sessions,
     oauthClient,
     authorityReader,
-    fullDirectoryClient
+    fullDirectoryClient,
+    recipientCapabilityIssuer
   });
   const server = createServer(createHttpHandler({ publicOrigin: config.publicOrigin, bff }));
   try { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(config.port, config.bindHost, resolve); }); }

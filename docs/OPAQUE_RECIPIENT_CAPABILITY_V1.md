@@ -2,8 +2,9 @@
 
 ## Status
 
-V1.27 Phases A and B are source-only. Phase C defines an uncomposed BFF
-recipient-selection route contract.
+V1.27 Phases A and B are source-only. Phase C defines the BFF
+recipient-selection route contract. Phase D adds explicitly gated server
+composition in source only.
 
 It defines a bounded process-local capability contract for selecting one
 viewer-private Full Directory alias for a future direct-message action.
@@ -268,3 +269,45 @@ counts, keys, or other metadata into the browser response.
 
 Phase C does not yet inject an issuer into the production server composition.
 Consequently this phase is not a production activation step and does not add UI.
+
+
+## Phase D explicitly gated server composition
+
+Phase D connects the existing process-local capability store, trusted Phase B
+issuer, and Phase C BFF dependency seam inside the Social server composition.
+
+Composition is disabled by default.
+
+The only configuration switch is:
+
+`SOCIAL_RECIPIENT_CAPABILITY_ENABLED`
+
+Accepted enabled values are exactly boolean `true` or string `"true"`.
+Absent, empty, false, and `"false"` are disabled. Other values fail
+configuration parsing.
+
+Recipient capability composition may be enabled only when the existing private
+Full Directory integration is also enabled. Enabling recipient capabilities
+without Full Directory support is an invalid Social configuration.
+
+When disabled, Social creates:
+
+- no recipient capability store; and
+- no recipient capability issuer.
+
+When enabled, Social creates exactly one process-local capability store and
+injects into the trusted issuer only:
+
+- the existing Social session store;
+- the existing authority reader;
+- the existing private Full Directory client; and
+- the process-local capability store.
+
+The resulting issuer is then injected into the existing BFF.
+
+Phase D does not change the BFF request contract, capability semantics, quotas,
+browser code, X25519 state, Nostr behavior, database schema, UBID, or Full
+authority rules.
+
+This phase does not set the production feature flag, restart Social, deploy
+code, activate a browser UI, or activate direct messaging.
