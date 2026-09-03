@@ -67,3 +67,21 @@ payment state, or graph visibility.
 Device-local persistence is deliberately not described as encrypted storage.
 Someone with access to the same browser profile, or hostile JavaScript running
 with the Social origin's authority, may be able to read these labels.
+
+## Alias namespace rotation
+
+A private label is bound to the current viewer-private directory alias, not to
+a hidden participant identity.
+
+For a fixed UBID directory alias secret and alias namespace version, the same
+viewer/target pair receives the same alias. If that secret or namespace version
+is intentionally rotated, the target receives a new alias.
+
+V1.26 does not migrate a label from an old alias to a new alias and does not
+attempt to link the two namespaces. The new alias therefore appears unlabeled
+until the viewer assigns a new private label. This fail-closed behavior avoids
+turning local labels into a cross-namespace identity-resolution mechanism.
+
+An old unmatched label record may remain in this browser profile's Social site
+storage. Clearing the browser's site data for Social removes those local
+records.
