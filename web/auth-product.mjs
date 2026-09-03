@@ -3,7 +3,7 @@ import {
   renderPageFrame,
   renderStatusBadge,
   renderUnavailableState
-} from "./components.mjs?v=1.25.0";
+} from "./components.mjs?v=1.26.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const CANONICAL_EVENT_ID = /^[0-9a-f]{64}$/;
@@ -243,6 +243,60 @@ const normalizeFullDirectory = (value) => {
     participants: Object.freeze(participants)
   });
 };
+
+const normalizePrivateLabels = (value, fullDirectory) => {
+  if (
+    !Array.isArray(value) ||
+    value.length > 4096
+  ) {
+    throw new TypeError("invalid private labels");
+  }
+
+  const allowedAliases = new Set(
+    fullDirectory.participants.map(
+      (participant) => participant.alias
+    )
+  );
+
+  const aliases = new Set();
+  const labels = [];
+
+  for (const record of value) {
+    if (
+      !plainObject(record) ||
+      !exactKeys(record, ["alias", "label"]) ||
+      typeof record.alias !== "string" ||
+      !allowedAliases.has(record.alias) ||
+      aliases.has(record.alias) ||
+      typeof record.label !== "string" ||
+      record.label.length === 0 ||
+      record.label.length > 256 ||
+      [...record.label].length > 64 ||
+      /[\u0000-\u001f\u007f]/u.test(record.label) ||
+      record.label.normalize("NFC") !== record.label ||
+      record.label.trim() !== record.label ||
+      /\s{2,}/u.test(record.label)
+    ) {
+      throw new TypeError("invalid private labels");
+    }
+
+    aliases.add(record.alias);
+
+    labels.push(
+      Object.freeze({
+        alias: record.alias,
+        label: record.label
+      })
+    );
+  }
+
+  return Object.freeze(labels);
+};
+
+const privateLabelFor = (model, alias) =>
+  model.privateLabels.find(
+    (record) => record.alias === alias
+  )?.label ?? null;
 
 const shortKey = (subject) =>
   `${subject.slice(0, 8)}…${subject.slice(-6)}`;
@@ -614,15 +668,33 @@ const fullNetworkDirectory = (model) => {
     `<div class="full-network-members" aria-label="Viewer-private Full Network members">` +
     model.fullDirectory.participants.map((participant) => {
       const alias = participant.alias;
+      const privateLabel = privateLabelFor(model, alias);
+
       return `<article class="full-network-member-card">` +
         `<div class="full-network-member-monogram" aria-hidden="true">${escapeHtml(privateAliasInitials(alias))}</div>` +
         `<div class="full-network-member-main">` +
+        (
+          privateLabel
+            ? `<div class="full-network-private-label">` +
+              `<strong>${escapeHtml(privateLabel)}</strong>` +
+              `<small>Private label · this device only</small>` +
+              `</div>`
+            : ""
+        ) +
         `<div class="full-network-member-heading">` +
         `<strong>Full Network member</strong>` +
         `<span class="full-network-member-status">Current Full</span>` +
         `</div>` +
         `<code title="${escapeHtml(alias)}">${escapeHtml(privateAliasSummary(alias))}</code>` +
         `<small>Viewer-private identifier</small>` +
+        `<form class="full-network-private-label-form" data-private-label-alias="${escapeHtml(alias)}">` +
+        `<label>` +
+        `<span>Private label on this device</span>` +
+        `<input name="label" maxlength="64" autocomplete="off" value="${escapeHtml(privateLabel ?? "")}" placeholder="e.g. Brother, Grandson, Ivan">` +
+        `</label>` +
+        `<button type="submit">Save</button>` +
+        `</form>` +
+        `<small class="full-network-private-label-help">Leave blank and save to remove. This label is not a profile name and is not sent to HODLXXI.</small>` +
         `</div>` +
         `</article>`;
     }).join("") +
@@ -798,7 +870,8 @@ export function createAuthenticatedProductModel({
   authorityValid,
   publicRead = DEFAULT_PUBLIC_READ,
   publicWrite = DEFAULT_PUBLIC_WRITE,
-  fullDirectory = DEFAULT_FULL_DIRECTORY
+  fullDirectory = DEFAULT_FULL_DIRECTORY,
+  privateLabels = []
 }) {
   if (
     typeof subject !== "string" ||
@@ -809,13 +882,20 @@ export function createAuthenticatedProductModel({
     throw new TypeError("invalid authenticated product model");
   }
 
+  const normalizedFullDirectory =
+    normalizeFullDirectory(fullDirectory);
+
   return Object.freeze({
     subject,
     status,
     authorityValid,
     publicRead: normalizePublicRead(publicRead),
     publicWrite: normalizePublicWrite(publicWrite),
-    fullDirectory: normalizeFullDirectory(fullDirectory)
+    fullDirectory: normalizedFullDirectory,
+    privateLabels: normalizePrivateLabels(
+      privateLabels,
+      normalizedFullDirectory
+    )
   });
 }
 

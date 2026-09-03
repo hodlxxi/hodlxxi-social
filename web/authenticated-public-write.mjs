@@ -1,10 +1,10 @@
 import {
   canonicalNostrRelayUrl
-} from "./authenticated-public-read.mjs?v=1.25.0";
+} from "./authenticated-public-read.mjs?v=1.26.0";
 
 import {
   verifyNostrEvent
-} from "./nostr-event-verifier.mjs?v=1.25.0";
+} from "./nostr-event-verifier.mjs?v=1.26.0";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const MAX_PROFILE_NAME = 80;
