@@ -1,6 +1,12 @@
-# Full Directory BFF V1 (source only)
+# Full Directory BFF V1
 
-V1.24 adds a disabled-by-default Social backend-for-frontend path for the UBID privacy-safe Full directory. This is source code only: it does not activate the feature, provision credentials, alter production configuration, restart a service, or deploy anything.
+## Historical V1.24 change scope
+
+V1.24 added a disabled-by-default Social backend-for-frontend path for the UBID privacy-safe Full directory. That PR was source code only: it did not activate the feature, provision credentials, alter production configuration, restart a service, or deploy anything.
+
+## Current deployment status
+
+The BFF was activated later through a separately reviewed production operation. The browser remains on the same-origin `GET /auth/full-directory` boundary and receives only viewer-private aliases. The confidential service credential, session-bound human viewer credential, and current UBID/CRT Full authority remain independent requirements. Public UBID internal Full-directory endpoints remain unavailable through the public HTTP boundary.
 
 ## Authority separation
 
@@ -49,9 +55,9 @@ Denial, disabled configuration, missing authority, malformed data, or upstream u
 
 The two URLs are canonical HTTPS logical identities, not TCP destinations. The token-endpoint audience is an exact credential string and may be HTTPS or opaque/URN-style; it is not derived from the service-token HTTP URL. The private socket path must be a bounded canonical absolute Linux path. Incomplete or unsafe enabled configuration fails startup closed. The configured `kid` must select exactly one matching RSA public JWK in UBID. Node's portable file API cannot atomically prohibit symlinks in every signing-key parent component, so trusted non-symlink parent directories and deployment ownership remain activation prerequisites.
 
-## Still not implemented or activated
+## Original V1.24 non-goals and still-separate work
 
-- Production socket/nginx wiring, configuration, credentials, key provisioning, deployment, activation, or service restart.
+- Production socket/nginx wiring, configuration, credentials, key provisioning, deployment, activation, and restart were outside the V1.24 PR itself; they were performed later as a separate reviewed activation.
 - Browser access to UBID internal endpoints or a public identity-resolution endpoint.
 - Names, profiles, avatars, presence, graph edges, messaging, or contact information.
 - Protected content transport, encryption, X25519, payments, or Nostr membership publication.

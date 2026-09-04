@@ -38,6 +38,16 @@ jobs:
       - name: Check frontend module
         run: node --check web/app.mjs
 
+      - name: Check authenticated product modules
+        run: |
+          node --check web/auth-entry.mjs
+          node --check web/auth-product.mjs
+          node --check web/authenticated-public-read.mjs
+          node --check web/authenticated-public-write.mjs
+          node --check web/nostr-event-verifier.mjs
+          node --check web/private-label-store.mjs
+          node --check web/secure-messaging-v128.mjs
+
       - name: Check Social OAuth server modules
         run: |
           node --check src/server/social-oauth-config.mjs
@@ -46,6 +56,18 @@ jobs:
           node --check src/server/hodlxxi-oauth-client.mjs
           node --check src/server/social-oauth-bff.mjs
           node --check scripts/hodlxxi-social-server.mjs
+
+      - name: Check private Full Directory and recipient capability modules
+        run: |
+          node --check src/server/ubid-full-directory-client.mjs
+          node --check src/server/ubid-unix-socket-transport.mjs
+          node --check src/server/opaque-recipient-capability.mjs
+          node --check src/server/opaque-recipient-capability-issuer.mjs
+
+      - name: Check production readiness modules
+        run: |
+          node --check src/server/social-production-readiness.mjs
+          node --check scripts/hodlxxi-social-production-readiness.mjs
 
       - name: Check whitespace integrity
         run: git diff --check

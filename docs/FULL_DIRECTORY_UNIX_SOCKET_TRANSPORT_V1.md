@@ -1,6 +1,12 @@
-# Full Directory Unix socket transport V1 (source only)
+# Full Directory Unix socket transport V1
 
-This change adds the disabled-by-default private transport needed by the existing Social Full-directory BFF. It changes source, tests, and documentation only. It does not configure a socket, provision a credential or signing key, edit nginx or systemd, restart a service, contact UBID, deploy, or activate Full Directory.
+## Historical V1.25 change scope
+
+V1.25 added the disabled-by-default private transport needed by the existing Social Full-directory BFF. That PR changed source, tests, and documentation only. It did not configure a socket, provision a credential or signing key, edit nginx or systemd, restart a service, contact UBID, deploy, or activate Full Directory.
+
+## Current deployment status
+
+The private Unix-socket transport was activated later through a separately reviewed production operation. The logical HTTPS endpoint identities remain separate from the physical Unix-socket transport, and public UBID internal service-token and Full-directory routes remain unavailable through the public HTTP boundary. Socket reachability still grants no human identity or Full authority.
 
 ## Boundary and threat model
 
@@ -40,4 +46,4 @@ Full Directory remains disabled unless `SOCIAL_FULL_DIRECTORY_ENABLED=true`. Dis
 
 When enabled, `SOCIAL_UBID_PRIVATE_SOCKET_PATH` is mandatory. Social accepts only a bounded canonical absolute Linux filesystem path: no root-only path, relative path, traversal, redundant separator, trailing separator, control character, whitespace, or non-canonical representation. An invalid or incomplete configuration retains the fixed non-secret startup diagnostic.
 
-Production activation remains a separate reviewed operation requiring a private nginx Unix socket and UBID loopback upstream, restrictive socket ownership/mode, the confidential client registration and JWKS, a protected RSA signing-key file, complete Social environment configuration, deployment/restart approval, and post-activation fail-closed verification. Node cannot apply an `O_NOFOLLOW`-style flag atomically to a Unix-socket connect, so the configured socket and every parent directory must also be deployment-controlled, non-attacker-writable, and verified not to redirect through symlinks.
+At the V1.25 source merge, production activation remained a separate reviewed operation requiring a private nginx Unix socket and UBID loopback upstream, restrictive socket ownership/mode, the confidential client registration and JWKS, a protected RSA signing-key file, complete Social environment configuration, deployment/restart approval, and post-activation fail-closed verification. That activation was later performed separately; ongoing socket ownership/mode hardening remains an operations concern rather than a change to this transport contract. Node cannot apply an `O_NOFOLLOW`-style flag atomically to a Unix-socket connect, so the configured socket and every parent directory must also be deployment-controlled, non-attacker-writable, and verified not to redirect through symlinks.
