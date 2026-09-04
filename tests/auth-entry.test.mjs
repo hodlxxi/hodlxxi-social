@@ -599,7 +599,7 @@ test("authenticated routes render complete truthful product surfaces instead of 
     ["#/full-network", /Private directory unavailable/],
     ["#/friends", /No direct friends yet/],
     ["#/friends-of-friends", /friends of friends/i],
-    ["#/messages", /authenticated-split/],
+    ["#/messages", /data-secure-messaging-v128/],
     ["#/groups", /product-metrics/],
     ["#/notifications", /all caught up/i],
     ["#/activity", /Social session authenticated/],
@@ -1491,27 +1491,27 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/components\.mjs\?v=1\.26\.0"/
+    /from "\.\/components\.mjs\?v=1\.28\.1"/
   );
 
   assert.match(
     module,
-    /from "\.\/shell\.mjs\?v=1\.26\.0"/
+    /from "\.\/shell\.mjs\?v=1\.28\.1"/
   );
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs\?v=1\.26\.0"/
+    /from "\.\/auth-product\.mjs\?v=1\.28\.1"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-read\.mjs\?v=1\.26\.0"/
+    /from "\.\/authenticated-public-read\.mjs\?v=1\.28\.1"/
   );
 
   assert.match(
     module,
-    /from "\.\/authenticated-public-write\.mjs\?v=1\.26\.0"/
+    /from "\.\/authenticated-public-write\.mjs\?v=1\.28\.1"/
   );
 
   assert.match(
@@ -1531,12 +1531,12 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.26\.0"/
+    /src="\.\/auth-entry\.mjs\?v=1\.28\.1"/
   );
 
   assert.match(
     html,
-    /href="\.\/styles\.css\?v=1\.26\.0"/
+    /href="\.\/styles\.css\?v=1\.28\.1"/
   );
 
   assert.match(
@@ -1600,7 +1600,7 @@ test("authenticated browser graph uses one explicit release revision and no unve
   assert.equal(references.length, 12);
   assert.deepEqual(
     [...new Set(references.map((match) => match[1]))],
-    ["1.26.0"]
+    ["1.28.1"]
   );
   assert.doesNotMatch(
     html,
@@ -2190,3 +2190,214 @@ test(
     assert.equal(writes, 0);
   }
 );
+
+
+test("Messages keeps one V1.28B renderer on first load, fresh bootstrap, and route return", async () => {
+  const boot = async () => {
+    const document = fakeDocument();
+    const browser = fakeBrowser("#/messages");
+    const calls = [];
+
+    const binding = bindAuthenticatedEntry(document, {
+      browser,
+      fetchImpl: async (url) => {
+        calls.push(url);
+
+        if (url === "/auth/session") {
+          return response({
+            authenticated: true,
+            subject
+          });
+        }
+
+        if (url === "/auth/authority") {
+          return response({
+            subject,
+            status: "full",
+            valid: true
+          });
+        }
+
+        if (url === "/auth/full-directory") {
+          return response({
+            state: "available",
+            participants: [
+              { alias: "pairwise.alias-9" },
+              { alias: "pairwise.alias-8" }
+            ]
+          });
+        }
+
+        return response({ enabled: false });
+      }
+    });
+
+    await binding.ready;
+
+    return {
+      document,
+      browser,
+      calls
+    };
+  };
+
+  const first = await boot();
+  const refreshed = await boot();
+
+  for (const state of [first, refreshed]) {
+    const html =
+      state.document.elements[
+        "#app-page"
+      ].innerHTML;
+
+    assert.match(
+      html,
+      /data-secure-messaging-v128/
+    );
+    assert.match(
+      html,
+      /pairwise\.alias-9/
+    );
+    assert.doesNotMatch(
+      html,
+      /Your inbox is ready|authenticated-split/
+    );
+    assert.equal(
+      state.calls.filter(
+        (url) => url ===
+          "/auth/full-directory"
+      ).length,
+      1
+    );
+  }
+
+
+  const inputListener =
+    first.document.listeners.get("input");
+
+  assert.equal(
+    typeof inputListener,
+    "function"
+  );
+
+  inputListener({
+    target: {
+      value: "alias-8",
+      hasAttribute(name) {
+        return name ===
+          "data-secure-v128-search";
+      }
+    }
+  });
+
+  let interacted =
+    first.document.elements[
+      "#app-page"
+    ].innerHTML;
+
+  assert.match(
+    interacted,
+    /value="alias-8"/
+  );
+  assert.match(
+    interacted,
+    /pairwise\.alias-8/
+  );
+  assert.doesNotMatch(
+    interacted,
+     /pairwise\.alias-9/
+  );
+
+  const clickListener =
+    first.document.listeners.get("click");
+
+  assert.equal(
+    typeof clickListener,
+    "function"
+  );
+
+  const recipientButton = {
+    id: "",
+    closest(selector) {
+      return selector === "button"
+        ? this
+        : null;
+    },
+    hasAttribute() {
+      return false;
+    },
+    getAttribute(name) {
+      return name ===
+        "data-secure-v128-recipient"
+        ? "pairwise.alias-8"
+        : null;
+    }
+  };
+
+  clickListener({
+    target: recipientButton
+  });
+
+  interacted =
+    first.document.elements[
+      "#app-page"
+    ].innerHTML;
+
+  assert.match(
+    interacted,
+    /V1\.28B selection only/
+  );
+  assert.match(
+    interacted,
+    /aria-current="true"/
+  );
+  first.browser.location.hash = "#/home";
+  first.browser.listeners.get("hashchange")?.();
+
+  assert.doesNotMatch(
+    first.document.elements[
+      "#app-page"
+    ].innerHTML,
+    /data-secure-messaging-v128/
+  );
+
+  first.browser.location.hash = "#/messages";
+  first.browser.listeners.get("hashchange")?.();
+
+  const returned =
+    first.document.elements[
+      "#app-page"
+    ].innerHTML;
+
+  assert.match(
+    returned,
+    /data-secure-messaging-v128/
+  );
+  assert.match(
+    returned,
+    /pairwise\.alias-9/
+  );
+  assert.doesNotMatch(
+    returned,
+    /Your inbox is ready|authenticated-split/
+  );
+  assert.match(
+    returned,
+    /Select a Full Network member/
+  );
+  assert.doesNotMatch(
+    returned,
+    /V1\.28B selection only/
+  );
+  assert.doesNotMatch(
+    returned,
+    /value="alias-8"/
+  );
+  assert.equal(
+    first.calls.filter(
+      (url) => url ===
+        "/auth/full-directory"
+    ).length,
+    1
+  );
+});

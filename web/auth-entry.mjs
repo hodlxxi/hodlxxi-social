@@ -1,34 +1,34 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs?v=1.26.0";
+} from "./components.mjs?v=1.28.1";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.26.0";
+} from "./auth-product.mjs?v=1.28.1";
 
 import {
   createBrowserPrivateLabelStore
-} from "./private-label-store.mjs?v=1.26.0";
+} from "./private-label-store.mjs?v=1.28.1";
 
-import { renderNavigation } from "./shell.mjs?v=1.26.0";
+import { renderNavigation } from "./shell.mjs?v=1.28.1";
 
 import {
   canonicalNostrRelayUrl,
   createPendingAuthenticatedPublicRead,
   createUnavailableAuthenticatedPublicRead,
   loadAuthenticatedPublicRead
-} from "./authenticated-public-read.mjs?v=1.26.0";
+} from "./authenticated-public-read.mjs?v=1.28.1";
 
 import {
   AUTHENTICATED_SIGNER_STATES,
   connectAuthenticatedNip07Signer,
   publishAuthenticatedNote,
   publishAuthenticatedProfile
-} from "./authenticated-public-write.mjs?v=1.26.0";
+} from "./authenticated-public-write.mjs?v=1.28.1";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const UNSAFE_PRIVATE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;
@@ -501,7 +501,8 @@ export function buildAuthenticatedProductView(
   publicRead = createUnavailableAuthenticatedPublicRead(),
   publicWrite = DISABLED_PUBLIC_WRITE,
   fullDirectory = UNAVAILABLE_FULL_DIRECTORY,
-  privateLabels = []
+  privateLabels = [],
+  messagingUi = undefined
 ) {
   if (
     !session ||
@@ -544,7 +545,7 @@ export function buildAuthenticatedProductView(
   return Object.freeze({
     route,
     status,
-    page: renderAuthenticatedProductPage(route, model),
+    page: renderAuthenticatedProductPage(route, model, messagingUi),
     desktopNavigation: renderNavigation(
       route,
       session.subject,
@@ -649,8 +650,13 @@ export function bindAuthenticatedEntry(
   let currentPublicWrite = DISABLED_PUBLIC_WRITE;
   let currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
   let fullDirectoryAttempted = false;
+  let currentMessagingSelectedAlias = null;
+  let currentMessagingFilter = "";
 
   const clearProduct = () => {
+    currentMessagingSelectedAlias = null;
+    currentMessagingFilter = "";
+
     desktopNavigation.innerHTML = "";
     mobileNavigation.innerHTML = "";
     contextProfile.innerHTML = "";
@@ -790,7 +796,11 @@ export function bindAuthenticatedEntry(
       currentPublicRead ?? createUnavailableAuthenticatedPublicRead(),
       currentPublicWrite,
       currentFullDirectory,
-      Object.freeze(privateLabels)
+      Object.freeze(privateLabels),
+      Object.freeze({
+        selectedAlias: currentMessagingSelectedAlias,
+        filter: currentMessagingFilter
+      })
     );
 
     desktopNavigation.innerHTML =
@@ -866,10 +876,12 @@ export function bindAuthenticatedEntry(
       currentSession?.authenticated !== true ||
       currentAuthority?.valid !== true ||
       currentAuthority.status !== "full" ||
-      parseAuthenticatedRoute(
-        browser?.location?.hash ?? "",
-        currentSession.subject
-      ).page !== "full-network"
+      !["full-network", "messages"].includes(
+        parseAuthenticatedRoute(
+          browser?.location?.hash ?? "",
+          currentSession.subject
+        ).page
+      )
     ) return false;
 
     fullDirectoryAttempted = true;
@@ -1138,14 +1150,98 @@ export function bindAuthenticatedEntry(
   });
 
   root.addEventListener?.("click", (event) => {
-    if (event.target?.id !== "connect-authenticated-signer") {
+    const button = event.target?.closest?.("button");
+
+    if (!button) return;
+
+    if (button.id === "connect-authenticated-signer") {
+      event.preventDefault?.();
+      void connectSigner();
       return;
     }
-    event.preventDefault?.();
-    void connectSigner();
+
+    if (
+      currentSession?.authenticated !== true ||
+      parseAuthenticatedRoute(
+        browser?.location?.hash ?? "",
+        currentSession.subject
+      ).page !== "messages"
+    ) {
+      return;
+    }
+
+    if (button.hasAttribute?.("data-secure-v128-focus-search")) {
+      appPage
+        .querySelector?.("[data-secure-v128-search]")
+        ?.focus?.();
+      return;
+    }
+
+    const alias =
+      button.getAttribute?.("data-secure-v128-recipient");
+
+    if (
+      typeof alias === "string" &&
+      currentAuthority?.valid === true &&
+      currentAuthority.status === "full" &&
+      currentFullDirectory?.state === "available" &&
+      currentFullDirectory.participants.some(
+        (participant) => participant.alias === alias
+      )
+    ) {
+      currentMessagingSelectedAlias = alias;
+      paintProduct();
+    }
+  });
+
+  root.addEventListener?.("input", (event) => {
+    if (
+      currentSession?.authenticated !== true ||
+      parseAuthenticatedRoute(
+        browser?.location?.hash ?? "",
+        currentSession.subject
+      ).page !== "messages" ||
+      !event.target?.hasAttribute?.("data-secure-v128-search") ||
+      typeof event.target.value !== "string"
+    ) {
+      return;
+    }
+
+    currentMessagingFilter = event.target.value
+      .normalize("NFKC")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .replace(/\s+/g, " ")
+      .slice(0, 120);
+
+    paintProduct();
+
+    const input =
+      appPage.querySelector?.("[data-secure-v128-search]");
+
+    if (input) {
+      input.focus?.();
+
+      try {
+        input.setSelectionRange?.(
+          currentMessagingFilter.length,
+          currentMessagingFilter.length
+        );
+      } catch {
+        // Selection support is optional.
+      }
+    }
   });
 
   root.addEventListener?.("submit", (event) => {
+    if (
+      event.target?.hasAttribute?.(
+        "data-secure-v128-inert-composer"
+      )
+    ) {
+      event.preventDefault?.();
+      return;
+    }
+
     const privateLabelAlias =
       event.target?.dataset?.privateLabelAlias;
 
@@ -1224,6 +1320,9 @@ export function bindAuthenticatedEntry(
   });
 
   browser?.addEventListener?.("hashchange", () => {
+    currentMessagingSelectedAlias = null;
+    currentMessagingFilter = "";
+
     paintProduct();
     void loadFullDirectoryForRoute();
   });
