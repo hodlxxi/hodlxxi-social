@@ -1,4 +1,4 @@
-import test from "node:test"; import assert from "node:assert/strict"; import { classifyRequestTarget, createFullDirectoryIntegration, createHttpHandler } from "../scripts/hodlxxi-social-server.mjs"; import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
+import test from "node:test"; import assert from "node:assert/strict"; import { classifyRequestTarget, createFullDirectoryIntegration, createHttpHandler, createRecipientCapabilityIntegration } from "../scripts/hodlxxi-social-server.mjs"; import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 const invoke=async({url,method="GET",headers={},rawHeaders=[]},bff=async()=>{throw new Error("must not route");})=>{const incoming={url,method,headers,rawHeaders}; const result={headers:{},setHeader(k,v){this.headers[k]=v;},end(body){this.body=body;}}; await createHttpHandler({publicOrigin:"https://social.example",bff})(incoming,result); return result;};
 test("request-target recognition is bounded and exact",()=>{assert.deepEqual(classifyRequestTarget("/auth/callback?code=x&state=y","https://social.example"),{valid:true,callback:true}); for(const target of ["/auth/callback-extra","/auth/callback/","/auth/callback%2fextra","/x/%2e%2e/auth/callback","/auth/callback#x","//auth/callback","https://foreign.example/auth/callback","/bad target","/"+"a".repeat(4097)]) assert.equal(classifyRequestTarget(target,"https://social.example").callback,false);});
 test("framed exact callback rejects, clears transaction cookie, sanitizes, and performs zero routing",async()=>{let calls=0; for(const url of ["/auth/callback","/auth/callback?code=secret&state=hidden"]){const result=await invoke({url,headers:{"content-length":"1"},rawHeaders:["Content-Length","1"]},async()=>{calls++;}); assert.equal(result.statusCode,413); assert.equal(result.headers["Set-Cookie"],expireTransactionCookie()); assert.equal(result.headers["Cache-Control"],"no-store"); assert.doesNotMatch(result.body,/secret|hidden|Content-Length/);} assert.equal(calls,0);});
@@ -171,3 +171,127 @@ test("unsafe enabled socket configuration fails before client key loading", asyn
   );
   assert.equal(clientCalls,0);
 });
+
+
+test(
+  "disabled recipient capability composition creates neither store nor issuer",
+  () => {
+    let calls = 0;
+
+    const result =
+      createRecipientCapabilityIntegration(
+        { enabled: false },
+        {
+          storeFactory() {
+            calls += 1;
+            throw new Error(
+              "must not create store"
+            );
+          },
+          issuerFactory() {
+            calls += 1;
+            throw new Error(
+              "must not create issuer"
+            );
+          }
+        }
+      );
+
+    assert.equal(
+      result,
+      undefined
+    );
+
+    assert.equal(
+      calls,
+      0
+    );
+  }
+);
+
+test(
+  "enabled recipient capability composition injects one process-local store and exact trusted server dependencies",
+  () => {
+    const sessions = {};
+    const authorityReader =
+      async () => ({
+        status: "full"
+      });
+
+    const fullDirectoryClient = {
+      readForViewer() {}
+    };
+
+    const capabilityStore = {};
+    const issuer = {
+      issue() {}
+    };
+
+    let storeCalls = 0;
+    let issuerCalls = 0;
+
+    const result =
+      createRecipientCapabilityIntegration(
+        { enabled: true },
+        {
+          sessions,
+          authorityReader,
+          fullDirectoryClient,
+          storeFactory() {
+            storeCalls += 1;
+            return capabilityStore;
+          },
+          issuerFactory(input) {
+            issuerCalls += 1;
+
+            assert.deepEqual(
+              Object.keys(input).sort(),
+              [
+                "authorityReader",
+                "capabilityStore",
+                "fullDirectoryClient",
+                "sessions"
+              ]
+            );
+
+            assert.equal(
+              input.sessions,
+              sessions
+            );
+
+            assert.equal(
+              input.authorityReader,
+              authorityReader
+            );
+
+            assert.equal(
+              input.fullDirectoryClient,
+              fullDirectoryClient
+            );
+
+            assert.equal(
+              input.capabilityStore,
+              capabilityStore
+            );
+
+            return issuer;
+          }
+        }
+      );
+
+    assert.equal(
+      result,
+      issuer
+    );
+
+    assert.equal(
+      storeCalls,
+      1
+    );
+
+    assert.equal(
+      issuerCalls,
+      1
+    );
+  }
+);

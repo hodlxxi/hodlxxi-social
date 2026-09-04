@@ -637,3 +637,432 @@ test("Full directory route is GET-only and rejects query-based identity selectio
   }
   assert.equal(calls, 0);
 });
+
+
+const recipientCapabilitySetup = ({
+  includeIssuer = true,
+  issuerResult = {
+    state: "available",
+    capability:
+      `rc_${"Q".repeat(43)}`,
+    expiresAt: 60_000
+  },
+  issuerImpl
+} = {}) => {
+  const pendingTransactions =
+    createBoundedStore({
+      ttlSeconds: 300,
+      capacity: 4,
+      now: () => 0
+    });
+
+  const sessions =
+    createBoundedStore({
+      ttlSeconds: 3600,
+      capacity: 4,
+      now: () => 0
+    });
+
+  const subject =
+    "d".repeat(64);
+
+  const sessionId =
+    "R".repeat(43);
+
+  assert.equal(
+    sessions.create(
+      sessionId,
+      {
+        subject,
+        viewerAccessToken:
+          "private-human-bearer"
+      }
+    ),
+    true
+  );
+
+  const calls = [];
+
+  const recipientCapabilityIssuer =
+    Object.freeze({
+      async issue(input) {
+        calls.push(input);
+
+        if (issuerImpl) {
+          return issuerImpl(input);
+        }
+
+        return issuerResult;
+      }
+    });
+
+  const bff =
+    createSocialOAuthBff({
+      config,
+      pendingTransactions,
+      sessions,
+      oauthClient: {
+        async authenticate() {
+          throw new Error(
+            "not used"
+          );
+        }
+      },
+      ...(includeIssuer
+        ? {
+            recipientCapabilityIssuer
+          }
+        : {}),
+      random: (size) =>
+        Buffer.alloc(size, 9)
+    });
+
+  return {
+    bff,
+    calls,
+    subject,
+    sessionId,
+    cookie:
+      `${SESSION_COOKIE_NAME}=${sessionId}`
+  };
+};
+
+test(
+  "recipient capability route accepts only same-origin session-cookie selection and returns a minimal opaque result",
+  async () => {
+    const fixture =
+      recipientCapabilitySetup();
+
+    const alias =
+      "p_KHcJHzAgVKtH830W3gJGIg";
+
+    const result =
+      await fixture.bff({
+        method: "POST",
+        url:
+          "/auth/recipient-capability",
+        headers: {
+          cookie: fixture.cookie,
+          origin:
+            config.publicOrigin,
+          "x-hodlxxi-recipient-alias":
+            alias,
+          "x-hodlxxi-subject":
+            "f".repeat(64),
+          "x-hodlxxi-now":
+            "999999999"
+        }
+      });
+
+    assert.equal(
+      result.status,
+      200
+    );
+
+    assert.equal(
+      result.headers[
+        "Cache-Control"
+      ],
+      "no-store"
+    );
+
+    assert.deepEqual(
+      fixture.calls,
+      [{
+        sessionId:
+          fixture.sessionId,
+        alias
+      }]
+    );
+
+    assert.deepEqual(
+      JSON.parse(result.body),
+      {
+        state: "available",
+        capability:
+          `rc_${"Q".repeat(43)}`,
+        expiresAt: 60_000
+      }
+    );
+
+    assert.doesNotMatch(
+      result.body,
+      new RegExp(
+        fixture.subject
+      )
+    );
+
+    assert.doesNotMatch(
+      result.body,
+      new RegExp(alias)
+    );
+
+    assert.doesNotMatch(
+      result.body,
+      /private-human-bearer/i
+    );
+  }
+);
+
+test(
+  "recipient capability route rejects method query origin authentication and malformed aliases before issuer invocation",
+  async () => {
+    const fixture =
+      recipientCapabilitySetup();
+
+    const alias =
+      "p_KHcJHzAgVKtH830W3gJGIg";
+
+    const cases = [
+      {
+        method: "GET",
+        url:
+          "/auth/recipient-capability",
+        headers: {
+          cookie: fixture.cookie,
+          origin:
+            config.publicOrigin,
+          "x-hodlxxi-recipient-alias":
+            alias
+        },
+        status: 405
+      },
+      {
+        method: "POST",
+        url:
+          "/auth/recipient-capability?alias=safe",
+        headers: {
+          cookie: fixture.cookie,
+          origin:
+            config.publicOrigin,
+          "x-hodlxxi-recipient-alias":
+            alias
+        },
+        status: 400
+      },
+      {
+        method: "POST",
+        url:
+          "/auth/recipient-capability",
+        headers: {
+          cookie: fixture.cookie,
+          origin:
+            "https://foreign.example",
+          "x-hodlxxi-recipient-alias":
+            alias
+        },
+        status: 403
+      },
+      {
+        method: "POST",
+        url:
+          "/auth/recipient-capability",
+        headers: {
+          origin:
+            config.publicOrigin,
+          "x-hodlxxi-recipient-alias":
+            alias
+        },
+        status: 401
+      },
+      {
+        method: "POST",
+        url:
+          "/auth/recipient-capability",
+        headers: {
+          cookie: fixture.cookie,
+          origin:
+            config.publicOrigin,
+          "x-hodlxxi-recipient-alias":
+            fixture.subject
+        },
+        status: 400
+      },
+      {
+        method: "POST",
+        url:
+          "/auth/recipient-capability",
+        headers: {
+          cookie: fixture.cookie,
+          origin:
+            config.publicOrigin,
+          "x-hodlxxi-recipient-alias":
+            "xpub-secret"
+        },
+        status: 400
+      }
+    ];
+
+    for (const request of cases) {
+      const result =
+        await fixture.bff(
+          request
+        );
+
+      assert.equal(
+        result.status,
+        request.status
+      );
+
+      assert.deepEqual(
+        JSON.parse(
+          result.body
+        ),
+        {
+          state:
+            "unavailable"
+        }
+      );
+    }
+
+    assert.equal(
+      fixture.calls.length,
+      0
+    );
+  }
+);
+
+test(
+  "missing throwing and malformed recipient issuers fail closed without target or authority leakage",
+  async () => {
+    const alias =
+      "p_KHcJHzAgVKtH830W3gJGIg";
+
+    const fixtures = [
+      recipientCapabilitySetup({
+        includeIssuer: false
+      }),
+      recipientCapabilitySetup({
+        issuerImpl() {
+          throw new Error(
+            "raw target subject and 42 participants"
+          );
+        }
+      }),
+      recipientCapabilitySetup({
+        issuerResult: {
+          state: "available",
+          capability:
+            `rc_${"Q".repeat(43)}`,
+          expiresAt: 60_000,
+          alias
+        }
+      }),
+      recipientCapabilitySetup({
+        issuerResult: {
+          state: "available",
+          capability:
+            "not-a-capability",
+          expiresAt: 60_000
+        }
+      }),
+      recipientCapabilitySetup({
+        issuerResult: {
+          state: "available",
+          capability:
+            `rc_${"Q".repeat(43)}`,
+          expiresAt:
+            "60000"
+        }
+      })
+    ];
+
+    for (const fixture of fixtures) {
+      const result =
+        await fixture.bff({
+          method: "POST",
+          url:
+            "/auth/recipient-capability",
+          headers: {
+            cookie:
+              fixture.cookie,
+            origin:
+              config.publicOrigin,
+            "x-hodlxxi-recipient-alias":
+              alias
+          }
+        });
+
+      assert.equal(
+        result.status,
+        503
+      );
+
+      assert.deepEqual(
+        JSON.parse(
+          result.body
+        ),
+        {
+          state:
+            "unavailable"
+        }
+      );
+
+      assert.doesNotMatch(
+        result.body,
+        /42|participant|subject|alias|target/i
+      );
+    }
+  }
+);
+
+test(
+  "recipient issuer dependency must expose an own data method and accessors are never executed",
+  () => {
+    let getterCalls = 0;
+
+    const hostileIssuer = {};
+
+    Object.defineProperty(
+      hostileIssuer,
+      "issue",
+      {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return async () => ({
+            state: "available"
+          });
+        }
+      }
+    );
+
+    const pendingTransactions =
+      createBoundedStore({
+        ttlSeconds: 300,
+        capacity: 4,
+        now: () => 0
+      });
+
+    const sessions =
+      createBoundedStore({
+        ttlSeconds: 3600,
+        capacity: 4,
+        now: () => 0
+      });
+
+    assert.throws(
+      () =>
+        createSocialOAuthBff({
+          config,
+          pendingTransactions,
+          sessions,
+          oauthClient: {
+            async authenticate() {
+              throw new Error(
+                "not used"
+              );
+            }
+          },
+          recipientCapabilityIssuer:
+            hostileIssuer
+        }),
+      TypeError
+    );
+
+    assert.equal(
+      getterCalls,
+      0
+    );
+  }
+);

@@ -17,6 +17,12 @@ const SUBJECT = /^[0-9a-f]{64}$/;
 const AUTHORITY_FIELDS = Object.freeze(["status", "subject", "valid"]);
 const AUTHENTICATION_FIELDS = Object.freeze(["accessToken", "subject"]);
 const FULL_DIRECTORY_UNAVAILABLE = Object.freeze({ state: "unavailable" });
+const RECIPIENT_CAPABILITY_UNAVAILABLE =
+  Object.freeze({ state: "unavailable" });
+const RECIPIENT_ALIAS_HEADER =
+  "x-hodlxxi-recipient-alias";
+const RECIPIENT_CAPABILITY =
+  /^rc_[A-Za-z0-9_-]{43}$/;
 const SAFE_ALIAS = /^[A-Za-z0-9._~-]{1,128}$/;
 const UNSAFE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;
 const BITCOIN_BASE58_ADDRESS = /^(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|[mn2][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
@@ -27,6 +33,108 @@ const privacySafeAlias = (value) =>
   !BITCOIN_BASE58_ADDRESS.test(value) &&
   !/^\d{7,15}$/.test(value) &&
   !value.includes("@");
+
+const ownDataMethod = (value, name) => {
+  try {
+    if (
+      value === null ||
+      typeof value !== "object"
+    ) {
+      return undefined;
+    }
+
+    const descriptor =
+      Object.getOwnPropertyDescriptor(
+        value,
+        name
+      );
+
+    return (
+      descriptor &&
+      Object.hasOwn(
+        descriptor,
+        "value"
+      ) &&
+      typeof descriptor.value ===
+        "function"
+    )
+      ? descriptor.value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeRecipientCapability = (value) => {
+  try {
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.getPrototypeOf(value) !==
+        Object.prototype
+    ) {
+      return null;
+    }
+
+    const descriptors =
+      Object.getOwnPropertyDescriptors(value);
+
+    const fields = [
+      "state",
+      "capability",
+      "expiresAt"
+    ];
+
+    const keys =
+      Reflect.ownKeys(descriptors);
+
+    if (
+      keys.length !== fields.length ||
+      keys.some(
+        (key) =>
+          typeof key !== "string" ||
+          !fields.includes(key) ||
+          !descriptors[key].enumerable ||
+          !Object.hasOwn(
+            descriptors[key],
+            "value"
+          )
+      ) ||
+      fields.some(
+        (field) => !keys.includes(field)
+      )
+    ) {
+      return null;
+    }
+
+    if (
+      descriptors.state.value !==
+        "available" ||
+      typeof descriptors.capability.value !==
+        "string" ||
+      !RECIPIENT_CAPABILITY.test(
+        descriptors.capability.value
+      ) ||
+      !Number.isSafeInteger(
+        descriptors.expiresAt.value
+      ) ||
+      descriptors.expiresAt.value <= 0
+    ) {
+      return null;
+    }
+
+    return Object.freeze({
+      state: "available",
+      capability:
+        descriptors.capability.value,
+      expiresAt:
+        descriptors.expiresAt.value
+    });
+  } catch {
+    return null;
+  }
+};
 
 const failClosedAuthority = (subject) =>
   Object.freeze({ subject, status: "limited", valid: false });
@@ -247,13 +355,35 @@ const exactQuery = (entries, names) => {
   return names.every((name) => Object.hasOwn(values, name)) ? Object.freeze(values) : null;
 };
 
-export function createSocialOAuthBff({ config, pendingTransactions, sessions, oauthClient, authorityReader, fullDirectoryClient, random = randomBytes }) {
+export function createSocialOAuthBff({
+  config,
+  pendingTransactions,
+  sessions,
+  oauthClient,
+  authorityReader,
+  fullDirectoryClient,
+  recipientCapabilityIssuer,
+  random = randomBytes
+}) {
+  const recipientCapabilityIssue =
+    recipientCapabilityIssuer === undefined
+      ? undefined
+      : ownDataMethod(
+          recipientCapabilityIssuer,
+          "issue"
+        );
+
   if (
     ![pendingTransactions, sessions, oauthClient].every(Boolean) ||
     typeof random !== "function" ||
     (
       authorityReader !== undefined &&
       typeof authorityReader !== "function"
+    ) ||
+    (
+      recipientCapabilityIssuer !==
+        undefined &&
+      !recipientCapabilityIssue
     )
   ) {
     throw new TypeError("invalid BFF dependencies");
@@ -271,18 +401,43 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
   const configuredPublishRelayUrl = configuredRelay(
     config?.nostrPublishRelayUrl
   );
-  const authenticatedSession = (cookieHeader) => {
-    let id;
+  const authenticatedSessionContext = (cookieHeader) => {
+    let sessionId;
+
     try {
-      id = parseCookieHeader(cookieHeader).get(SESSION_COOKIE_NAME);
+      sessionId =
+        parseCookieHeader(
+          cookieHeader
+        ).get(
+          SESSION_COOKIE_NAME
+        );
     } catch {
       return null;
     }
-    const session = id ? sessions.get(id) : null;
-    return session && typeof session.subject === "string" && SUBJECT.test(session.subject)
-      ? session
+
+    const session =
+      sessionId
+        ? sessions.get(sessionId)
+        : null;
+
+    return (
+      session &&
+      typeof session.subject ===
+        "string" &&
+      SUBJECT.test(session.subject)
+    )
+      ? Object.freeze({
+          sessionId,
+          session
+        })
       : null;
   };
+
+  const authenticatedSession = (cookieHeader) =>
+    authenticatedSessionContext(
+      cookieHeader
+    )?.session ?? null;
+
   const authenticatedSubject = (cookieHeader) =>
     authenticatedSession(cookieHeader)?.subject ?? null;
   const callbackHeaders = (extra = {}) => ({ "Set-Cookie": expireTransactionCookie(), ...extra });
@@ -427,6 +582,85 @@ export function createSocialOAuthBff({ config, pendingTransactions, sessions, oa
           : json(503, FULL_DIRECTORY_UNAVAILABLE);
       } catch {
         return json(503, FULL_DIRECTORY_UNAVAILABLE);
+      }
+    }
+
+    if (target.path === "/auth/recipient-capability") {
+      if (
+        method !== "POST" ||
+        target.query.length !== 0
+      ) {
+        return json(
+          method === "POST" ? 400 : 405,
+          RECIPIENT_CAPABILITY_UNAVAILABLE
+        );
+      }
+
+      if (
+        request.headers?.origin !==
+          config.publicOrigin
+      ) {
+        return json(
+          403,
+          RECIPIENT_CAPABILITY_UNAVAILABLE
+        );
+      }
+
+      const context =
+        authenticatedSessionContext(
+          cookieHeader
+        );
+
+      if (!context) {
+        return json(
+          401,
+          RECIPIENT_CAPABILITY_UNAVAILABLE
+        );
+      }
+
+      const alias =
+        request.headers?.[
+          RECIPIENT_ALIAS_HEADER
+        ];
+
+      if (!privacySafeAlias(alias)) {
+        return json(
+          400,
+          RECIPIENT_CAPABILITY_UNAVAILABLE
+        );
+      }
+
+      if (!recipientCapabilityIssue) {
+        return json(
+          503,
+          RECIPIENT_CAPABILITY_UNAVAILABLE
+        );
+      }
+
+      try {
+        const issued =
+          normalizeRecipientCapability(
+            await recipientCapabilityIssue.call(
+              recipientCapabilityIssuer,
+              {
+                sessionId:
+                  context.sessionId,
+                alias
+              }
+            )
+          );
+
+        return issued
+          ? json(200, issued)
+          : json(
+              503,
+              RECIPIENT_CAPABILITY_UNAVAILABLE
+            );
+      } catch {
+        return json(
+          503,
+          RECIPIENT_CAPABILITY_UNAVAILABLE
+        );
       }
     }
 
