@@ -113,6 +113,65 @@ const fullDirectoryConfig = (input) => {
   });
 };
 
+
+const messagingDeviceConfig = (input) => {
+  if (!featureEnabled(input.messagingDeviceEnabled)) {
+    return Object.freeze({ enabled: false });
+  }
+
+  const socketPath =
+    canonicalUnixSocketPath(
+      input.messagingDeviceSocketPath
+    );
+
+  const signingKeyPath =
+    text(
+      input.messagingDeviceSigningKeyPath,
+      2048
+    );
+
+  if (!isAbsolute(signingKeyPath)) fail();
+
+  return Object.freeze({
+    enabled: true,
+    socketPath,
+    serviceTokenUrl:
+      canonicalHttpsUrl(
+        input.messagingDeviceServiceTokenUrl
+      ),
+    deviceBindingsUrl:
+      canonicalHttpsUrl(
+        input.messagingDeviceBindingsUrl
+      ),
+    clientId:
+      exactCredentialString(
+        input.messagingDeviceServiceClientId,
+        256
+      ),
+    clientSigningKeyId:
+      exactCredentialString(
+        input.messagingDeviceServiceClientSigningKeyId,
+        255
+      ),
+    tokenEndpointAudience:
+      exactCredentialString(
+        input.messagingDeviceServiceTokenEndpointAudience,
+        2048
+      ),
+    signingKeyPath,
+    tokenTimeoutMs:
+      integer(
+        input.messagingDeviceTokenTimeoutMs,
+        LIMITS.timeout
+      ),
+    requestTimeoutMs:
+      integer(
+        input.messagingDeviceRequestTimeoutMs,
+        LIMITS.timeout
+      )
+  });
+};
+
 const recipientCapabilityConfig = (
   input,
   fullDirectory
@@ -157,6 +216,9 @@ export function parseSocialOAuthConfig(input) {
       fullDirectory
     );
 
+  const messagingDevice =
+    messagingDeviceConfig(input);
+
   const result = {
     publicOrigin, authorityOrigin, clientId, clientSecret: input.clientSecret, bindHost, nostrRelayUrl, nostrPublishRelayUrl,
     port: integer(input.port, LIMITS.port), transactionTtlSeconds: integer(input.transactionTtlSeconds, LIMITS.ttl),
@@ -164,7 +226,8 @@ export function parseSocialOAuthConfig(input) {
     maxSessions: integer(input.maxSessions, LIMITS.capacity), outboundTimeoutMs: integer(input.outboundTimeoutMs, LIMITS.timeout),
     callbackUri: `${publicOrigin}/auth/callback`, scope: "openid",
     fullDirectory,
-    recipientCapability
+    recipientCapability,
+    messagingDevice
   };
   return Object.freeze(result);
 }
@@ -189,5 +252,25 @@ export function configFromEnvironment(env) {
       env.SOCIAL_UBID_SERVICE_TOKEN_ENDPOINT_AUDIENCE,
     fullDirectorySigningKeyPath: env.SOCIAL_UBID_SERVICE_SIGNING_KEY_PATH,
     fullDirectoryTokenTimeoutMs: env.SOCIAL_UBID_SERVICE_TOKEN_TIMEOUT_MS,
-    fullDirectoryRequestTimeoutMs: env.SOCIAL_UBID_FULL_DIRECTORY_TIMEOUT_MS });
+    fullDirectoryRequestTimeoutMs: env.SOCIAL_UBID_FULL_DIRECTORY_TIMEOUT_MS,
+    messagingDeviceEnabled:
+      env.SOCIAL_MESSAGING_DEVICE_ENABLED,
+    messagingDeviceSocketPath:
+      env.SOCIAL_UBID_MESSAGING_PRIVATE_SOCKET_PATH,
+    messagingDeviceServiceTokenUrl:
+      env.SOCIAL_UBID_MESSAGING_SERVICE_TOKEN_URL,
+    messagingDeviceBindingsUrl:
+      env.SOCIAL_UBID_MESSAGING_DEVICE_BINDINGS_URL,
+    messagingDeviceServiceClientId:
+      env.SOCIAL_UBID_MESSAGING_SERVICE_CLIENT_ID,
+    messagingDeviceServiceClientSigningKeyId:
+      env.SOCIAL_UBID_MESSAGING_SERVICE_CLIENT_SIGNING_KEY_ID,
+    messagingDeviceServiceTokenEndpointAudience:
+      env.SOCIAL_UBID_MESSAGING_SERVICE_TOKEN_ENDPOINT_AUDIENCE,
+    messagingDeviceSigningKeyPath:
+      env.SOCIAL_UBID_MESSAGING_SERVICE_SIGNING_KEY_PATH,
+    messagingDeviceTokenTimeoutMs:
+      env.SOCIAL_UBID_MESSAGING_SERVICE_TOKEN_TIMEOUT_MS,
+    messagingDeviceRequestTimeoutMs:
+      env.SOCIAL_UBID_MESSAGING_DEVICE_TIMEOUT_MS });
 }
