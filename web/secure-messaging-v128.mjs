@@ -1,6 +1,6 @@
 import {
   createBrowserPrivateLabelStore
-} from "./private-label-store.mjs?v=1.26.0";
+} from "./private-label-store.mjs?v=1.28.1";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const SAFE_ALIAS = /^[A-Za-z0-9._~-]{1,128}$/;
@@ -567,10 +567,5 @@ export function bootstrapSecureMessagingV128(
   return true;
 }
 
-if (typeof document !== "undefined") {
-  bootstrapSecureMessagingV128(
-    document,
-    globalThis.window,
-    globalThis.fetch
-  );
-}
+// Production route ownership belongs to auth-entry.mjs.
+// The explicit bootstrap remains exported for isolated use only.

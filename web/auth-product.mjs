@@ -3,7 +3,11 @@ import {
   renderPageFrame,
   renderStatusBadge,
   renderUnavailableState
-} from "./components.mjs?v=1.26.0";
+} from "./components.mjs?v=1.28.1";
+
+import {
+  renderSecureMessagingAuthenticatedShell
+} from "./secure-messaging-v128.mjs?v=1.28.1";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const CANONICAL_EVENT_ID = /^[0-9a-f]{64}$/;
@@ -759,19 +763,39 @@ const searchPage = (model, query = "") => {
   });
 };
 
-const messagesPage = (model) =>
-  renderPageFrame({
-    title: "Messages",
-    content:
-      `<section class="messages-product"><div class="message-tabs"><span class="active">Messages</span><a href="#/groups">Groups</a></div>` +
-      `<div class="split-surface authenticated-split"><div class="surface-list"><div class="surface-search">Search conversations</div>` +
-      `<div class="surface-list-empty"><span>0</span><p>No conversations</p></div></div>` +
-      `<div class="surface-detail">${surfaceEmpty({
-        icon: "✉",
-        title: "Your inbox is ready",
-        detail: "Encrypted conversations will appear here after recipient identity, signer and delivery relays are available. No message transport is active from this screen."
-      })}</div></div><p class="notice">Message access never grants membership or sponsor authority.</p></section>`
+const secureMessagingSnapshot = (model) => {
+  if (!hasFullNetworkAccess(model)) {
+    return Object.freeze({
+      state: "restricted",
+      recipients: EMPTY
+    });
+  }
+
+  if (model.fullDirectory.state !== "available") {
+    return Object.freeze({
+      state: "unavailable",
+      recipients: EMPTY
+    });
+  }
+
+  const recipients = model.fullDirectory.participants.map(
+    (participant) => Object.freeze({
+      alias: participant.alias,
+      label: privateLabelFor(model, participant.alias)
+    })
+  );
+
+  return Object.freeze({
+    state: "available",
+    recipients: Object.freeze(recipients)
   });
+};
+
+const messagesPage = (model) =>
+  renderSecureMessagingAuthenticatedShell(
+    secureMessagingSnapshot(model)
+  );
+
 
 const groupsPage = () =>
   renderPageFrame({

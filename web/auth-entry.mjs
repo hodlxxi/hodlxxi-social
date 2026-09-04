@@ -1,34 +1,34 @@
 import {
   escapeHtml,
   renderPageFrame
-} from "./components.mjs?v=1.26.0";
+} from "./components.mjs?v=1.28.1";
 
 import {
   createAuthenticatedProductModel,
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.26.0";
+} from "./auth-product.mjs?v=1.28.1";
 
 import {
   createBrowserPrivateLabelStore
-} from "./private-label-store.mjs?v=1.26.0";
+} from "./private-label-store.mjs?v=1.28.1";
 
-import { renderNavigation } from "./shell.mjs?v=1.26.0";
+import { renderNavigation } from "./shell.mjs?v=1.28.1";
 
 import {
   canonicalNostrRelayUrl,
   createPendingAuthenticatedPublicRead,
   createUnavailableAuthenticatedPublicRead,
   loadAuthenticatedPublicRead
-} from "./authenticated-public-read.mjs?v=1.26.0";
+} from "./authenticated-public-read.mjs?v=1.28.1";
 
 import {
   AUTHENTICATED_SIGNER_STATES,
   connectAuthenticatedNip07Signer,
   publishAuthenticatedNote,
   publishAuthenticatedProfile
-} from "./authenticated-public-write.mjs?v=1.26.0";
+} from "./authenticated-public-write.mjs?v=1.28.1";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const UNSAFE_PRIVATE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;
@@ -866,10 +866,12 @@ export function bindAuthenticatedEntry(
       currentSession?.authenticated !== true ||
       currentAuthority?.valid !== true ||
       currentAuthority.status !== "full" ||
-      parseAuthenticatedRoute(
-        browser?.location?.hash ?? "",
-        currentSession.subject
-      ).page !== "full-network"
+      !["full-network", "messages"].includes(
+        parseAuthenticatedRoute(
+          browser?.location?.hash ?? "",
+          currentSession.subject
+        ).page
+      )
     ) return false;
 
     fullDirectoryAttempted = true;

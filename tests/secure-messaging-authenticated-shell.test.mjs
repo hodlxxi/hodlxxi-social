@@ -215,14 +215,35 @@ test("V1.28B repository-facing additions are English-only and contain no crypto,
   }
 });
 
-test("authenticated entry includes separately versioned V1.28B assets without replacing the V1.26 entry graph", async () => {
+test("authenticated entry is the sole production owner of the V1.28B Messages route", async () => {
   const html = await readFile(
     new URL("../web/index.html", import.meta.url),
     "utf8"
   );
+  const entry = await readFile(
+    new URL("../web/auth-entry.mjs", import.meta.url),
+    "utf8"
+  );
+  const product = await readFile(
+    new URL("../web/auth-product.mjs", import.meta.url),
+    "utf8"
+  );
+  const messaging = await readFile(
+    new URL("../web/secure-messaging-v128.mjs", import.meta.url),
+    "utf8"
+  );
 
-  assert.match(html, /styles\.css\?v=1\.26\.0/);
-  assert.match(html, /auth-entry\.mjs\?v=1\.26\.0/);
-  assert.match(html, /secure-messaging-v128\.css\?v=1\.28\.0/);
-  assert.match(html, /secure-messaging-v128\.mjs\?v=1\.28\.0/);
+  assert.match(html, /styles\.css\?v=1\.28\.1/);
+  assert.match(html, /secure-messaging-v128\.css\?v=1\.28\.1/);
+  assert.match(html, /auth-entry\.mjs\?v=1\.28\.1/);
+  assert.doesNotMatch(
+    html,
+    /<script[^>]+src="\.\/secure-messaging-v128\.mjs/
+  );
+  assert.match(entry, /auth-product\.mjs\?v=1\.28\.1/);
+  assert.match(product, /renderSecureMessagingAuthenticatedShell/);
+  assert.doesNotMatch(
+    messaging,
+    /if \(typeof document !== "undefined"\)/
+  );
 });

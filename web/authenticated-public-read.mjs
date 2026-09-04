@@ -1,4 +1,4 @@
-import { verifyNostrEvent } from "./nostr-event-verifier.mjs?v=1.26.0";
+import { verifyNostrEvent } from "./nostr-event-verifier.mjs?v=1.28.1";
 
 const CANONICAL_SUBJECT = /^[0-9a-f]{64}$/;
 const OPEN = 1;
