@@ -791,9 +791,10 @@ const secureMessagingSnapshot = (model) => {
   });
 };
 
-const messagesPage = (model) =>
+const messagesPage = (model, messagingUi) =>
   renderSecureMessagingAuthenticatedShell(
-    secureMessagingSnapshot(model)
+    secureMessagingSnapshot(model),
+    messagingUi
   );
 
 
@@ -923,7 +924,7 @@ export function createAuthenticatedProductModel({
   });
 }
 
-export function renderAuthenticatedProductPage(route, model) {
+export function renderAuthenticatedProductPage(route, model, messagingUi = undefined) {
   if (!route || typeof route.page !== "string") {
     return renderPageFrame({
       eyebrow: "Navigation",
@@ -942,7 +943,7 @@ export function renderAuthenticatedProductPage(route, model) {
   }
   if (route.page === "friends") return directoryPage(model, "Friends", "friends");
   if (route.page === "discovery") return directoryPage(model, "Friends of Friends", "discovery");
-  if (route.page === "messages") return messagesPage(model);
+  if (route.page === "messages") return messagesPage(model, messagingUi);
   if (route.page === "groups") return groupsPage();
   if (route.page === "notifications") return notificationsPage();
   if (route.page === "activity") return activityPage(model);

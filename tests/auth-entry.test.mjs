@@ -2222,7 +2222,8 @@ test("Messages keeps one V1.28B renderer on first load, fresh bootstrap, and rou
           return response({
             state: "available",
             participants: [
-              { alias: "pairwise.alias-9" }
+              { alias: "pairwise.alias-9" },
+              { alias: "pairwise.alias-8" }
             ]
           });
         }
@@ -2270,6 +2271,86 @@ test("Messages keeps one V1.28B renderer on first load, fresh bootstrap, and rou
     );
   }
 
+
+  const inputListener =
+    first.document.listeners.get("input");
+
+  assert.equal(
+    typeof inputListener,
+    "function"
+  );
+
+  inputListener({
+    target: {
+      value: "alias-8",
+      hasAttribute(name) {
+        return name ===
+          "data-secure-v128-search";
+      }
+    }
+  });
+
+  let interacted =
+    first.document.elements[
+      "#app-page"
+    ].innerHTML;
+
+  assert.match(
+    interacted,
+    /value="alias-8"/
+  );
+  assert.match(
+    interacted,
+    /pairwise\.alias-8/
+  );
+  assert.doesNotMatch(
+    interacted,
+     /pairwise\.alias-9/
+  );
+
+  const clickListener =
+    first.document.listeners.get("click");
+
+  assert.equal(
+    typeof clickListener,
+    "function"
+  );
+
+  const recipientButton = {
+    id: "",
+    closest(selector) {
+      return selector === "button"
+        ? this
+        : null;
+    },
+    hasAttribute() {
+      return false;
+    },
+    getAttribute(name) {
+      return name ===
+        "data-secure-v128-recipient"
+        ? "pairwise.alias-8"
+        : null;
+    }
+  };
+
+  clickListener({
+    target: recipientButton
+  });
+
+  interacted =
+    first.document.elements[
+      "#app-page"
+    ].innerHTML;
+
+  assert.match(
+    interacted,
+    /V1\.28B selection only/
+  );
+  assert.match(
+    interacted,
+    /aria-current="true"/
+  );
   first.browser.location.hash = "#/home";
   first.browser.listeners.get("hashchange")?.();
 
@@ -2299,6 +2380,18 @@ test("Messages keeps one V1.28B renderer on first load, fresh bootstrap, and rou
   assert.doesNotMatch(
     returned,
     /Your inbox is ready|authenticated-split/
+  );
+  assert.match(
+    returned,
+    /Select a Full Network member/
+  );
+  assert.doesNotMatch(
+    returned,
+    /V1\.28B selection only/
+  );
+  assert.doesNotMatch(
+    returned,
+    /value="alias-8"/
   );
   assert.equal(
     first.calls.filter(
