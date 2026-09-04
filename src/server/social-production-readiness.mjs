@@ -14,6 +14,9 @@ export const REQUIRED_PRODUCT_ASSETS = Object.freeze([
   "web/authenticated-public-read.mjs",
   "web/authenticated-public-write.mjs",
   "web/nostr-event-verifier.mjs",
+  "web/private-label-store.mjs",
+  "web/secure-messaging-v128.mjs",
+  "web/secure-messaging-v128.css",
   "web/components.mjs",
   "web/shell.mjs",
   "web/styles.css"
@@ -22,6 +25,16 @@ export const REQUIRED_PRODUCT_ASSETS = Object.freeze([
 const fail = () => {
   throw new TypeError("production readiness failed");
 };
+
+const fullDirectoryMode = (config) =>
+  config.fullDirectory?.enabled === true
+    ? "configured-private-unix-socket-alias-only"
+    : "disabled";
+
+const recipientCapabilityMode = (config) =>
+  config.recipientCapability?.enabled === true
+    ? "configured-process-local-opaque-direct-message-selection"
+    : "disabled";
 
 export async function buildSocialProductionReadiness(
   env,
@@ -61,7 +74,10 @@ export async function buildSocialProductionReadiness(
 
   for (const asset of REQUIRED_PRODUCT_ASSETS) {
     try {
-      await accessImpl(resolve(cwd, asset), constants.R_OK);
+      await accessImpl(
+        resolve(cwd, asset),
+        constants.R_OK
+      );
     } catch {
       fail();
     }
@@ -82,7 +98,16 @@ export async function buildSocialProductionReadiness(
     publicReadMode: "browser-one-shot-explicit-relay",
     relayHost: new URL(config.nostrRelayUrl).host,
     publicWriteMode: "browser-explicit-external-signer",
-    publishRelayHost: new URL(config.nostrPublishRelayUrl).host,
+    publishRelayHost:
+      new URL(config.nostrPublishRelayUrl).host,
+    fullDirectoryMode:
+      fullDirectoryMode(config),
+    recipientCapabilityMode:
+      recipientCapabilityMode(config),
+    privateLabelsMode:
+      "source-browser-device-local",
+    secureMessagingMode:
+      "source-ui-shell-only-no-message-transport",
     serverSigning: false,
     keyCustody: false,
     hodlxxiWrites: false,

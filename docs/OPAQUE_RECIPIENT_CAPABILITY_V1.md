@@ -2,17 +2,26 @@
 
 ## Status
 
-V1.27 Phases A and B are source-only. Phase C defines the BFF
-recipient-selection route contract. Phase D adds explicitly gated server
-composition in source only.
+V1.27 was introduced in staged source phases. Phases A and B defined the
+process-local capability and trusted issuance adapter, Phase C defined the BFF
+recipient-selection route contract, and Phase D added explicitly gated server
+composition. None of those source merges by itself performed a production
+activation.
+
+A later reviewed deployment enabled the recipient-capability server path in
+the currently observed production configuration. An anonymous production POST
+to `/auth/recipient-capability` with the correct Social Origin is rejected with
+HTTP 401. That proves route presence and fail-closed unauthenticated behavior;
+it does not prove a successful authenticated positive issuance path.
 
 It defines a bounded process-local capability contract for selecting one
 viewer-private Full Directory alias for a future direct-message action.
 
-Phase C adds the BFF route contract but does not add production server
-composition, deployment, UI, raw recipient resolution, message transport,
-encryption, decryption, X25519 use, Nostr use, database write, durable
-persistence, or browser persistence.
+The V1.27 capability boundary still does not expose raw recipient resolution
+to the browser and does not itself provide message transport, encryption,
+decryption, X25519 messaging, Nostr messaging, database writes, durable
+capability persistence, or browser capability persistence. V1.28B may render a
+messaging UX shell, but it does not issue `rc_...` capabilities from that shell.
 
 ## Trusted caller boundary
 

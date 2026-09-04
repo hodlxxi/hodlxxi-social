@@ -8,9 +8,11 @@ V1.27 opaque recipient capability boundary.
 This document defines the security and product contract before live crypto,
 transport, storage, or production wiring is added.
 
-The first V1.28 implementation phase is UI-only. It must not create real
-recipient capabilities, encryption keys, ciphertext, messages, database rows,
-relay traffic, or production behavior.
+The first V1.28 implementation phase is messaging-inert. V1.28B may use the
+already existing authenticated read-only Social session and Full Directory
+requests needed to render real current Full recipients, but it must not create
+real recipient capabilities, encryption keys, ciphertext, messages, database
+rows, messaging relay traffic, or live message-delivery behavior.
 
 ## V1.27 dependency
 
@@ -319,7 +321,11 @@ with its own privacy, key, relay, and metadata review.
 
 ## UI-only Phase B boundary
 
-The first V1.28 frontend shell is intentionally inert.
+The first V1.28 frontend shell is intentionally inert with respect to
+messaging operations. It may perform the existing read-only same-origin
+`GET /auth/session` and, for an authenticated current Full viewer,
+`GET /auth/full-directory` calls needed to render the accepted alias-only
+recipient presentation.
 
 It may include preview states for:
 
@@ -331,17 +337,19 @@ It may include preview states for:
 - device list;
 - desktop and mobile layouts.
 
-It must perform no:
+It must perform no messaging-side:
 
-- `fetch`;
-- WebSocket connection;
-- recipient-capability request;
-- crypto operation;
-- key generation;
-- localStorage/sessionStorage/IndexedDB write;
-- server persistence;
-- Nostr operation;
-- production route wiring.
+- recipient-capability issuance request;
+- recipient crypto-package request;
+- messaging-device registration request;
+- encryption or decryption operation;
+- messaging key generation;
+- message or capability persistence in localStorage/sessionStorage/IndexedDB;
+- ciphertext/message submission;
+- messaging WebSocket connection;
+- Nostr messaging operation;
+- message database/server persistence;
+- live messaging transport wiring.
 
 ## Subsequent phases
 
@@ -357,7 +365,10 @@ Each phase receives its own tests and review gate.
 
 ## Production rule
 
-No V1.28 phase is a production activation by itself.
+No V1.28 source phase is a live messaging activation by itself. The V1.28B
+browser assets may be deployed while messaging remains inert.
 
-V1.27 must complete its outstanding live positive-path gate before V1.28 live
-recipient crypto wiring can rely on `rc_...` in production.
+Before later recipient crypto wiring relies on `rc_...` for a live message
+path, the authenticated production positive path must be explicitly verified
+for the then-current V1.27 deployment. Route existence or an unauthenticated
+fail-closed response alone is not that positive-path proof.

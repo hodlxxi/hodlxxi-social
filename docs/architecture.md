@@ -1,14 +1,28 @@
 # Architecture
 
-## V1.25 Full-directory Unix socket transport (source only)
+## Current production/source convergence through V1.28B
+
+Current production and current source are related but distinct deployment facts.
+
+The production-facing path is `authenticated browser -> same-origin Social BFF -> external UBID/CRT authority -> private Full Directory when current Full is accepted -> alias-only Full Network presentation`.
+
+The V1.24/V1.25 Full Directory and private Unix-socket transport were introduced as disabled source-only work and activated later through a separately reviewed production operation. Public UBID internal service-token and Full-directory routes remain unavailable through the public HTTP boundary.
+
+Current source additionally contains V1.26 browser-device-local private labels, V1.27 process-local opaque recipient capabilities, and the V1.28B authenticated secure-messaging UX shell. These layers do not change UBID/CRT Full authority and do not expose a selected recipients raw canonical identity to the ordinary browser.
+
+V1.28B is not live message transport. It may use the existing read-only `/auth/session` and `/auth/full-directory` paths, while device-key lifecycle, recipient crypto-package resolution, encryption, ciphertext transport/storage, and decryption remain later separately reviewed phases.
+
+See [Current Deployment Status](CURRENT_DEPLOYMENT_STATUS.md) for the dated operational snapshot. Historical sections below retain the scope that applied when each version was introduced.
+
+## V1.25 Full-directory Unix socket transport (historical source phase)
 
 The production-intended private path is `browser → same-origin Social BFF → Social Node-core Unix-socket HTTP transport → private nginx Unix socket → UBID loopback gunicorn`. `SOCIAL_UBID_SERVICE_TOKEN_URL` and `SOCIAL_UBID_FULL_DIRECTORY_URL` remain canonical HTTPS logical endpoint identities, but only their exact path and derived logical Host enter the request. The sole physical destination is `SOCIAL_UBID_PRIVATE_SOCKET_PATH`; production composition has no DNS, TCP, ordinary loopback, public URL, HTTPS-agent, proxy, or ambient-fetch fallback.
 
-The transport allowlists only POST `/internal/v1/social/service-token` and GET `/internal/v1/social/full-directory`, propagates aborts, bounds response metadata, rejects redirects and caller-controlled Host values, and feeds the unchanged bounded JSON/privacy validator. Unix-socket reachability supplies no authority: Social confidential service authentication, the canonical session-bound human viewer bearer, and current UBID/CRT Full entitlement remain three independent requirements. The feature remains disabled by default and unactivated. See [Full Directory Unix socket transport V1](FULL_DIRECTORY_UNIX_SOCKET_TRANSPORT_V1.md).
+The transport allowlists only POST `/internal/v1/social/service-token` and GET `/internal/v1/social/full-directory`, propagates aborts, bounds response metadata, rejects redirects and caller-controlled Host values, and feeds the unchanged bounded JSON/privacy validator. Unix-socket reachability supplies no authority: Social confidential service authentication, the canonical session-bound human viewer bearer, and current UBID/CRT Full entitlement remain three independent requirements. At the V1.25 source merge the feature remained disabled by default and unactivated; it was activated later through a separately reviewed production operation. See [Full Directory Unix socket transport V1](FULL_DIRECTORY_UNIX_SOCKET_TRANSPORT_V1.md).
 
-## V1.24 privacy-safe Full directory BFF (source only)
+## V1.24 privacy-safe Full directory BFF (historical source phase)
 
-The disabled dependency path is `opaque Social session → retained canonical human OAuth bearer + independently accepted current-Full Social authority projection → backend-only RS256 confidential service client → UBID service token → UBID viewer-private directory → strict alias-only minimization → same-origin no-store /auth/full-directory → existing Full Network surface`. The browser never receives either bearer or calls UBID internal endpoints. Service authentication, human identity, and current Full authority remain three separate checks; the service credential cannot substitute for either viewer check.
+The V1.24 source phase introduced the initially disabled dependency path `opaque Social session → retained canonical human OAuth bearer + independently accepted current-Full Social authority projection → backend-only RS256 confidential service client → UBID service token → UBID viewer-private directory → strict alias-only minimization → same-origin no-store /auth/full-directory → existing Full Network surface`. The browser never receives either bearer or calls UBID internal endpoints. Service authentication, human identity, and current Full authority remain three separate checks; the service credential cannot substitute for either viewer check.
 
 The service assertion key comes only from an explicitly configured server-side path and signs service-authentication assertions only; it is never a participant or Nostr event key. Every assertion is RS256 with the configured client-JWKS `kid`, `iss == sub == client ID`, an exact configured token-endpoint audience, fixed `token_use=client_assertion`, `grant_type=client_credentials`, and `purpose=service_client_authentication`, a fresh JTI, and a 60-second lifetime. The later UBID service principal and UBID-issued token issuer are intentionally absent from this client assertion. Every request acquires a new exact-scope `social:full-directory:read` bearer, uses no retry/cache/stale fallback, and sends that service bearer separately from the session-bound human bearer.
 

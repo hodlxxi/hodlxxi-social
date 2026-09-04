@@ -1,6 +1,48 @@
-# HODLXXI Social V1.25 (source only)
+# HODLXXI Social — current source through V1.28B
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
+
+## Current source and deployment model
+
+Current `main` contains HODLXXI Social source through V1.28B. Source capability
+and deployed capability are separate facts.
+
+Current source includes:
+
+- V1.25 Full Network member cards over the alias-only Full Directory;
+- V1.26 viewer-private device-local labels;
+- V1.27 short-lived process-local opaque `rc_...` recipient capabilities;
+- V1.28A secure-messaging architecture;
+- V1.28B authenticated secure-messaging UX shell.
+
+The Full Directory and its private Unix-socket transport were activated later
+through a separately reviewed production operation. UBID/CRT remains the sole
+authority for current Full status, and the ordinary browser receives only
+viewer-private aliases.
+
+The V1.27 recipient-capability server path is also enabled in the currently
+observed production configuration. A recipient capability is not identity, not
+an encryption key, and not final permission to send a message.
+
+V1.28B does not implement live direct messaging. It may read the existing
+authenticated Social session and, for a current Full viewer, the existing
+alias-only Full Directory. It does not generate device keys, encrypt messages,
+submit ciphertext, create message storage, or deliver conversations.
+
+Historical version sections below describe the scope of each source change when
+it was introduced. A statement that an earlier PR itself did not activate a
+feature must not be interpreted as the current deployment state.
+
+Permanent separation rules include:
+
+- friendship != Full authority;
+- friendship != sponsorship;
+- friendship != covenant relation;
+- Nostr state != Full authority;
+- private local label != participant identity;
+- `rc_...` capability != participant identity;
+- `rc_...` capability != encryption key;
+- `rc_...` capability != final send authorization.
 
 V1.25 adds a disabled-by-default, source-only [Unix-socket transport](docs/FULL_DIRECTORY_UNIX_SOCKET_TRANSPORT_V1.md) for the privacy-safe Full-directory BFF. Canonical HTTPS values remain logical endpoint and JWT-audience identities, while the active server graph can connect only through one explicitly configured canonical absolute Unix socket path. Only the exact service-token POST and Full-directory GET are admitted; there is no DNS, TCP, public-URL, proxy, HTTPS-agent, or ambient-fetch fallback. Socket reachability grants no authority: the Social service credential, canonical human OAuth viewer bearer, and current UBID/CRT Full entitlement remain three independent requirements. No production socket, nginx/systemd/environment change, credential, key, deployment, restart, request, or activation is included.
 
