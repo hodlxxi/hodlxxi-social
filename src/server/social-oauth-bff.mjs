@@ -2,6 +2,10 @@ import { randomBytes } from "node:crypto";
 import { createPkceChallenge, createPkceVerifier, base64url } from "./hodlxxi-oauth-client.mjs";
 import { TRANSACTION_COOKIE_NAME, SESSION_COOKIE_NAME, parseCookieHeader, serializeHostCookie, expireTransactionCookie, expireSessionCookie } from "./social-oauth-cookie.mjs";
 import { canonicalWssRelayUrl } from "./social-oauth-config.mjs";
+import {
+  normalizeMessagingDeviceResult,
+  normalizeMessagingDeviceSnapshot
+} from "./ubid-messaging-device-client.mjs";
 
 export const SECURITY_HEADERS = Object.freeze({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" });
 const MAX_REQUEST_TARGET_BYTES = 4096;
@@ -19,6 +23,14 @@ const AUTHENTICATION_FIELDS = Object.freeze(["accessToken", "subject"]);
 const FULL_DIRECTORY_UNAVAILABLE = Object.freeze({ state: "unavailable" });
 const RECIPIENT_CAPABILITY_UNAVAILABLE =
   Object.freeze({ state: "unavailable" });
+
+export const SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE =
+  "/auth/messaging-device-bindings";
+
+const MESSAGING_DEVICE_UNAVAILABLE =
+  Object.freeze({ state: "unavailable" });
+
+const MAX_MESSAGING_COMMAND_BYTES = 8192;
 const RECIPIENT_ALIAS_HEADER =
   "x-hodlxxi-recipient-alias";
 const RECIPIENT_CAPABILITY =
@@ -363,6 +375,7 @@ export function createSocialOAuthBff({
   authorityReader,
   fullDirectoryClient,
   recipientCapabilityIssuer,
+  messagingDeviceClient,
   random = randomBytes
 }) {
   const recipientCapabilityIssue =
@@ -371,6 +384,22 @@ export function createSocialOAuthBff({
       : ownDataMethod(
           recipientCapabilityIssuer,
           "issue"
+        );
+
+  const messagingDeviceRead =
+    messagingDeviceClient === undefined
+      ? undefined
+      : ownDataMethod(
+          messagingDeviceClient,
+          "currentForViewer"
+        );
+
+  const messagingDeviceApply =
+    messagingDeviceClient === undefined
+      ? undefined
+      : ownDataMethod(
+          messagingDeviceClient,
+          "applyForViewer"
         );
 
   if (
@@ -384,6 +413,14 @@ export function createSocialOAuthBff({
       recipientCapabilityIssuer !==
         undefined &&
       !recipientCapabilityIssue
+    ) ||
+    (
+      messagingDeviceClient !==
+        undefined &&
+      (
+        !messagingDeviceRead ||
+        !messagingDeviceApply
+      )
     )
   ) {
     throw new TypeError("invalid BFF dependencies");
@@ -660,6 +697,167 @@ export function createSocialOAuthBff({
         return json(
           503,
           RECIPIENT_CAPABILITY_UNAVAILABLE
+        );
+      }
+    }
+
+
+    if (
+      target.path ===
+        SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE
+    ) {
+      if (
+        !["GET", "POST"].includes(method) ||
+        target.query.length !== 0
+      ) {
+        return json(
+          ["GET", "POST"].includes(method)
+            ? 400
+            : 405,
+          MESSAGING_DEVICE_UNAVAILABLE
+        );
+      }
+
+      if (
+        method === "POST" &&
+        request.headers?.origin !==
+          config.publicOrigin
+      ) {
+        return json(
+          403,
+          MESSAGING_DEVICE_UNAVAILABLE
+        );
+      }
+
+      const context =
+        authenticatedSessionContext(
+          cookieHeader
+        );
+
+      if (!context) {
+        return json(
+          401,
+          MESSAGING_DEVICE_UNAVAILABLE
+        );
+      }
+
+      const viewerAccessToken =
+        context.session.viewerAccessToken;
+
+      if (
+        typeof viewerAccessToken !== "string" ||
+        viewerAccessToken.length === 0 ||
+        viewerAccessToken.length > 8192 ||
+        /[\u0000-\u0020\u007f]/.test(
+          viewerAccessToken
+        )
+      ) {
+        return json(
+          403,
+          MESSAGING_DEVICE_UNAVAILABLE
+        );
+      }
+
+      let projection =
+        failClosedAuthority(
+          context.session.subject
+        );
+
+      if (authorityReader) {
+        try {
+          projection =
+            normalizeAuthorityProjection(
+              context.session.subject,
+              await authorityReader(
+                context.session.subject
+              )
+            );
+        } catch {
+          projection =
+            failClosedAuthority(
+              context.session.subject
+            );
+        }
+      }
+
+      if (
+        projection.valid !== true ||
+        projection.status !== "full"
+      ) {
+        return json(
+          403,
+          MESSAGING_DEVICE_UNAVAILABLE
+        );
+      }
+
+      if (
+        config?.messagingDevice?.enabled !== true ||
+        !messagingDeviceRead ||
+        !messagingDeviceApply
+      ) {
+        return json(
+          503,
+          MESSAGING_DEVICE_UNAVAILABLE
+        );
+      }
+
+      try {
+        if (method === "GET") {
+          const result =
+            normalizeMessagingDeviceSnapshot(
+              await messagingDeviceRead.call(
+                messagingDeviceClient,
+                { viewerAccessToken }
+              )
+            );
+
+          return json(200, result);
+        }
+
+        const contentType =
+          request.headers?.["content-type"];
+
+        if (
+          typeof contentType !== "string" ||
+          !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(
+            contentType
+          ) ||
+          typeof request.body !== "string" ||
+          Buffer.byteLength(
+            request.body,
+            "utf8"
+          ) < 1 ||
+          Buffer.byteLength(
+            request.body,
+            "utf8"
+          ) >
+            MAX_MESSAGING_COMMAND_BYTES ||
+          /[^\x20-\x7e]/.test(
+            request.body
+          )
+        ) {
+          return json(
+            400,
+            MESSAGING_DEVICE_UNAVAILABLE
+          );
+        }
+
+        const result =
+          normalizeMessagingDeviceResult(
+            await messagingDeviceApply.call(
+              messagingDeviceClient,
+              {
+                viewerAccessToken,
+                commandPayload: request.body
+              }
+            )
+          );
+
+        return json(200, result);
+      } catch {
+        return json(
+          503,
+          MESSAGING_DEVICE_UNAVAILABLE
         );
       }
     }
