@@ -210,7 +210,7 @@ test(
 );
 
 test(
-  "enabled recipient capability composition injects one process-local store and exact trusted server dependencies",
+  "enabled recipient capability composition injects one shared process-local store into issuer and resolver",
   () => {
     const sessions = {};
     const authorityReader =
@@ -222,13 +222,32 @@ test(
       readForViewer() {}
     };
 
-    const capabilityStore = {};
+    const capabilityStore = {
+      issue() {},
+      resolve() {}
+    };
+
     const issuer = {
-      issue() {}
+      issue(input) {
+        return {
+          source: "issuer",
+          input
+        };
+      }
+    };
+
+    const resolver = {
+      resolve(input) {
+        return {
+          source: "resolver",
+          input
+        };
+      }
     };
 
     let storeCalls = 0;
     let issuerCalls = 0;
+    let resolverCalls = 0;
 
     const result =
       createRecipientCapabilityIntegration(
@@ -275,13 +294,68 @@ test(
             );
 
             return issuer;
+          },
+          resolverFactory(input) {
+            resolverCalls += 1;
+
+            assert.deepEqual(
+              Object.keys(input).sort(),
+              [
+                "authorityReader",
+                "capabilityStore",
+                "fullDirectoryClient",
+                "sessions"
+              ]
+            );
+
+            assert.equal(
+              input.sessions,
+              sessions
+            );
+
+            assert.equal(
+              input.authorityReader,
+              authorityReader
+            );
+
+            assert.equal(
+              input.fullDirectoryClient,
+              fullDirectoryClient
+            );
+
+            assert.equal(
+              input.capabilityStore,
+              capabilityStore
+            );
+
+            return resolver;
           }
         }
       );
 
-    assert.equal(
-      result,
-      issuer
+    assert.deepEqual(
+      result.issue({ value: 1 }),
+      {
+        source: "issuer",
+        input: { value: 1 }
+      }
+    );
+
+    assert.deepEqual(
+      result.resolve({ value: 2 }),
+      {
+        source: "resolver",
+        input: { value: 2 }
+      }
+    );
+
+    assert.deepEqual(
+      Object.keys(result).sort(),
+      ["issue", "resolve"]
+    );
+
+    assert.ok(
+      Object.isFrozen(result)
     );
 
     assert.equal(
@@ -291,6 +365,11 @@ test(
 
     assert.equal(
       issuerCalls,
+      1
+    );
+
+    assert.equal(
+      resolverCalls,
       1
     );
   }
