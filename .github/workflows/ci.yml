@@ -47,6 +47,7 @@ jobs:
           node --check web/nostr-event-verifier.mjs
           node --check web/private-label-store.mjs
           node --check web/secure-messaging-v128.mjs
+          node --check web/messaging-device-v128c1.mjs
 
       - name: Check Social OAuth server modules
         run: |

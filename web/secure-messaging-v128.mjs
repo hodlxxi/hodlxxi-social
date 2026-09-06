@@ -327,11 +327,30 @@ const renderThread = (snapshot, selectedAlias) => {
     `</form></section>`;
 };
 
+const renderDeviceState = (state, busy, restricted) => {
+  if (restricted) return `<div class="secure-v128-device"><strong>Full access required for secure device setup</strong></div>`;
+  const states = {
+    "not-configured": ["Set up secure messaging on this device", "This browser will create a dedicated local encryption key. The private key stays on this device."],
+    "pending-register": ["Finishing secure device setup…", "The private key is already stored locally. Public registration is being reconciled."],
+    ready: ["This device is ready for end-to-end encryption", "The private device key remains local. Message encryption is not enabled yet in this phase."],
+    unavailable: ["Secure device state unavailable", "Device state could not be safely reconciled."]
+  };
+  const [title, explanation] = Object.hasOwn(states, state) ? states[state] : states.unavailable;
+  return `<div class="secure-v128-device" role="status" aria-live="polite" aria-busy="${busy === true}">` +
+    `<span class="secure-v128-device-icon" aria-hidden="true">D</span>` +
+    `<div><strong>${title}</strong><p>${explanation}</p></div>` +
+    (state === "not-configured"
+      ? `<button class="secure-v128-primary" type="button" data-secure-v128-setup-device${busy ? " disabled" : ""}>Set up this device</button>`
+      : "") + `</div>`;
+};
+
 export function renderSecureMessagingAuthenticatedShell(
   snapshot,
   {
     selectedAlias = null,
-    filter = ""
+    filter = "",
+    deviceState = "unavailable",
+    deviceBusy = false
   } = {}
 ) {
   if (
@@ -346,10 +365,7 @@ export function renderSecureMessagingAuthenticatedShell(
     `<header class="secure-v128-heading"><div><p class="eyebrow">Private Full Network</p>` +
     `<h1>Messages</h1><p>Choose a current Full member without exposing raw participant identity in the ordinary messaging interface.</p></div>` +
     `<button class="secure-v128-primary" type="button" data-secure-v128-focus-search>+ New message</button></header>` +
-    `<div class="secure-v128-device"><span class="secure-v128-device-icon" aria-hidden="true">D</span>` +
-    `<div><strong>Device encryption not connected yet</strong>` +
-    `<p>V1.28C will add a dedicated device encryption key. Internal Social messages will not require a Nostr browser extension.</p></div>` +
-    `<span class="secure-v128-stage">V1.28B</span></div>` +
+    renderDeviceState(deviceState, deviceBusy, snapshot.state === "restricted") +
     `<div class="secure-v128-layout"><aside class="secure-v128-list">` +
     `<div class="secure-v128-list-title"><div><strong>New conversation</strong><small>Full-to-Full only</small></div>` +
     `<span>${snapshot.state === "available" ? snapshot.recipients.length : 0}</span></div>` +
@@ -366,7 +382,7 @@ export function renderSecureMessagingAuthenticatedShell(
     `<article><span>01</span><strong>Real authenticated session</strong><p>The shell runs only inside the existing Social login context.</p></article>` +
     `<article><span>02</span><strong>Real Full Directory</strong><p>Recipient cards come from the same-origin authenticated BFF.</p></article>` +
     `<article><span>03</span><strong>Private labels</strong><p>Labels are read from this device and never become recipient identity.</p></article>` +
-    `<article><span>04</span><strong>No transport yet</strong><p>No message or cryptographic operation is activated in this phase.</p></article>` +
+    `<article><span>04</span><strong>No transport yet</strong><p>Message encryption and sending remain disabled.</p></article>` +
     `</section></section>`;
 }
 

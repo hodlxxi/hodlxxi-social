@@ -180,6 +180,8 @@ message decryption.
 The product exposes an explicit messaging-device state:
 
 - `not-configured` — this browser/device has no accepted local messaging key;
+- `pending-register` — a local device key is committed and its public
+  registration is being reconciled;
 - `ready` — this device has a current local private key with a current public
   binding;
 - `rotating` — a replacement binding is being established;
@@ -187,6 +189,102 @@ The product exposes an explicit messaging-device state:
 - `unavailable` — state cannot be safely established.
 
 Unknown or malformed state fails closed to `unavailable`.
+
+## Browser device setup implementation
+
+V1.28C.1 adds explicit **Set up this device** to authenticated Full Messages.
+`web/messaging-device-v128c1.mjs` owns this bounded lifecycle; the authenticated
+entry passes only device state and busy status to the Messages renderer. The
+alias-only recipient directory and viewer-private labels remain separate.
+
+Each browser generates a dedicated X25519 device identity with native WebCrypto:
+`generateKey({ name: "X25519" }, false, ["deriveBits"])`. The private CryptoKey
+must be non-extractable. The implementation checks both key types, algorithms,
+usages and extractability before exporting only the public key as exactly 32
+raw bytes, represented by lowercase hex64. This call shape follows the
+[WebCrypto X25519 Generate Key steps](https://www.w3.org/TR/webcrypto/#x25519-operations):
+the public key is exportable while private extractability follows the `false`
+argument. An offline native WebCrypto test verifies these properties and
+structured-clone retention. Each browser checks them at runtime; unsupported
+X25519, CryptoKey persistence, or strict transaction durability fails closed.
+There is no extractable-private-key fallback or crypto dependency.
+
+The dedicated IndexedDB database `hodlxxi-social-messaging-device-v1`, version 1,
+has one `device` store and one `current` record. Its closed fields are `schema`,
+`version`, `subject`, `deviceId`, `privateKey` (the CryptoKey), `publicKey`,
+`requestId`, `state`, and `acceptedBinding`. The schema is
+`hodlxxi.social_messaging_device_local.v1`. IndexedDB's native structured clone
+retains the non-extractable key; application JSON serialization, private-key
+export, localStorage, and sessionStorage are never used for this record. Only
+browser memory and this local store receive the private CryptoKey. It is never
+uploaded, logged, rendered, or included in a returned UI projection. This is
+the sole narrow persistence exception documented in AGENTS.md; participant
+signing keys and server-side private-key custody remain prohibited. This key
+is independent of Bitcoin, XPUB, UBID, OAuth, Nostr, and recipient capabilities.
+
+Before setup, the controller re-reads `/auth/session`, requires the current
+Messages access context to be Full, and reconciles the existing local record
+with `/auth/messaging-device-bindings`. A different subject's record is never
+adopted or replaced. Session and access checks repeat across asynchronous
+boundaries, immediately before POST, and before accepting ready state. Route
+exit and logout cancel outstanding work. An in-flight request cannot be
+undone, so cancellation preserves its original subject-bound pending record;
+it never reassigns that record to a later session. The BFF remains the authority
+for the session that actually authenticates the request; the browser supplies
+no canonical subject in its registration command.
+
+First setup uses two independent `getRandomValues(new Uint8Array(32))` calls
+for `deviceId` and `requestId`. It atomically adds the local record as
+`pending-register`, requests IndexedDB `durability: "strict"`, awaits
+transaction `oncomplete` (request success is insufficient), and reads back the
+retained record before POST. An add cannot overwrite a concurrent tab's
+record. Updates preserve the stored private key and reject identity or accepted
+metadata changes. Storage failure prevents registration.
+
+The server receives only this public command through the existing same-origin
+OAuth/session BFF, using `credentials: "same-origin"`, `cache: "no-store"`,
+`redirect: "error"`, and `Content-Type: application/json`:
+
+```json
+{
+  "schema": "hodlxxi.social_messaging_device_binding_command.v1",
+  "version": 1,
+  "operation": "register",
+  "deviceId": "<64 lowercase hex>",
+  "algorithm": "x25519-v1",
+  "publicKey": "<64 lowercase hex>",
+  "expectedBindingId": null,
+  "requestId": "<64 lowercase hex>"
+}
+```
+
+Transport timeout, lost response, and malformed registration results leave
+the durable record pending. Re-entry first reads a fresh, complete, strictly
+validated server snapshot. One exact active `deviceId` + `publicKey` binding
+can complete pending setup without POST. Otherwise, an unaccepted pending
+record retries the identical command with its original requestId and key;
+there is no automatic replacement, rotation, or revocation. A valid register
+result retains only accepted bindingId, version, and validity metadata; a
+subsequent matching snapshot and successful local ready commit are required
+before the UI becomes ready. Ready re-entry must match that metadata exactly.
+Malformed, duplicate, missing-ready, revoked, expired, or conflicting bindings
+fail closed to unavailable without deleting the original record.
+
+The UBID provider contract verified at authority commit
+`e4b726f4050d1e1f8b606a9acd9bd2cb618ee1b7` uses integer Unix milliseconds for
+snapshot `issuedAt`/`expiresAt` and active-device `validFrom`/`expiresAt`. The browser
+uses the same authoritative millisecond unit internally and converts the BFF
+registration result's canonical UTC-second strings to integer Unix milliseconds
+before persisting accepted metadata. Freshness, expiration, and exact metadata
+reconciliation therefore compare one explicit cross-component unit. The
+browser does not infer time units from timestamp magnitude.
+
+The four product states are not-configured, pending-register, ready, and
+unavailable. Ordinary Messages never renders subject, deviceId, bindingId, or
+encryption keys. Ready means device setup is reconciled; the composer remains
+disabled and no message encryption, decryption, plaintext submission, inbox,
+ciphertext storage, or transport is implemented. This slice does **not** select
+the final V1.28E message encryption construction or perform key agreement.
 
 ## New-device history rule
 
