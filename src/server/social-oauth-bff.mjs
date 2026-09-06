@@ -6,6 +6,9 @@ import {
   normalizeMessagingDeviceResult,
   normalizeMessagingDeviceSnapshot
 } from "./ubid-messaging-device-client.mjs";
+import {
+  normalizeMessagingRecipientPackage
+} from "./ubid-messaging-recipient-client.mjs";
 
 export const SECURITY_HEADERS = Object.freeze({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" });
 const MAX_REQUEST_TARGET_BYTES = 4096;
@@ -27,7 +30,13 @@ const RECIPIENT_CAPABILITY_UNAVAILABLE =
 export const SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE =
   "/auth/messaging-device-bindings";
 
+export const SOCIAL_MESSAGING_RECIPIENT_PACKAGE_ROUTE =
+  "/auth/messaging-recipient-package";
+
 const MESSAGING_DEVICE_UNAVAILABLE =
+  Object.freeze({ state: "unavailable" });
+
+const MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE =
   Object.freeze({ state: "unavailable" });
 
 const MAX_MESSAGING_COMMAND_BYTES = 8192;
@@ -35,6 +44,10 @@ const RECIPIENT_ALIAS_HEADER =
   "x-hodlxxi-recipient-alias";
 const RECIPIENT_CAPABILITY =
   /^rc_[A-Za-z0-9_-]{43}$/;
+const PRIVATE_RECIPIENT_ALIAS =
+  /^p_[A-Za-z0-9_-]{22}$/;
+const RECIPIENT_CAPABILITY_HEADER =
+  "x-hodlxxi-recipient-capability";
 const SAFE_ALIAS = /^[A-Za-z0-9._~-]{1,128}$/;
 const UNSAFE_ALIAS = /^(?:[0-9a-f]{64}|npub1|nprofile1|nsec1|xpub|tpub|ypub|zpub|vpub|xprv|tprv|yprv|zprv|vprv|bc1|tb1)/i;
 const BITCOIN_BASE58_ADDRESS = /^(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|[mn2][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
@@ -45,6 +58,69 @@ const privacySafeAlias = (value) =>
   !BITCOIN_BASE58_ADDRESS.test(value) &&
   !/^\d{7,15}$/.test(value) &&
   !value.includes("@");
+
+const normalizeResolvedRecipientCapability = (value) => {
+  try {
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.getPrototypeOf(value) !==
+        Object.prototype
+    ) {
+      return null;
+    }
+
+    const descriptors =
+      Object.getOwnPropertyDescriptors(value);
+
+    const fields = [
+      "state",
+      "alias"
+    ];
+
+    const keys =
+      Reflect.ownKeys(descriptors);
+
+    if (
+      keys.length !== fields.length ||
+      keys.some(
+        (key) =>
+          typeof key !== "string" ||
+          !fields.includes(key) ||
+          !descriptors[key].enumerable ||
+          !Object.hasOwn(
+            descriptors[key],
+            "value"
+          )
+      ) ||
+      fields.some(
+        (field) =>
+          !keys.includes(field)
+      )
+    ) {
+      return null;
+    }
+
+    const alias =
+      descriptors.alias.value;
+
+    if (
+      descriptors.state.value !==
+        "available" ||
+      !PRIVATE_RECIPIENT_ALIAS.test(alias)
+    ) {
+      return null;
+    }
+
+    return Object.freeze({
+      state: "available",
+      alias
+    });
+  } catch {
+    return null;
+  }
+};
 
 const ownDataMethod = (value, name) => {
   try {
@@ -376,6 +452,7 @@ export function createSocialOAuthBff({
   fullDirectoryClient,
   recipientCapabilityIssuer,
   messagingDeviceClient,
+  messagingRecipientClient,
   random = randomBytes
 }) {
   const recipientCapabilityIssue =
@@ -384,6 +461,22 @@ export function createSocialOAuthBff({
       : ownDataMethod(
           recipientCapabilityIssuer,
           "issue"
+        );
+
+  const recipientCapabilityResolve =
+    recipientCapabilityIssuer === undefined
+      ? undefined
+      : ownDataMethod(
+          recipientCapabilityIssuer,
+          "resolve"
+        );
+
+  const messagingRecipientResolve =
+    messagingRecipientClient === undefined
+      ? undefined
+      : ownDataMethod(
+          messagingRecipientClient,
+          "resolveForViewer"
         );
 
   const messagingDeviceRead =
@@ -413,6 +506,11 @@ export function createSocialOAuthBff({
       recipientCapabilityIssuer !==
         undefined &&
       !recipientCapabilityIssue
+    ) ||
+    (
+      messagingRecipientClient !==
+        undefined &&
+      !messagingRecipientResolve
     ) ||
     (
       messagingDeviceClient !==
@@ -697,6 +795,138 @@ export function createSocialOAuthBff({
         return json(
           503,
           RECIPIENT_CAPABILITY_UNAVAILABLE
+        );
+      }
+    }
+
+
+    if (
+      target.path ===
+        SOCIAL_MESSAGING_RECIPIENT_PACKAGE_ROUTE
+    ) {
+      if (
+        method !== "POST" ||
+        target.query.length !== 0
+      ) {
+        return json(
+          method === "POST"
+            ? 400
+            : 405,
+          MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE
+        );
+      }
+
+      if (
+        request.headers?.origin !==
+          config.publicOrigin
+      ) {
+        return json(
+          403,
+          MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE
+        );
+      }
+
+      const context =
+        authenticatedSessionContext(
+          cookieHeader
+        );
+
+      if (!context) {
+        return json(
+          401,
+          MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE
+        );
+      }
+
+      const viewerAccessToken =
+        context.session.viewerAccessToken;
+
+      if (
+        typeof viewerAccessToken !==
+          "string" ||
+        viewerAccessToken.length === 0 ||
+        viewerAccessToken.length > 8192 ||
+        /[\u0000-\u0020\u007f]/.test(
+          viewerAccessToken
+        )
+      ) {
+        return json(
+          403,
+          MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE
+        );
+      }
+
+      const capability =
+        request.headers?.[
+          RECIPIENT_CAPABILITY_HEADER
+        ];
+
+      if (
+        typeof capability !== "string" ||
+        !RECIPIENT_CAPABILITY.test(
+          capability
+        )
+      ) {
+        return json(
+          400,
+          MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE
+        );
+      }
+
+      if (
+        !recipientCapabilityResolve ||
+        !messagingRecipientResolve
+      ) {
+        return json(
+          503,
+          MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE
+        );
+      }
+
+      try {
+        const resolved =
+          normalizeResolvedRecipientCapability(
+            await recipientCapabilityResolve.call(
+              recipientCapabilityIssuer,
+              {
+                sessionId:
+                  context.sessionId,
+                capability
+              }
+            )
+          );
+
+        if (!resolved) {
+          return json(
+            503,
+            MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE
+          );
+        }
+
+        const packageResult =
+          normalizeMessagingRecipientPackage(
+            await messagingRecipientResolve.call(
+              messagingRecipientClient,
+              {
+                viewerAccessToken,
+                recipientAlias:
+                  resolved.alias
+              }
+            ),
+            {
+              expectedAlias:
+                resolved.alias
+            }
+          );
+
+        return json(
+          200,
+          packageResult
+        );
+      } catch {
+        return json(
+          503,
+          MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE
         );
       }
     }

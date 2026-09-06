@@ -16,9 +16,13 @@ import { createUbidFullDirectoryClient } from "../src/server/ubid-full-directory
 import { createUbidUnixSocketTransport } from "../src/server/ubid-unix-socket-transport.mjs";
 import { createOpaqueRecipientCapabilityStore } from "../src/server/opaque-recipient-capability.mjs";
 import { createOpaqueRecipientCapabilityIssuer } from "../src/server/opaque-recipient-capability-issuer.mjs";
+import { createOpaqueRecipientCapabilityResolver } from "../src/server/opaque-recipient-capability-resolver.mjs";
 import {
   createUbidMessagingDeviceClient
 } from "../src/server/ubid-messaging-device-client.mjs";
+import {
+  createUbidMessagingRecipientClient
+} from "../src/server/ubid-messaging-recipient-client.mjs";
 
 export async function createFullDirectoryIntegration(
   fullDirectory,
@@ -45,7 +49,9 @@ export function createRecipientCapabilityIntegration(
     storeFactory =
       createOpaqueRecipientCapabilityStore,
     issuerFactory =
-      createOpaqueRecipientCapabilityIssuer
+      createOpaqueRecipientCapabilityIssuer,
+    resolverFactory =
+      createOpaqueRecipientCapabilityResolver
   } = {}
 ) {
   if (
@@ -63,6 +69,8 @@ export function createRecipientCapabilityIntegration(
     typeof storeFactory !==
       "function" ||
     typeof issuerFactory !==
+      "function" ||
+    typeof resolverFactory !==
       "function"
   ) {
     throw new TypeError(
@@ -73,11 +81,56 @@ export function createRecipientCapabilityIntegration(
   const capabilityStore =
     storeFactory();
 
-  return issuerFactory({
-    sessions,
-    authorityReader,
-    fullDirectoryClient,
-    capabilityStore
+  const issuer =
+    issuerFactory({
+      sessions,
+      authorityReader,
+      fullDirectoryClient,
+      capabilityStore
+    });
+
+  const resolver =
+    resolverFactory({
+      sessions,
+      authorityReader,
+      fullDirectoryClient,
+      capabilityStore
+    });
+
+  const issue =
+    Object.getOwnPropertyDescriptor(
+      issuer ?? {},
+      "issue"
+    )?.value;
+
+  const resolve =
+    Object.getOwnPropertyDescriptor(
+      resolver ?? {},
+      "resolve"
+    )?.value;
+
+  if (
+    typeof issue !== "function" ||
+    typeof resolve !== "function"
+  ) {
+    throw new TypeError(
+      "invalid recipient capability integration"
+    );
+  }
+
+  return Object.freeze({
+    issue(input) {
+      return issue.call(
+        issuer,
+        input
+      );
+    },
+    resolve(input) {
+      return resolve.call(
+        resolver,
+        input
+      );
+    }
   });
 }
 
@@ -96,6 +149,30 @@ export async function createMessagingDeviceIntegration(
 
   return clientFactory(
     messagingDevice
+  );
+}
+
+export async function createMessagingRecipientIntegration(
+  messagingRecipient,
+  {
+    clientFactory =
+      createUbidMessagingRecipientClient
+  } = {}
+) {
+  if (
+    messagingRecipient?.enabled !== true
+  ) {
+    return undefined;
+  }
+
+  if (typeof clientFactory !== "function") {
+    throw new TypeError(
+      "invalid messaging recipient integration"
+    );
+  }
+
+  return clientFactory(
+    messagingRecipient
   );
 }
 
@@ -398,6 +475,22 @@ export async function runServer({ env = process.env, stdout = console.log, stder
     }
   }
 
+  let messagingRecipientClient;
+
+  if (
+    config.messagingRecipient.enabled
+  ) {
+    try {
+      messagingRecipientClient =
+        await createMessagingRecipientIntegration(
+          config.messagingRecipient
+        );
+    } catch {
+      stderr("invalid configuration");
+      return 2;
+    }
+  }
+
   const bff = createSocialOAuthBff({
     config,
     pendingTransactions,
@@ -406,7 +499,8 @@ export async function runServer({ env = process.env, stdout = console.log, stder
     authorityReader,
     fullDirectoryClient,
     recipientCapabilityIssuer,
-    messagingDeviceClient
+    messagingDeviceClient,
+    messagingRecipientClient
   });
   const server = createServer(createHttpHandler({ publicOrigin: config.publicOrigin, bff }));
   try { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(config.port, config.bindHost, resolve); }); }
