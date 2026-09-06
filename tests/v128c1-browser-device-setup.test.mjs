@@ -2,13 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { createMessagingDevice, createMessagingDeviceStore } from "../web/messaging-device-v128c1.mjs";
+import {
+  createMessagingDevice,
+  createMessagingDeviceStore,
+  MESSAGING_DEVICE_TIMESTAMP_UNIT
+} from "../web/messaging-device-v128c1.mjs";
 import { renderSecureMessagingAuthenticatedShell } from "../web/secure-messaging-v128.mjs";
 import { normalizeMessagingDeviceSnapshot, normalizeMessagingDeviceResult } from "../src/server/ubid-messaging-device-client.mjs";
 
 const subject = "a".repeat(64);
 const secondSubject = "b".repeat(64);
-const now = 1_788_652_800;
+const now = 1_788_652_800_000;
 const route = "/auth/messaging-device-bindings";
 const prefix = "hodlxxi.social_messaging_device_binding_";
 const snapshotId = "sha256:" + "7".repeat(64);
@@ -33,21 +37,21 @@ const pending = () => ({
   deviceId: "01".repeat(32), privateKey: new TestCryptoKey("private"),
   publicKey: publicHex, requestId: "02".repeat(32), state: "pending-register", acceptedBinding: null
 });
-const metadata = () => ({ bindingId: "3".repeat(64), version: 1, validFrom: now - 100, expiresAt: now + 86400 });
+const metadata = () => ({ bindingId: "3".repeat(64), version: 1, validFrom: now - 100_000, expiresAt: now + 86_400_000 });
 const active = (record = pending()) => ({
   deviceId: record.deviceId, publicKey: record.publicKey, algorithm: "x25519-v1",
   ...metadata(), snapshotId, revoked: false
 });
 const snapshot = (devices = []) => ({
   schema: prefix + "snapshot.v1", version: 1, source: "hodlxxi-ubid", snapshotId,
-  complete: true, issuedAt: now - 10, expiresAt: now + 60, activeDevices: devices
+  complete: true, issuedAt: now - 10_000, expiresAt: now + 60_000, activeDevices: devices
 });
 const result = (record = pending()) => ({
   schema: prefix + "result.v1", version: 1, operation: "register",
   device: {
     deviceId: record.deviceId, publicKey: record.publicKey, algorithm: "x25519-v1", ...metadata(),
-    validFrom: new Date((now - 100) * 1000).toISOString().replace(".000Z", "Z"),
-    expiresAt: new Date((now + 86400) * 1000).toISOString().replace(".000Z", "Z")
+    validFrom: new Date(now - 100_000).toISOString().replace(".000Z", "Z"),
+    expiresAt: new Date(now + 86_400_000).toISOString().replace(".000Z", "Z")
   }
 });
 const response = (value) => ({
@@ -226,6 +230,22 @@ test("pending startup finalizes an exact active server binding without POST or k
   assert.equal(h.posts().length, 0);
   assert.equal(h.pairs.length, 0);
   assert.deepEqual(h.stored().acceptedBinding, metadata());
+});
+
+test("verified UBID millisecond snapshot contract is compared to a millisecond clock", async () => {
+  assert.equal(MESSAGING_DEVICE_TIMESTAMP_UNIT, "unix-milliseconds");
+  const record = pending();
+  const server = snapshot([active(record)]);
+  assert.equal(server.issuedAt, 1_788_652_790_000);
+  assert.equal(server.expiresAt, 1_788_652_860_000);
+  const h = harness({ record, snapshot: () => server });
+  assert.equal((await h.controller.reconcile()).state, "ready");
+  assert.deepEqual(h.stored().acceptedBinding, {
+    bindingId: "3".repeat(64),
+    version: 1,
+    validFrom: 1_788_652_700_000,
+    expiresAt: 1_788_739_200_000
+  });
 });
 
 test("ready requires matching accepted metadata and current server snapshot", async () => {
@@ -428,6 +448,9 @@ test("bounded module source permits only public export and same-origin session/d
   assert.deepEqual([...source.matchAll(/\.exportKey\(([^\n;]+)\)/g)].map((match) => match[1]), ['"raw", pair.publicKey']);
   assert.deepEqual([...source.matchAll(/JSON\.stringify\(([^)]+)\)/g)].map((match) => match[1]), ["command"]);
   assert.deepEqual([...source.matchAll(/"(\/auth\/[^" ]+)"/g)].map((match) => match[1]), [route, "/auth/session"]);
+  assert.match(source, /MESSAGING_DEVICE_TIMESTAMP_UNIT = "unix-milliseconds"/);
+  assert.match(source, /now = Date\.now/);
+  assert.doesNotMatch(source, /timestamp[^\n]*(?:magnitude|length)/i);
   assert.match(source, /store\.add\(record, "current"\)/);
   assert.match(source, /tx\.oncomplete = \(\) => resolve\(result\)/);
 });
@@ -511,7 +534,9 @@ test("native store waits for strict transaction completion, beyond successful ad
   assert.equal(idb.stored(), undefined);
   idb.writes.shift()(); await work;
   const retained = await store.read();
-  assert.equal(retained.privateKey instanceof webcrypto.CryptoKey, true);
+  const NativeCryptoKey = pair.privateKey.constructor;
+  assert.equal(typeof NativeCryptoKey, "function");
+  assert.equal(retained.privateKey instanceof NativeCryptoKey, true);
   assert.equal(retained.privateKey.extractable, false);
   assert.equal(retained.privateKey.type, "private");
   assert.equal(retained.publicKey, record.publicKey);
@@ -519,8 +544,10 @@ test("native store waits for strict transaction completion, beyond successful ad
 
 test("native store abort after successful add prevents registration", async () => {
   const idb = idbHarness({ abortWrites: true });
+  const pair = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const NativeCryptoKey = pair.privateKey.constructor;
   const h = harness({ dependencies: { store: createMessagingDeviceStore(idb.factory),
-    cryptoImpl: webcrypto, CryptoKeyImpl: webcrypto.CryptoKey } });
+    cryptoImpl: webcrypto, CryptoKeyImpl: NativeCryptoKey } });
   assert.equal((await h.controller.setup()).state, "unavailable");
   assert.ok(idb.events.includes("request-success"));
   assert.equal(idb.events.includes("transaction-complete"), false);

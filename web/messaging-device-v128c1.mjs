@@ -10,6 +10,7 @@ const LOCAL_FIELDS = [
 ];
 const METADATA_FIELDS = ["bindingId", "version", "validFrom", "expiresAt"];
 const DEVICE_FIELDS = ["deviceId", "bindingId", "algorithm", "version", "publicKey", "validFrom", "expiresAt"];
+export const MESSAGING_DEVICE_TIMESTAMP_UNIT = "unix-milliseconds";
 const unavailable = () => { throw new Error("messaging device unavailable"); };
 const hex = (value) => typeof value === "string" && HEX64.test(value);
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -97,11 +98,11 @@ function matchingBinding(snapshot, record) {
   return related[0];
 }
 
-function isoSeconds(value) {
+function isoMilliseconds(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) unavailable();
   const milliseconds = Date.parse(value);
   if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value.replace("Z", ".000Z")) unavailable();
-  return milliseconds / 1000;
+  return milliseconds;
 }
 
 function registerResult(value, record, now) {
@@ -112,7 +113,7 @@ function registerResult(value, record, now) {
       device.algorithm !== "x25519-v1") unavailable();
   const accepted = metadata({
     bindingId: device.bindingId, version: device.version,
-    validFrom: isoSeconds(device.validFrom), expiresAt: isoSeconds(device.expiresAt)
+    validFrom: isoMilliseconds(device.validFrom), expiresAt: isoMilliseconds(device.expiresAt)
   });
   if (accepted.validFrom > now || accepted.expiresAt <= now ||
       (record.acceptedBinding && !sameMetadata(record.acceptedBinding, accepted))) unavailable();
@@ -193,7 +194,7 @@ export function createMessagingDevice({
   CryptoKeyImpl = globalThis.CryptoKey,
   randomFill = (bytes) => cryptoImpl.getRandomValues(bytes),
   store = createMessagingDeviceStore(),
-  now = () => Math.floor(Date.now() / 1000),
+  now = Date.now,
   onState = () => {},
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout

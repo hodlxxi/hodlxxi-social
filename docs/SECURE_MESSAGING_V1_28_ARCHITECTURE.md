@@ -270,12 +270,14 @@ before the UI becomes ready. Ready re-entry must match that metadata exactly.
 Malformed, duplicate, missing-ready, revoked, expired, or conflicting bindings
 fail closed to unavailable without deleting the original record.
 
-The browser interprets snapshot integer times as Unix seconds and converts
-the BFF result's canonical UTC second strings to that same unit. Freshness and
-binding-window checks use an injected seconds clock. This unit is explicit
-because the existing BFF normalizer checks integer structure but does not
-document a unit; a differing authority contract must be reconciled before any
-activation, rather than guessed from timestamp magnitude.
+The UBID provider contract verified at authority commit
+`e4b726f4050d1e1f8b606a9acd9bd2cb618ee1b7` uses integer Unix milliseconds for
+snapshot `issuedAt`/`expiresAt` and active-device `validFrom`/`expiresAt`. The browser
+uses the same authoritative millisecond unit internally and converts the BFF
+registration result's canonical UTC-second strings to integer Unix milliseconds
+before persisting accepted metadata. Freshness, expiration, and exact metadata
+reconciliation therefore compare one explicit cross-component unit. The
+browser does not infer time units from timestamp magnitude.
 
 The four product states are not-configured, pending-register, ready, and
 unavailable. Ordinary Messages never renders subject, deviceId, bindingId, or
