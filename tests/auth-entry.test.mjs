@@ -2401,3 +2401,55 @@ test("Messages keeps one V1.28B renderer on first load, fresh bootstrap, and rou
     1
   );
 });
+
+test("V1.28C.1 authenticated Messages owns explicit setup, safe state rendering, and route reconciliation", async () => {
+  const document = fakeDocument(), browser = fakeBrowser("#/messages");
+  let setups = 0, reconciles = 0, cancels = 0;
+  const contexts = [];
+  const binding = bindAuthenticatedEntry(document, {
+    browser,
+    fetchImpl: async (url) => {
+      if (url === "/auth/session") return response({ authenticated: true, subject });
+      if (url === "/auth/authority") return response({ subject, valid: true, status: "full" });
+      if (url === "/auth/full-directory") return response({ state: "available", participants: [{ alias: "pairwise.member" }] });
+      return response({ enabled: false });
+    },
+    messagingDeviceFactory: ({ getContext, onState }) => ({
+      async reconcile() { reconciles++; contexts.push(getContext()); onState({ state: "not-configured", busy: false }); },
+      async setup() { setups++; contexts.push(getContext()); onState({ state: "ready", busy: false }); },
+      cancel() { cancels++; }
+    })
+  });
+  await binding.ready;
+  assert.equal(reconciles, 1); assert.equal(setups, 0);
+  assert.match(document.elements["#app-page"].innerHTML, /Set up this device/);
+  const click = document.listeners.get("click");
+  click({ target: { closest: () => ({ hasAttribute: (name) => name === "data-secure-v128-setup-device" }) }, preventDefault() {} });
+  assert.equal(setups, 1);
+  assert.match(document.elements["#app-page"].innerHTML, /This device is ready for end-to-end encryption/);
+  click({ target: { closest: () => ({ hasAttribute: () => false, getAttribute: () => "pairwise.member" }) } });
+  assert.match(document.elements["#app-page"].innerHTML, /textarea[^>]+disabled/);
+  browser.location.hash = "#/home";
+  browser.listeners.get("hashchange")();
+  browser.location.hash = "#/messages";
+  browser.listeners.get("hashchange")();
+  assert.equal(reconciles, 2); assert.equal(cancels, 1);
+  assert.ok(contexts.every((context) => context.subject === subject && context.access === "full"));
+});
+
+test("V1.28C.1 Limited Messages cannot construct a device controller or register", async () => {
+  const document = fakeDocument(), browser = fakeBrowser("#/messages");
+  let controllers = 0;
+  const binding = bindAuthenticatedEntry(document, {
+    browser,
+    fetchImpl: async (url) => {
+      if (url === "/auth/session") return response({ authenticated: true, subject });
+      if (url === "/auth/authority") return response({ subject, valid: true, status: "limited" });
+      return response({ enabled: false });
+    },
+    messagingDeviceFactory: () => { controllers++; throw new Error("must not construct"); }
+  });
+  await binding.ready;
+  assert.equal(controllers, 0);
+  assert.doesNotMatch(document.elements["#app-page"].innerHTML, /data-secure-v128-setup-device/);
+});

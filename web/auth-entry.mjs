@@ -15,6 +15,7 @@ import {
 } from "./private-label-store.mjs?v=1.28.1";
 
 import { renderNavigation } from "./shell.mjs?v=1.28.1";
+import { createMessagingDevice } from "./messaging-device-v128c1.mjs?v=1.28c.1";
 
 import {
   canonicalNostrRelayUrl,
@@ -584,7 +585,8 @@ export function bindAuthenticatedEntry(
     signerConnector = connectAuthenticatedNip07Signer,
     notePublisher = publishAuthenticatedNote,
     profilePublisher = publishAuthenticatedProfile,
-    privateLabelStore = null
+    privateLabelStore = null,
+    messagingDeviceFactory = createMessagingDevice
   } = {}
 ) {
   const labelStore =
@@ -652,8 +654,17 @@ export function bindAuthenticatedEntry(
   let fullDirectoryAttempted = false;
   let currentMessagingSelectedAlias = null;
   let currentMessagingFilter = "";
+  let messagingDevice = null;
+  let messagingDeviceView = Object.freeze({ state: "unavailable", busy: false });
+
+  const clearMessagingDevice = () => {
+    messagingDevice?.cancel();
+    messagingDevice = null;
+    messagingDeviceView = Object.freeze({ state: "unavailable", busy: false });
+  };
 
   const clearProduct = () => {
+    clearMessagingDevice();
     currentMessagingSelectedAlias = null;
     currentMessagingFilter = "";
 
@@ -799,7 +810,9 @@ export function bindAuthenticatedEntry(
       Object.freeze(privateLabels),
       Object.freeze({
         selectedAlias: currentMessagingSelectedAlias,
-        filter: currentMessagingFilter
+        filter: currentMessagingFilter,
+        deviceState: messagingDeviceView.state,
+        deviceBusy: messagingDeviceView.busy
       })
     );
 
@@ -905,6 +918,27 @@ export function bindAuthenticatedEntry(
     return false;
   };
 
+  const loadMessagingDeviceForRoute = async () => {
+    if (messagingDevice || currentSession?.authenticated !== true || currentAuthority?.valid !== true ||
+        currentAuthority.status !== "full" || browser?.location?.hash !== "#/messages") return;
+    const session = currentSession;
+    const device = messagingDeviceFactory({
+      fetchImpl,
+      getContext: () => ({
+        subject: currentSession?.subject,
+        access: currentSession === session && currentAuthority?.valid === true &&
+          browser?.location?.hash === "#/messages" ? currentAuthority.status : null
+      }),
+      onState: (view) => {
+        if (messagingDevice !== device || currentSession !== session) return;
+        messagingDeviceView = view;
+        paintProduct();
+      }
+    });
+    messagingDevice = device;
+    await device.reconcile();
+  };
+
   const ready = readSocialSession(fetchImpl)
     .then(async (session) => {
       if (!session.authenticated) {
@@ -944,6 +978,7 @@ export function bindAuthenticatedEntry(
 
       renderAuthority(authority);
       await loadFullDirectoryForRoute();
+      await loadMessagingDeviceForRoute();
 
       currentPublishConfig = await publishConfig;
       currentPublicWrite = currentPublishConfig.enabled
@@ -1105,6 +1140,7 @@ export function bindAuthenticatedEntry(
   };
 
   const logout = async () => {
+    clearMessagingDevice();
     if (currentSession?.authenticated !== true) {
       renderSignedOut(false);
       return true;
@@ -1174,6 +1210,15 @@ export function bindAuthenticatedEntry(
       appPage
         .querySelector?.("[data-secure-v128-search]")
         ?.focus?.();
+      return;
+    }
+
+    if (button.hasAttribute?.("data-secure-v128-setup-device")) {
+      event.preventDefault?.();
+      if (currentAuthority?.valid === true && currentAuthority.status === "full" &&
+          messagingDeviceView.state === "not-configured" && !messagingDeviceView.busy) {
+        void messagingDevice?.setup();
+      }
       return;
     }
 
@@ -1320,11 +1365,13 @@ export function bindAuthenticatedEntry(
   });
 
   browser?.addEventListener?.("hashchange", () => {
+    clearMessagingDevice();
     currentMessagingSelectedAlias = null;
     currentMessagingFilter = "";
 
     paintProduct();
     void loadFullDirectoryForRoute();
+    void loadMessagingDeviceForRoute();
   });
 
   return Object.freeze({
