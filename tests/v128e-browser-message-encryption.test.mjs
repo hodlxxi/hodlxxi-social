@@ -13,6 +13,7 @@ import {
   createMessageEnvelopeEncryptorForTest,
   encryptMessageEnvelope,
   MAX_PLAINTEXT_BYTES,
+  MAX_RECIPIENT_CLOCK_SKEW_MS,
   MESSAGE_ENVELOPE_SCHEMA,
   MESSAGE_ENVELOPE_SUITE
 } from "../web/message-encryption-v128e.mjs";
@@ -118,6 +119,12 @@ async function fixtures() {
 
 const fixture = await fixtures();
 const clonePackage = () => structuredClone(fixture.recipientPackage);
+const refreshedPackage = (mutate) => {
+  const recipientPackage = clonePackage();
+  mutate(recipientPackage);
+  recipientPackage.snapshotId = packageSnapshotId(recipientPackage);
+  return recipientPackage;
+};
 const encryptAtFixtureTime = createMessageEnvelopeEncryptorForTest({
   cryptoImpl: webcrypto,
   now: () => now
@@ -192,6 +199,117 @@ test("accepts the exact fresh V1.28D recipient-package contract", async () => {
   assert.equal(envelope.version, 1);
   assert.equal(envelope.recipientPackageSnapshotId, fixture.recipientPackage.snapshotId);
   assert.deepEqual(envelope.recipientDeviceHandles, handles);
+});
+
+test("recipient package future skew accepts exactly 30 seconds and rejects the next millisecond", async () => {
+  assert.equal(MAX_RECIPIENT_CLOCK_SKEW_MS, 30_000);
+  for (const [label, issuedAt, accepted] of [
+    ["synchronized", now, true],
+    ["exact allowance", now + MAX_RECIPIENT_CLOCK_SKEW_MS, true],
+    ["beyond allowance", now + MAX_RECIPIENT_CLOCK_SKEW_MS + 1, false]
+  ]) {
+    const recipientPackage = refreshedPackage((value) => {
+      value.issuedAt = issuedAt;
+    });
+    const operation = encryptAtFixtureTime({ recipientPackage, plaintext });
+    if (accepted) await assert.doesNotReject(operation, label);
+    else await assert.rejects(operation, /message encryption unavailable/, label);
+  }
+});
+
+test("recipient package expiry skew tolerates less than 30 seconds but rejects at and beyond the boundary", async () => {
+  for (const [label, expiryOffset, accepted] of [
+    ["inside allowance", -MAX_RECIPIENT_CLOCK_SKEW_MS + 1, true],
+    ["exact rejection boundary", -MAX_RECIPIENT_CLOCK_SKEW_MS, false],
+    ["beyond rejection boundary", -MAX_RECIPIENT_CLOCK_SKEW_MS - 1, false]
+  ]) {
+    const recipientPackage = refreshedPackage((value) => {
+      value.expiresAt = now + expiryOffset;
+      value.issuedAt = value.expiresAt - 60_000;
+      for (const device of value.devices) device.validFrom = value.issuedAt - 1;
+    });
+    const operation = encryptAtFixtureTime({ recipientPackage, plaintext });
+    if (accepted) await assert.doesNotReject(operation, label);
+    else await assert.rejects(operation, /message encryption unavailable/, label);
+  }
+});
+
+test("recipient device expiry uses the same exact skew boundary while preserving package containment", async () => {
+  for (const [label, expiryOffset, accepted] of [
+    ["inside allowance", -MAX_RECIPIENT_CLOCK_SKEW_MS + 1, true],
+    ["exact rejection boundary", -MAX_RECIPIENT_CLOCK_SKEW_MS, false]
+  ]) {
+    const recipientPackage = refreshedPackage((value) => {
+      value.expiresAt = now + expiryOffset;
+      value.issuedAt = value.expiresAt - 60_000;
+      for (const device of value.devices) {
+        device.validFrom = value.issuedAt - 1;
+        device.expiresAt = value.expiresAt;
+      }
+    });
+    const operation = encryptAtFixtureTime({ recipientPackage, plaintext });
+    if (accepted) await assert.doesNotReject(operation, label);
+    else await assert.rejects(operation, /message encryption unavailable/, label);
+  }
+});
+
+test("clock skew does not weaken malformed stale or snapshot-mismatched evidence rejection", async () => {
+  const stale = refreshedPackage((value) => {
+    value.expiresAt = now - MAX_RECIPIENT_CLOCK_SKEW_MS;
+    value.issuedAt = value.expiresAt - 60_000;
+    for (const device of value.devices) device.validFrom = value.issuedAt - 1;
+  });
+  await assert.rejects(
+    encryptAtFixtureTime({ recipientPackage: stale, plaintext }),
+    /message encryption unavailable/
+  );
+
+  const malformed = refreshedPackage((value) => {
+    value.issuedAt = String(value.issuedAt);
+  });
+  await assert.rejects(
+    encryptAtFixtureTime({ recipientPackage: malformed, plaintext }),
+    /message encryption unavailable/
+  );
+
+  const snapshotMismatch = clonePackage();
+  snapshotMismatch.expiresAt += 1;
+  await assert.rejects(
+    encryptAtFixtureTime({ recipientPackage: snapshotMismatch, plaintext }),
+    /message encryption unavailable/
+  );
+});
+
+test("recipient timestamps remain explicit Unix milliseconds with no magnitude guessing", async () => {
+  const secondsInsteadOfMilliseconds = refreshedPackage((value) => {
+    value.issuedAt = Math.floor(value.issuedAt / 1000);
+    value.expiresAt = Math.floor(value.expiresAt / 1000);
+    for (const device of value.devices) {
+      device.validFrom = Math.floor(device.validFrom / 1000);
+      device.expiresAt = Math.floor(device.expiresAt / 1000);
+    }
+  });
+  await assert.rejects(
+    encryptAtFixtureTime({
+      recipientPackage: secondsInsteadOfMilliseconds,
+      plaintext
+    }),
+    /message encryption unavailable/
+  );
+
+  const source = await readFile(
+    new URL("../web/message-encryption-v128e.mjs", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /record\.issuedAt > now \+ MAX_RECIPIENT_CLOCK_SKEW_MS/);
+  assert.equal(
+    [...source.matchAll(/record\.expiresAt <= now - MAX_RECIPIENT_CLOCK_SKEW_MS/g)].length,
+    2
+  );
+  assert.doesNotMatch(
+    source,
+    /Date\([^)]*(?:issuedAt|expiresAt)|(?:issuedAt|expiresAt)\s*[/*]\s*1000/
+  );
 });
 
 test("malformed, duplicate, stale, expired, empty and oversized packages fail closed", async () => {
@@ -509,11 +627,12 @@ test("production source is browser-only and never reaches a sender private key o
 });
 
 test("dependency and local delivery provenance remain exact and the UI stays inert", async () => {
-  const [manifestSource, lockSource, buildSource, entrySource] = await Promise.all([
+  const [manifestSource, lockSource, buildSource, entrySource, ciSource] = await Promise.all([
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
     readFile(new URL("../scripts/build-v128e-hpke-browser.mjs", import.meta.url), "utf8"),
-    readFile(new URL("../web/auth-entry.mjs", import.meta.url), "utf8")
+    readFile(new URL("../web/auth-entry.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")
   ]);
   const manifest = JSON.parse(manifestSource);
   const lock = JSON.parse(lockSource);
@@ -531,6 +650,19 @@ test("dependency and local delivery provenance remain exact and the UI stays ine
   assert.match(buildSource, /disable-node-crypto-fallback/);
   assert.doesNotMatch(buildSource, /https?:\/\//);
   assert.doesNotMatch(entrySource, /message-encryption-v128e|hpke-core-v1\.9\.0/);
+  assert.match(ciSource, /npm ci/);
+  assert.match(ciSource, /npm run build:v128e-crypto/);
+  assert.match(
+    ciSource,
+    /git diff --exit-code -- package\.json package-lock\.json web\/vendor\/hpke-core-v1\.9\.0\.mjs/
+  );
+  assert.match(
+    ciSource,
+    /9f5eb8be623357983b9862b7e2513fad98d4afdc3ccac869bec315eaf40f43dc/
+  );
+  assert.match(ciSource, /node-version: "18"/);
+  assert.match(ciSource, /node tests\/v128e-browser-message-encryption\.test\.mjs/);
+  assert.match(ciSource, /native WebCrypto safely exports only the public X25519 key/);
 });
 
 test("official RFC 9180 Base/X25519/HKDF-SHA256/AES-128-GCM vector is compatible", async () => {

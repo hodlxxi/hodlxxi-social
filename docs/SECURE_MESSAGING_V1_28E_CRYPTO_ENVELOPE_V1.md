@@ -91,8 +91,11 @@ The build command is:
 node scripts/build-v128e-hpke-browser.mjs
 ```
 
-Build determinism is checked by building twice from the same lock-installed
-inputs and comparing SHA-256 outputs. Both builds produced
+Build determinism is checked locally by building twice from the same
+lock-installed inputs and comparing SHA-256 outputs. CI independently runs
+`npm ci`, rebuilds the artifact, requires `package.json`, `package-lock.json`,
+and the committed artifact to remain byte-identical according to Git, and
+checks the frozen artifact SHA-256. Both local builds produced
 `9f5eb8be623357983b9862b7e2513fad98d4afdc3ccac869bec315eaf40f43dc`.
 The committed generated artifact is not
 imported by the authenticated entry graph in V1.28E, so this phase does not
@@ -118,6 +121,17 @@ canonical SHA-256 snapshot evidence and requires the exact supplied
 `snapshotId`. Unknown fields, accessors, symbols, sparse/extended arrays,
 duplicates, malformed values, future packages, and expired evidence fail
 closed. Timestamp units are never inferred by magnitude.
+
+Freshness comparisons use the explicit V1 constant
+`MAX_RECIPIENT_CLOCK_SKEW_MS = 30_000`. A package is future only when its
+integer Unix-millisecond `issuedAt` is more than 30 seconds ahead of the local
+browser clock. Package and device expiration reject at
+`expiresAt <= now - 30_000`; an elapsed interval shorter than 30 seconds is
+tolerated solely to account for browser/server clock skew. All interval and
+containment relationships remain strict. This allowance does not extend or
+replace the issuer's intended package lifetime: the snapshot timestamps remain
+unchanged and bound into the envelope. V1.28D freezes no normative maximum
+recipient-package lifetime, so V1.28E does not invent a new TTL.
 
 ## Per-message construction
 

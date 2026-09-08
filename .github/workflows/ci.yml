@@ -23,6 +23,18 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Audit locked dependencies
+        run: npm audit
+
+      - name: Verify V1.28E browser crypto artifact
+        run: |
+          npm run build:v128e-crypto
+          git diff --exit-code -- package.json package-lock.json web/vendor/hpke-core-v1.9.0.mjs
+          echo "9f5eb8be623357983b9862b7e2513fad98d4afdc3ccac869bec315eaf40f43dc  web/vendor/hpke-core-v1.9.0.mjs" | sha256sum --check --strict
+
       - name: Run test suite
         run: node --test
 
@@ -75,3 +87,31 @@ jobs:
 
       - name: Check whitespace integrity
         run: git diff --check
+
+  node18-v128e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Rebuild and verify V1.28E browser crypto artifact
+        run: |
+          npm run build:v128e-crypto
+          git diff --exit-code -- package.json package-lock.json web/vendor/hpke-core-v1.9.0.mjs
+          echo "9f5eb8be623357983b9862b7e2513fad98d4afdc3ccac869bec315eaf40f43dc  web/vendor/hpke-core-v1.9.0.mjs" | sha256sum --check --strict
+
+      - name: Run focused V1.28E compatibility tests
+        run: node tests/v128e-browser-message-encryption.test.mjs
+
+      - name: Run native V1.28C.1 X25519 CryptoKey compatibility test
+        run: node --test-name-pattern="native WebCrypto safely exports only the public X25519 key and structured-clones the non-extractable private key" tests/v128c1-browser-device-setup.test.mjs

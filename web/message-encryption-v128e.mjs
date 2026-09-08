@@ -7,6 +7,7 @@ import {
 } from "./vendor/hpke-core-v1.9.0.mjs";
 
 export const MAX_PLAINTEXT_BYTES = 16384;
+export const MAX_RECIPIENT_CLOCK_SKEW_MS = 30_000;
 export const MESSAGE_ENVELOPE_SCHEMA =
   "hodlxxi.social_message_envelope.v1";
 export const MESSAGE_ENVELOPE_SUITE =
@@ -153,7 +154,7 @@ function normalizeDevice(value, packageRecord, now) {
     record.expiresAt <= record.validFrom ||
     record.validFrom > packageRecord.issuedAt ||
     record.expiresAt < packageRecord.expiresAt ||
-    record.expiresAt <= now
+    record.expiresAt <= now - MAX_RECIPIENT_CLOCK_SKEW_MS
   ) unavailable();
 
   const publicKeyBytes = validX25519PublicKey(record.publicKey);
@@ -184,8 +185,8 @@ async function normalizeRecipientPackage(value, now, cryptoImpl) {
     !ALIAS.test(record.alias) ||
     !integer(record.issuedAt) ||
     !integer(record.expiresAt) ||
-    record.issuedAt > now ||
-    record.expiresAt <= now ||
+    record.issuedAt > now + MAX_RECIPIENT_CLOCK_SKEW_MS ||
+    record.expiresAt <= now - MAX_RECIPIENT_CLOCK_SKEW_MS ||
     record.expiresAt <= record.issuedAt
   ) unavailable();
 
