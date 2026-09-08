@@ -70,6 +70,7 @@ jobs:
           node --check src/server/social-oauth-memory.mjs
           node --check src/server/hodlxxi-oauth-client.mjs
           node --check src/server/social-oauth-bff.mjs
+          node --check src/server/message-envelope-v128f1.mjs
           node --check scripts/hodlxxi-social-server.mjs
           node --check scripts/build-v128e-hpke-browser.mjs
 
@@ -112,6 +113,9 @@ jobs:
 
       - name: Run focused V1.28E compatibility tests
         run: node tests/v128e-browser-message-encryption.test.mjs
+
+      - name: Run focused V1.28F.1 compatibility tests
+        run: node tests/v128f1-message-envelope-boundary.test.mjs
 
       - name: Run native V1.28C.1 X25519 CryptoKey compatibility test
         run: node --test-name-pattern="native WebCrypto safely exports only the public X25519 key and structured-clones the non-extractable private key" tests/v128c1-browser-device-setup.test.mjs

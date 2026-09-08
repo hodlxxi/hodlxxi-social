@@ -32,6 +32,18 @@ UBID input is accepted only as exact `hodlxxi.privacy_safe_full_directory.v1` ve
 
 `src/protected-content.mjs` is a pure, offline policy and dependency boundary for future `FULL_NETWORK` delivery. It is not wired into production composition. It validates exact current-Full authority independently for authors and viewers, produces metadata-free denials, validates bounded authoritative recipient assertions, and defines only injected opaque transport and envelope contracts. V1.22 adds `src/full-recipient-directory.mjs` as a defensive consumer of one complete, fresh external snapshot with exact-subject Full authority and separate versioned encryption-key bindings. Its dependency direction is `injected future directory resolver → exact snapshot validation → immutable available directory or one generic unavailable result`; no production composition imports it. Public Nostr kinds 0 and 1 remain public-only. Live directory acquisition, key provision, durable protected transport, encryption and production UI remain unimplemented; see [Protected Content Boundary V1](PROTECTED_CONTENT_BOUNDARY_V1.md) and [Full Recipient Directory V1.22](FULL_RECIPIENT_DIRECTORY_V1.md).
 
+## V1.28F.1 exact ciphertext envelope boundary
+
+`src/server/message-envelope-v128f1.mjs` is an uncomposed, in-memory server
+boundary for the exact V1.28E ciphertext envelope. It provides defensive exact
+normalization, explicit canonical ASCII JSON, a bounded canonical raw-wire
+round trip, and a V1 domain-separated SHA-256 digest. It provides no routing,
+HTTP route, store, filesystem or PostgreSQL dependency, runtime configuration,
+browser activation, inbox, or delivery behavior. Recipient-self routing and
+device-handle stability remain unresolved prerequisites, so future
+authorization/routing/storage/inbox ports are documentary rather than
+executable. See [V1.28F.1 Exact Ciphertext Envelope Boundary](SECURE_MESSAGING_V1_28F1_ENVELOPE_STORAGE_BOUNDARY.md).
+
 ## V1.20 authenticated external-signer publication path
 
 The ordinary write dependency path is `opaque Social session subject + authenticated publish config → explicit Connect signer → external NIP-07 getPublicKey/signEvent → local NIP-01/BIP340 verification → one browser WebSocket EVENT → one exact positive relay OK`. The browser re-resolves the provider and rechecks the exact session key for every publication. Provider objects, private-key material and signed events never enter the BFF, Social session store, database or browser persistence.
