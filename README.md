@@ -1,11 +1,12 @@
-# HODLXXI Social — current source through V1.28B
+# HODLXXI Social — current source through V1.28F.1
 
 An independent, Nostr-first social layer for the HODLXXI covenant trust network. Identity is a public key—not a username, password, KYC record, or application-issued label. V1 preserves the dependency-free V0.8 product shell while placing a strict normalized data/service boundary between the UI and its deterministic synthetic fixtures.
 
 ## Current source and deployment model
 
-Current `main` contains HODLXXI Social source through V1.28B. Source capability
-and deployed capability are separate facts.
+This repository contains HODLXXI Social source through the inert V1.28F.1
+envelope boundary. Source capability and deployed capability are separate
+facts.
 
 Current source includes:
 
@@ -13,7 +14,11 @@ Current source includes:
 - V1.26 viewer-private device-local labels;
 - V1.27 short-lived process-local opaque `rc_...` recipient capabilities;
 - V1.28A secure-messaging architecture;
-- V1.28B authenticated secure-messaging UX shell.
+- V1.28B authenticated secure-messaging UX shell;
+- V1.28C/C.1 Social messaging-device boundary and browser-local setup;
+- V1.28D recipient crypto-package BFF boundary;
+- V1.28E browser-local ciphertext envelope construction;
+- V1.28F.1 exact, uncomposed server envelope/wire/digest boundary.
 
 The Full Directory and its private Unix-socket transport were activated later
 through a separately reviewed production operation. UBID/CRT remains the sole
@@ -24,10 +29,15 @@ The V1.27 recipient-capability server path is also enabled in the currently
 observed production configuration. A recipient capability is not identity, not
 an encryption key, and not final permission to send a message.
 
-V1.28B does not implement live direct messaging. It may read the existing
-authenticated Social session and, for a current Full viewer, the existing
-alias-only Full Directory. It does not generate device keys, encrypt messages,
-submit ciphertext, create message storage, or deliver conversations.
+V1.28F.1 does not implement live direct messaging or complete V1.28F. Its new
+server module only validates the frozen V1.28E ciphertext envelope in memory,
+serializes/parses one bounded canonical wire representation, and computes a
+domain-separated digest. It is not runtime-composed and adds no HTTP route,
+message submission, recipient routing, store, PostgreSQL dependency, inbox,
+delivery, decryption, environment, browser activation, or deployment change.
+The next prerequisite is a separately reviewed UBID recipient-self routing
+gate. See the
+[V1.28F.1 exact ciphertext envelope boundary](docs/SECURE_MESSAGING_V1_28F1_ENVELOPE_STORAGE_BOUNDARY.md).
 
 Historical version sections below describe the scope of each source change when
 it was introduced. A statement that an earlier PR itself did not activate a

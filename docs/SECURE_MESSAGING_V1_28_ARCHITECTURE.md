@@ -186,6 +186,25 @@ ciphertext submission, message route, inbox, database, delivery, WebSocket,
 decryption UI, conversation persistence, or sender-history synchronization is
 implemented.
 
+## V1.28F.1 exact server envelope boundary
+
+V1.28F.1 adds the first, deliberately small part of the future V1.28F server
+boundary. `src/server/message-envelope-v128f1.mjs` accepts only the exact
+V1.28E `hodlxxi.social_message_envelope.v1`, produces a fresh deeply frozen
+ciphertext-only object, emits one explicit no-whitespace ASCII JSON wire form,
+requires raw wire input to round-trip byte for byte within 32,768 bytes, and
+computes a V1 domain-separated SHA-256 digest. The digest representation is
+distinct from a recipient-package snapshot identifier.
+
+This is not V1.28F completion. The module is not composed into the server or
+browser and adds no HTTP route, store, filesystem use, PostgreSQL dependency,
+environment, inbox, submission, delivery, or decryption behavior. Recipient
+routing is unresolved, and device-handle equivalence and stability across a
+future routing/storage boundary are not proven. Executable authorization,
+routing, storage, and inbox ports are therefore deferred rather than freezing
+speculative UBID semantics. See
+[`SECURE_MESSAGING_V1_28F1_ENVELOPE_STORAGE_BOUNDARY.md`](./SECURE_MESSAGING_V1_28F1_ENVELOPE_STORAGE_BOUNDARY.md).
+
 ## Mobile requirement
 
 Internal Social messaging must not require a NIP-07 browser extension.
@@ -481,7 +500,8 @@ It must perform no messaging-side:
 - V1.28C — device-key registration and lifecycle;
 - V1.28D — `rc_...` to recipient crypto-package boundary;
 - V1.28E — reviewed browser encryption implementation;
-- V1.28F — ciphertext-only inbox/transport/storage;
+- V1.28F.1 — inert exact server envelope/wire/digest boundary;
+- V1.28F — later ciphertext-only inbox/transport/storage completion;
 - V1.28G — browser-local decryption and multi-device rehearsal.
 
 Each phase receives its own tests and review gate.
