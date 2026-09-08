@@ -161,6 +161,31 @@ Before live crypto wiring, the implementation must document and test:
 
 No fallback to an unreviewed crypto path is allowed.
 
+## V1.28E browser encryption implementation
+
+V1.28E selects exact-pinned `@hpke/core` 1.9.0 and RFC 9180 Base mode for
+recipient content-key wrapping. The suite is DHKEM(X25519, HKDF-SHA256),
+HKDF-SHA256, and AES-128-GCM. The message body is UTF-8 text, capped at 16,384
+bytes, and encrypted exactly once with a fresh random 256-bit content key and
+a fresh random 96-bit nonce using native WebCrypto AES-256-GCM. One independent
+one-shot HPKE operation wraps that same key for each current recipient device.
+V1.28E does not use or export the sender's persisted Social device private key.
+
+The frozen returned schema is `hodlxxi.social_message_envelope.v1`, version 1.
+It contains ciphertext, HPKE encapsulations, the recipient-package snapshot
+identifier, and sorted opaque device handles only. It has no recipient alias,
+recipient capability, raw recipient public key, canonical subject, protected
+plaintext, plaintext content key, private key, or timestamp. The exact
+envelope, authenticated-header, HPKE domain-separation, dependency provenance,
+browser-delivery, replay rule, and security non-claims are defined in
+[`SECURE_MESSAGING_V1_28E_CRYPTO_ENVELOPE_V1.md`](./SECURE_MESSAGING_V1_28E_CRYPTO_ENVELOPE_V1.md).
+
+This phase is still messaging-inert outside the local module: the authenticated
+entry graph does not import it, the composer and Send remain disabled, and no
+ciphertext submission, message route, inbox, database, delivery, WebSocket,
+decryption UI, conversation persistence, or sender-history synchronization is
+implemented.
+
 ## Mobile requirement
 
 Internal Social messaging must not require a NIP-07 browser extension.
