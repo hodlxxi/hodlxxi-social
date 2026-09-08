@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -17,9 +17,17 @@ import {
   serializeCanonicalMessageEnvelopeV1
 } from "../src/server/message-envelope-v128f1.mjs";
 import {
+  encryptMessageEnvelope,
   MESSAGE_ENVELOPE_SCHEMA as V128E_MESSAGE_ENVELOPE_SCHEMA,
   MESSAGE_ENVELOPE_SUITE as V128E_MESSAGE_ENVELOPE_SUITE
 } from "../web/message-encryption-v128e.mjs";
+
+if (!globalThis.crypto) {
+  Object.defineProperty(globalThis, "crypto", {
+    configurable: true,
+    value: webcrypto
+  });
+}
 
 const syntheticBytes = (length, seed) => Buffer.from(
   { length },
@@ -103,6 +111,98 @@ test("canonical serialization is stable and byte-identical to V1.28E field order
   assert.equal(first, JSON.stringify(input));
   assert.doesNotMatch(first, /\s/);
   assert.equal(Buffer.byteLength(first, "ascii"), first.length);
+});
+
+test("actual V1.28E output is byte-identical to the V1.28F.1 canonical wire", async () => {
+  const observedAt = Date.now();
+  const recipientAlias = `p_${"A".repeat(22)}`;
+  const deviceHandle = `d_${"A".repeat(22)}`;
+  const syntheticPlaintext = "synthetic-only input";
+  const keyPair = await webcrypto.subtle.generateKey(
+    { name: "X25519" },
+    false,
+    ["deriveBits"]
+  );
+  assert.equal(keyPair.privateKey.extractable, false);
+  assert.equal(keyPair.publicKey.extractable, true);
+
+  const publicKey = Buffer.from(
+    await webcrypto.subtle.exportKey("raw", keyPair.publicKey)
+  ).toString("hex");
+  const recipientPackage = {
+    schema: "hodlxxi.social_messaging_recipient_package.v1",
+    version: 1,
+    source: "hodlxxi-ubid",
+    snapshotId: "",
+    complete: true,
+    alias: recipientAlias,
+    issuedAt: observedAt - 1_000,
+    expiresAt: observedAt + 60_000,
+    devices: [
+      {
+        deviceHandle,
+        algorithm: "x25519-v1",
+        version: 1,
+        publicKey,
+        validFrom: observedAt - 2_000,
+        expiresAt: observedAt + 120_000
+      }
+    ]
+  };
+  const snapshotEvidence = {
+    alias: recipientPackage.alias,
+    complete: true,
+    devices: recipientPackage.devices.map((device) => ({
+      algorithm: device.algorithm,
+      deviceHandle: device.deviceHandle,
+      expiresAt: device.expiresAt,
+      publicKey: device.publicKey,
+      validFrom: device.validFrom,
+      version: device.version
+    })),
+    expiresAt: recipientPackage.expiresAt,
+    issuedAt: recipientPackage.issuedAt,
+    schema: recipientPackage.schema,
+    source: recipientPackage.source,
+    version: recipientPackage.version
+  };
+  recipientPackage.snapshotId = `sha256:${createHash("sha256")
+    .update(JSON.stringify(snapshotEvidence), "ascii")
+    .digest("hex")}`;
+
+  const actualEnvelope = await encryptMessageEnvelope({
+    recipientPackage,
+    plaintext: syntheticPlaintext
+  });
+  const actualWire = JSON.stringify(actualEnvelope);
+  const parsed = parseCanonicalMessageEnvelopeWireV1(actualWire);
+  const normalized = normalizeMessageEnvelopeV1(actualEnvelope);
+  const canonical = serializeCanonicalMessageEnvelopeV1(actualEnvelope);
+  const digest = digestCanonicalMessageEnvelopeV1(actualEnvelope);
+
+  assert.equal(canonical, actualWire);
+  assert.equal(serializeCanonicalMessageEnvelopeV1(parsed), actualWire);
+  assert.deepEqual(parsed, actualEnvelope);
+  assert.deepEqual(normalized, actualEnvelope);
+  assertDeepFrozen(parsed);
+  assertDeepFrozen(normalized);
+  assert.match(
+    digest,
+    /^hodlxxi-social-message-envelope-v1-sha256:[0-9a-f]{64}$/
+  );
+
+  const f1Outputs = [actualWire, JSON.stringify(normalized), digest].join("\n");
+  for (const forbiddenValue of [
+    recipientAlias,
+    publicKey,
+    syntheticPlaintext
+  ]) {
+    assert.equal(f1Outputs.includes(forbiddenValue), false);
+  }
+  assert.doesNotMatch(
+    f1Outputs,
+    /"(?:alias|publicKey|plaintext|K_message|privateKey)"\s*:/
+  );
 });
 
 test("canonical raw wire round trips from string, Buffer, and Uint8Array", () => {
