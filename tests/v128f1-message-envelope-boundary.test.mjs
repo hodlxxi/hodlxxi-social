@@ -495,6 +495,10 @@ test("rejects malformed message and snapshot identifiers", () => {
 
 test("rejects invalid, padded, and noncanonical base64url", () => {
   for (const mutate of [
+    (input) => {
+      input.recipientDeviceHandles[0] = `d_${"A".repeat(21)}B`;
+      input.keyWraps[0].deviceHandle = input.recipientDeviceHandles[0];
+    },
     (input) => { input.body.nonce = `${input.body.nonce}=`; },
     (input) => { input.body.ciphertext = "invalid+alphabet"; },
     (input) => { input.keyWraps[0].enc = "invalid/alphabet"; },

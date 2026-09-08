@@ -157,6 +157,7 @@ function normalizeUnsafe(value) {
       !DEVICE_HANDLE.test(handle) ||
       (previousHandle !== null && previousHandle >= handle)
     ) failure();
+    canonicalBase64url(handle.slice(2), 16, 16);
     previousHandle = handle;
   }
 
