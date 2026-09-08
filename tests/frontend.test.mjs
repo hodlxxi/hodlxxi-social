@@ -133,10 +133,10 @@ test("frontend exposes interactive surfaces and required non-claims", async () =
   assert.doesNotMatch(html, /password|localStorage|cookie/i);
 });
 
-test("package remains dependency-free", async () => {
+test("package has only the reviewed V1.28E crypto and build dependencies", async () => {
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.deepEqual(pkg.dependencies, {});
-  assert.deepEqual(pkg.devDependencies, {});
+  assert.deepEqual(pkg.dependencies, { "@hpke/core": "1.9.0" });
+  assert.deepEqual(pkg.devDependencies, { esbuild: "0.28.2" });
 });
 
 test("frontend is responsive and presents all access modes", async () => {

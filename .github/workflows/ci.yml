@@ -48,6 +48,8 @@ jobs:
           node --check web/private-label-store.mjs
           node --check web/secure-messaging-v128.mjs
           node --check web/messaging-device-v128c1.mjs
+          node --check web/message-encryption-v128e.mjs
+          node --check web/vendor/hpke-core-v1.9.0.mjs
 
       - name: Check Social OAuth server modules
         run: |
@@ -57,6 +59,7 @@ jobs:
           node --check src/server/hodlxxi-oauth-client.mjs
           node --check src/server/social-oauth-bff.mjs
           node --check scripts/hodlxxi-social-server.mjs
+          node --check scripts/build-v128e-hpke-browser.mjs
 
       - name: Check private Full Directory and recipient capability modules
         run: |

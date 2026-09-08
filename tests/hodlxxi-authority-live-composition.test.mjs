@@ -29,7 +29,7 @@ const protectedContentSha256 = Object.freeze({
   "web/dev-live.mjs": "7f6e7023ff5579d5d3d7183e896614a2ab22a81b5c03fb53038cb4de90ba3f88",
   "src/dev/live-social-composition.mjs": "58a74a3aa54ed8b757124b58aac1fc5983b2bda77a1d1c935e5ca7917e445c14",
   "scripts/nostr-relay-probe.mjs": "36848909c4b04ed009c40d531bc78d5f2ab69f7567f5ed48f21dd9f40588fc5e",
-  "package.json": "b4d50b3821192158f0c841b550e6c36c91326bd4b741722c341259bb2e9b67db",
+  "package.json": "fbaf65be231ed7d2ee8fffac91611140f873b3ff8c06ad594b71c765af3dac39",
   "src/dev/hodlxxi-authority-live-probe.mjs": "794de32b78394edae493025c872b0afcbf9335e54c4b5ae6a946b2ea0459b6a4",
   "src/data/normalize.mjs": "8fd7409c127518d8dff8fdf013ff5eb4f45da262ed35a277a5e57931e6d22038",
   "src/data/hodlxxi-authority-read-adapter.mjs": "44d584145047dfed1c5602276a00b41401bbf9e1fb036b8dcdd4ceb279d748bd",
@@ -249,8 +249,8 @@ test("implementation reuses V1.7 and contains no alternate authority or side-eff
   assert.doesNotMatch(implementation + cli, /SyntheticSocialAdapter|process\.env|localStorage|sessionStorage|indexedDB|WebSocket|setInterval|Authorization|private.?key|\b(?:POST|PUT|PATCH|DELETE)\b|grantFull|issueCRT|setStatus|bitcoin|lightning|sign\w*\(|publish\w*\(|deploy/i);
   assert.doesNotMatch(implementation, /identity_class|current_full_relation_satisfied/);
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.deepEqual(pkg.dependencies, {});
-  assert.deepEqual(pkg.devDependencies, {});
+  assert.deepEqual(pkg.dependencies, { "@hpke/core": "1.9.0" });
+  assert.deepEqual(pkg.devDependencies, { esbuild: "0.28.2" });
 });
 
 test("protected browser, Nostr, package, and core boundaries match audited content and remain isolated", async () => {

@@ -4,8 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:v128e-crypto": "node scripts/build-v128e-hpke-browser.mjs",
     "test": "node --test"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "dependencies": {
+    "@hpke/core": "1.9.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
 }
