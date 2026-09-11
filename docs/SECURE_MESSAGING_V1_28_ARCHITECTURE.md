@@ -399,10 +399,18 @@ binding snapshot. A snapshot that proves register or rotate is active, or that
 the revoked predecessor is absent, completes the pending operation without a
 new signature. Otherwise startup exposes an explicit continue action and does
 not submit or sign. After that action reconciles authoritative state again, a
-still-valid pending operation resubmits the exact same event and token; an
-expired operation obtains replacement intent/signature material for the same
-persisted proposal. Tampered material fails closed. Pending material is cleared
-only following canonical success. IndexedDB updates compare the caller's exact
+pending operation always submits the exact same retained event and token once,
+including when that material is locally expired. Canonical accepted replay is
+verified against the retained token, event, and proposal before another
+authoritative reconciliation finalizes it. Ambiguous submission outcomes keep
+the exact material and never reach an intent or signer. The current BFF maps
+upstream rejection, timeout, socket loss, response loss, service-token failure,
+and malformed output to the same generic HTTP 503. Because no trustworthy
+end-to-end definitive-rejection signal exists, any failed expired replay
+remains pending and replacement authorization is blocked. A separately
+reviewed protocol signal is required before the controller may request a fresh
+intent or signature. Tampered or conflicting material fails closed. Pending material is cleared
+only following authoritative reconciliation. IndexedDB updates compare the caller's exact
 public record revision inside the read-write transaction, reject stale rotation
 or retry replacement/clearing, and always promote the private CryptoKey from the
 winning stored rotation rather than from caller-supplied state.
