@@ -74,6 +74,9 @@ test(
         "web/authenticated-public-read.mjs",
         "web/authenticated-public-write.mjs",
         "web/nostr-event-verifier.mjs",
+        "web/messaging-device-v128c1.mjs",
+        "web/messaging-device-authorization-v1.mjs",
+        "web/nip46-messaging-device-signer-v1.mjs",
         "web/private-label-store.mjs",
         "web/secure-messaging-v128.mjs",
         "web/secure-messaging-v128.css",
@@ -275,6 +278,8 @@ test(
 );
 
 for (const missingAsset of [
+  "web/messaging-device-authorization-v1.mjs",
+  "web/nip46-messaging-device-signer-v1.mjs",
   "web/private-label-store.mjs",
   "web/secure-messaging-v128.mjs",
   "web/secure-messaging-v128.css"

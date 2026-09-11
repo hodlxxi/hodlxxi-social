@@ -16,6 +16,9 @@ import {
 
 import { renderNavigation } from "./shell.mjs?v=1.28.1";
 import { createMessagingDevice } from "./messaging-device-v128c1.mjs?v=1.28c.1";
+import {
+  createNip07MessagingDeviceSigner
+} from "./messaging-device-authorization-v1.mjs?v=1.28.1";
 
 import {
   canonicalNostrRelayUrl,
@@ -243,6 +246,17 @@ export function parseSocialPublishConfigDocument(value) {
   }
 }
 
+export function parseMessagingDeviceAuthorizationConfigDocument(value) {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ["enabled"]) ||
+    typeof value.enabled !== "boolean"
+  ) {
+    throw new TypeError("invalid messaging device authorization configuration");
+  }
+  return Object.freeze({ enabled: value.enabled });
+}
+
 export function parseFullDirectoryDocument(value) {
   if (
     !plainObject(value) ||
@@ -364,6 +378,27 @@ export async function readSocialPublishConfig(
   });
 
   return parseSocialPublishConfigDocument(
+    await decodeJsonResponse(response)
+  );
+}
+
+export async function readMessagingDeviceAuthorizationConfig(
+  fetchImpl = globalThis.fetch
+) {
+  if (typeof fetchImpl !== "function") {
+    throw new TypeError("messaging device authorization configuration unavailable");
+  }
+  const response = await fetchImpl(
+    "/auth/messaging-device-binding-authorization-config",
+    {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+      headers: { Accept: "application/json" }
+    }
+  );
+  return parseMessagingDeviceAuthorizationConfigDocument(
     await decodeJsonResponse(response)
   );
 }
@@ -586,7 +621,8 @@ export function bindAuthenticatedEntry(
     notePublisher = publishAuthenticatedNote,
     profilePublisher = publishAuthenticatedProfile,
     privateLabelStore = null,
-    messagingDeviceFactory = createMessagingDevice
+    messagingDeviceFactory = createMessagingDevice,
+    messagingAuthorizationSignerFactory = createNip07MessagingDeviceSigner
   } = {}
 ) {
   const labelStore =
@@ -655,6 +691,7 @@ export function bindAuthenticatedEntry(
   let currentMessagingSelectedAlias = null;
   let currentMessagingFilter = "";
   let messagingDevice = null;
+  let currentMessagingAuthorizationConfig = null;
   let messagingDeviceView = Object.freeze({ state: "unavailable", busy: false });
 
   const clearMessagingDevice = () => {
@@ -686,6 +723,7 @@ export function bindAuthenticatedEntry(
     currentPublishConfig = Object.freeze({ enabled: false });
     currentPublicWrite = DISABLED_PUBLIC_WRITE;
     currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
+    currentMessagingAuthorizationConfig = null;
     fullDirectoryAttempted = false;
 
     clearProduct();
@@ -726,6 +764,7 @@ export function bindAuthenticatedEntry(
     currentPublishConfig = Object.freeze({ enabled: false });
     currentPublicWrite = DISABLED_PUBLIC_WRITE;
     currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
+    currentMessagingAuthorizationConfig = null;
     fullDirectoryAttempted = false;
 
     clearProduct();
@@ -920,10 +959,17 @@ export function bindAuthenticatedEntry(
 
   const loadMessagingDeviceForRoute = async () => {
     if (messagingDevice || currentSession?.authenticated !== true || currentAuthority?.valid !== true ||
-        currentAuthority.status !== "full" || browser?.location?.hash !== "#/messages") return;
+        currentAuthority.status !== "full" || browser?.location?.hash !== "#/messages" ||
+        currentMessagingAuthorizationConfig === null) return;
     const session = currentSession;
     const device = messagingDeviceFactory({
       fetchImpl,
+      authorizationEnabled: currentMessagingAuthorizationConfig.enabled,
+      authorizationSigner: currentMessagingAuthorizationConfig.enabled
+        ? messagingAuthorizationSignerFactory({
+            resolveProvider: () => browser?.nostr
+          })
+        : undefined,
       getContext: () => ({
         subject: currentSession?.subject,
         access: currentSession === session && currentAuthority?.valid === true &&
@@ -963,6 +1009,10 @@ export function bindAuthenticatedEntry(
       const publishConfig = readSocialPublishConfig(fetchImpl)
         .catch(() => Object.freeze({ enabled: false }));
 
+      const messagingAuthorizationConfig =
+        readMessagingDeviceAuthorizationConfig(fetchImpl)
+          .catch(() => null);
+
       let authority;
 
       try {
@@ -977,6 +1027,8 @@ export function bindAuthenticatedEntry(
       }
 
       renderAuthority(authority);
+      currentMessagingAuthorizationConfig =
+        await messagingAuthorizationConfig;
       await loadFullDirectoryForRoute();
       await loadMessagingDeviceForRoute();
 
@@ -1218,6 +1270,31 @@ export function bindAuthenticatedEntry(
       if (currentAuthority?.valid === true && currentAuthority.status === "full" &&
           messagingDeviceView.state === "not-configured" && !messagingDeviceView.busy) {
         void messagingDevice?.setup();
+      }
+      return;
+    }
+
+    if (button.hasAttribute?.("data-secure-v128-retry-device")) {
+      event.preventDefault?.();
+      if (currentAuthority?.valid === true && currentAuthority.status === "full" &&
+          ["pending-register", "pending-adopt", "pending-rotate", "pending-revoke"]
+            .includes(messagingDeviceView.state) && !messagingDeviceView.busy) {
+        void messagingDevice?.retry?.();
+      }
+      return;
+    }
+
+    const lifecycleAction = [
+      ["data-secure-v128-adopt-device", "authorization-required", "adopt"],
+      ["data-secure-v128-rotate-device", "ready", "rotate"],
+      ["data-secure-v128-revoke-device", "ready", "revoke"]
+    ].find(([attribute]) => button.hasAttribute?.(attribute));
+    if (lifecycleAction) {
+      event.preventDefault?.();
+      const [, requiredState, method] = lifecycleAction;
+      if (currentAuthority?.valid === true && currentAuthority.status === "full" &&
+          messagingDeviceView.state === requiredState && !messagingDeviceView.busy) {
+        void messagingDevice?.[method]?.();
       }
       return;
     }

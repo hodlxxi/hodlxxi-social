@@ -172,6 +172,57 @@ const messagingDeviceConfig = (input) => {
   });
 };
 
+const messagingDeviceAuthorizationConfig = (
+  input,
+  messagingDevice
+) => {
+  if (!featureEnabled(input.messagingDeviceAuthorizationEnabled)) {
+    return Object.freeze({ enabled: false });
+  }
+  if (messagingDevice?.enabled !== true) fail();
+  const signingKeyPath = text(
+    input.messagingDeviceAuthorizationSigningKeyPath,
+    2048
+  );
+  if (!isAbsolute(signingKeyPath)) fail();
+  return Object.freeze({
+    enabled: true,
+    socketPath: canonicalUnixSocketPath(
+      input.messagingDeviceAuthorizationSocketPath
+    ),
+    serviceTokenUrl: canonicalHttpsUrl(
+      input.messagingDeviceAuthorizationServiceTokenUrl
+    ),
+    authorizationIntentsUrl: canonicalHttpsUrl(
+      input.messagingDeviceAuthorizationIntentsUrl
+    ),
+    authorizationsUrl: canonicalHttpsUrl(
+      input.messagingDeviceAuthorizationsUrl
+    ),
+    clientId: exactCredentialString(
+      input.messagingDeviceAuthorizationServiceClientId,
+      256
+    ),
+    clientSigningKeyId: exactCredentialString(
+      input.messagingDeviceAuthorizationServiceClientSigningKeyId,
+      255
+    ),
+    tokenEndpointAudience: exactCredentialString(
+      input.messagingDeviceAuthorizationServiceTokenEndpointAudience,
+      2048
+    ),
+    signingKeyPath,
+    tokenTimeoutMs: integer(
+      input.messagingDeviceAuthorizationTokenTimeoutMs,
+      LIMITS.timeout
+    ),
+    requestTimeoutMs: integer(
+      input.messagingDeviceAuthorizationRequestTimeoutMs,
+      LIMITS.timeout
+    )
+  });
+};
+
 const recipientCapabilityConfig = (
   input,
   fullDirectory
@@ -293,6 +344,12 @@ export function parseSocialOAuthConfig(input) {
   const messagingDevice =
     messagingDeviceConfig(input);
 
+  const messagingDeviceAuthorization =
+    messagingDeviceAuthorizationConfig(
+      input,
+      messagingDevice
+    );
+
   const messagingRecipient =
     messagingRecipientConfig(
       input,
@@ -308,6 +365,7 @@ export function parseSocialOAuthConfig(input) {
     fullDirectory,
     recipientCapability,
     messagingDevice,
+    messagingDeviceAuthorization,
     messagingRecipient
   };
   return Object.freeze(result);
@@ -354,6 +412,28 @@ export function configFromEnvironment(env) {
       env.SOCIAL_UBID_MESSAGING_SERVICE_TOKEN_TIMEOUT_MS,
     messagingDeviceRequestTimeoutMs:
       env.SOCIAL_UBID_MESSAGING_DEVICE_TIMEOUT_MS,
+    messagingDeviceAuthorizationEnabled:
+      env.SOCIAL_MESSAGING_DEVICE_BINDING_AUTHORIZATION_ENABLED,
+    messagingDeviceAuthorizationSocketPath:
+      env.SOCIAL_UBID_MESSAGING_AUTHORIZATION_PRIVATE_SOCKET_PATH,
+    messagingDeviceAuthorizationServiceTokenUrl:
+      env.SOCIAL_UBID_MESSAGING_DEVICE_BINDING_AUTHORIZATION_SERVICE_TOKEN_URL,
+    messagingDeviceAuthorizationIntentsUrl:
+      env.SOCIAL_UBID_MESSAGING_DEVICE_BINDING_AUTHORIZATION_INTENTS_URL,
+    messagingDeviceAuthorizationsUrl:
+      env.SOCIAL_UBID_MESSAGING_DEVICE_BINDING_AUTHORIZATIONS_URL,
+    messagingDeviceAuthorizationServiceClientId:
+      env.SOCIAL_UBID_MESSAGING_AUTHORIZATION_SERVICE_CLIENT_ID,
+    messagingDeviceAuthorizationServiceClientSigningKeyId:
+      env.SOCIAL_UBID_MESSAGING_AUTHORIZATION_SERVICE_CLIENT_SIGNING_KEY_ID,
+    messagingDeviceAuthorizationServiceTokenEndpointAudience:
+      env.SOCIAL_UBID_MESSAGING_AUTHORIZATION_SERVICE_TOKEN_ENDPOINT_AUDIENCE,
+    messagingDeviceAuthorizationSigningKeyPath:
+      env.SOCIAL_UBID_MESSAGING_AUTHORIZATION_SERVICE_SIGNING_KEY_PATH,
+    messagingDeviceAuthorizationTokenTimeoutMs:
+      env.SOCIAL_UBID_MESSAGING_AUTHORIZATION_SERVICE_TOKEN_TIMEOUT_MS,
+    messagingDeviceAuthorizationRequestTimeoutMs:
+      env.SOCIAL_UBID_MESSAGING_DEVICE_BINDING_AUTHORIZATION_TIMEOUT_MS,
     messagingRecipientEnabled:
       env.SOCIAL_MESSAGING_RECIPIENT_ENABLED,
     messagingRecipientSocketPath:

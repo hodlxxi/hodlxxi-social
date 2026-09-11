@@ -9,7 +9,9 @@ import {
   createSocialOAuthBff,
   parseRawRequestTarget,
   SECURITY_HEADERS,
-  SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE
+  SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE,
+  SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
+  SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
 } from "../src/server/social-oauth-bff.mjs";
 import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 import { createUbidFullDirectoryClient } from "../src/server/ubid-full-directory-client.mjs";
@@ -18,7 +20,8 @@ import { createOpaqueRecipientCapabilityStore } from "../src/server/opaque-recip
 import { createOpaqueRecipientCapabilityIssuer } from "../src/server/opaque-recipient-capability-issuer.mjs";
 import { createOpaqueRecipientCapabilityResolver } from "../src/server/opaque-recipient-capability-resolver.mjs";
 import {
-  createUbidMessagingDeviceClient
+  createUbidMessagingDeviceClient,
+  createUbidMessagingDeviceAuthorizationClient
 } from "../src/server/ubid-messaging-device-client.mjs";
 import {
   createUbidMessagingRecipientClient
@@ -152,6 +155,20 @@ export async function createMessagingDeviceIntegration(
   );
 }
 
+export async function createMessagingDeviceAuthorizationIntegration(
+  messagingDeviceAuthorization,
+  {
+    clientFactory =
+      createUbidMessagingDeviceAuthorizationClient
+  } = {}
+) {
+  if (messagingDeviceAuthorization?.enabled !== true) return undefined;
+  if (typeof clientFactory !== "function") {
+    throw new TypeError("invalid messaging device authorization integration");
+  }
+  return clientFactory(messagingDeviceAuthorization);
+}
+
 export async function createMessagingRecipientIntegration(
   messagingRecipient,
   {
@@ -218,8 +235,11 @@ const messagingBodyFraming = (
 
   const messagingPost =
     parsedTarget.valid &&
-    parsedTarget.path ===
-      SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE &&
+    [
+      SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE,
+      SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
+      SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+    ].includes(parsedTarget.path) &&
     request.method === "POST";
 
   if (messagingPost) {
@@ -231,11 +251,15 @@ const messagingBodyFraming = (
     }
 
     const size = Number(lengths[0]);
+    const maximum = parsedTarget.path ===
+      SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+      ? 16 * 1024
+      : 8192;
 
     return (
       Number.isSafeInteger(size) &&
       size >= 1 &&
-      size <= 8192
+      size <= maximum
     );
   }
 
@@ -249,7 +273,8 @@ const messagingBodyFraming = (
 };
 
 const readMessagingBody = async (
-  incoming
+  incoming,
+  maximum = 8192
 ) => {
   const chunks = [];
   let length = 0;
@@ -263,7 +288,7 @@ const readMessagingBody = async (
 
     length += chunk.byteLength;
 
-    if (length > 8192) {
+    if (length > maximum) {
       throw new TypeError(
         "request body too large"
       );
@@ -379,13 +404,20 @@ export function createHttpHandler({
 
       if (
         parsedTarget.valid &&
-        parsedTarget.path ===
-          SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE &&
+        [
+          SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE,
+          SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
+          SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+        ].includes(parsedTarget.path) &&
         incoming.method === "POST"
       ) {
         body =
           await readMessagingBody(
-            incoming
+            incoming,
+            parsedTarget.path ===
+              SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+              ? 16 * 1024
+              : 8192
           );
       }
 
@@ -477,6 +509,20 @@ export async function runServer({ env = process.env, stdout = console.log, stder
 
   let messagingRecipientClient;
 
+  let messagingDeviceAuthorizationClient;
+
+  if (config.messagingDeviceAuthorization.enabled) {
+    try {
+      messagingDeviceAuthorizationClient =
+        await createMessagingDeviceAuthorizationIntegration(
+          config.messagingDeviceAuthorization
+        );
+    } catch {
+      stderr("invalid configuration");
+      return 2;
+    }
+  }
+
   if (
     config.messagingRecipient.enabled
   ) {
@@ -500,6 +546,7 @@ export async function runServer({ env = process.env, stdout = console.log, stder
     fullDirectoryClient,
     recipientCapabilityIssuer,
     messagingDeviceClient,
+    messagingDeviceAuthorizationClient,
     messagingRecipientClient
   });
   const server = createServer(createHttpHandler({ publicOrigin: config.publicOrigin, bff }));

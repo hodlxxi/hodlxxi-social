@@ -2404,7 +2404,8 @@ test("Messages keeps one V1.28B renderer on first load, fresh bootstrap, and rou
 
 test("V1.28C.1 authenticated Messages owns explicit setup, safe state rendering, and route reconciliation", async () => {
   const document = fakeDocument(), browser = fakeBrowser("#/messages");
-  let setups = 0, reconciles = 0, cancels = 0;
+  let setups = 0, adoptions = 0, rotations = 0, revocations = 0, retries = 0;
+  let reconciles = 0, cancels = 0, setDeviceState;
   const contexts = [];
   const binding = bindAuthenticatedEntry(document, {
     browser,
@@ -2415,8 +2416,12 @@ test("V1.28C.1 authenticated Messages owns explicit setup, safe state rendering,
       return response({ enabled: false });
     },
     messagingDeviceFactory: ({ getContext, onState }) => ({
-      async reconcile() { reconciles++; contexts.push(getContext()); onState({ state: "not-configured", busy: false }); },
+      async reconcile() { reconciles++; contexts.push(getContext()); setDeviceState = onState; onState({ state: "not-configured", busy: false }); },
       async setup() { setups++; contexts.push(getContext()); onState({ state: "ready", busy: false }); },
+      async adopt() { adoptions++; contexts.push(getContext()); onState({ state: "ready", busy: false }); },
+      async rotate() { rotations++; contexts.push(getContext()); onState({ state: "ready", busy: false }); },
+      async revoke() { revocations++; contexts.push(getContext()); onState({ state: "revoked", busy: false }); },
+      async retry() { retries++; contexts.push(getContext()); onState({ state: "ready", busy: false }); },
       cancel() { cancels++; }
     })
   });
@@ -2427,6 +2432,20 @@ test("V1.28C.1 authenticated Messages owns explicit setup, safe state rendering,
   click({ target: { closest: () => ({ hasAttribute: (name) => name === "data-secure-v128-setup-device" }) }, preventDefault() {} });
   assert.equal(setups, 1);
   assert.match(document.elements["#app-page"].innerHTML, /This device is ready for end-to-end encryption/);
+  setDeviceState({ state: "authorization-required", busy: false });
+  click({ target: { closest: () => ({ hasAttribute: (name) => name === "data-secure-v128-adopt-device" }) }, preventDefault() {} });
+  assert.equal(adoptions, 1);
+  click({ target: { closest: () => ({ hasAttribute: (name) => name === "data-secure-v128-rotate-device" }) }, preventDefault() {} });
+  assert.equal(rotations, 1);
+  click({ target: { closest: () => ({ hasAttribute: (name) => name === "data-secure-v128-revoke-device" }) }, preventDefault() {} });
+  assert.equal(revocations, 1);
+  assert.match(document.elements["#app-page"].innerHTML, /This device is revoked/);
+  for (const pendingState of ["pending-register", "pending-adopt", "pending-rotate", "pending-revoke"]) {
+    setDeviceState({ state: pendingState, busy: false });
+    assert.match(document.elements["#app-page"].innerHTML, /data-secure-v128-retry-device/);
+    click({ target: { closest: () => ({ hasAttribute: (name) => name === "data-secure-v128-retry-device" }) }, preventDefault() {} });
+  }
+  assert.equal(retries, 4);
   click({ target: { closest: () => ({ hasAttribute: () => false, getAttribute: () => "pairwise.member" }) } });
   assert.match(document.elements["#app-page"].innerHTML, /textarea[^>]+disabled/);
   browser.location.hash = "#/home";
@@ -2452,4 +2471,65 @@ test("V1.28C.1 Limited Messages cannot construct a device controller or register
   await binding.ready;
   assert.equal(controllers, 0);
   assert.doesNotMatch(document.elements["#app-page"].innerHTML, /data-secure-v128-setup-device/);
+});
+
+for (const [label, configResponse] of [
+  ["request failure", () => { throw new Error("offline"); }],
+  ["cancellation", () => { throw new DOMException("cancelled", "AbortError"); }],
+  ["500 response", () => response({ enabled: false }, { status: 500 })],
+  ["malformed response", () => response({ enabled: false, extra: true })]
+]) test(`messaging authorization config ${label} fails closed without constructing legacy mode`, async () => {
+  const document = fakeDocument(), browser = fakeBrowser("#/messages");
+  let controllers = 0;
+  const binding = bindAuthenticatedEntry(document, {
+    browser,
+    fetchImpl: async (url) => {
+      if (url === "/auth/session") return response({ authenticated: true, subject });
+      if (url === "/auth/authority") return response({ subject, valid: true, status: "full" });
+      if (url === "/auth/full-directory") {
+        return response({ state: "available", participants: [] });
+      }
+      if (url === "/auth/messaging-device-binding-authorization-config") {
+        return configResponse();
+      }
+      return response({ enabled: false });
+    },
+    messagingDeviceFactory: () => { controllers += 1; throw new Error("must not construct"); }
+  });
+  await binding.ready;
+  assert.equal(controllers, 0);
+  assert.match(document.elements["#app-page"].innerHTML, /Secure device state unavailable/);
+  assert.doesNotMatch(document.elements["#app-page"].innerHTML, /This device is ready/);
+});
+
+test("canonical successful disabled messaging authorization config preserves legacy controller mode", async () => {
+  const document = fakeDocument(), browser = fakeBrowser("#/messages");
+  let controllers = 0, reconciles = 0;
+  const binding = bindAuthenticatedEntry(document, {
+    browser,
+    fetchImpl: async (url) => {
+      if (url === "/auth/session") return response({ authenticated: true, subject });
+      if (url === "/auth/authority") return response({ subject, valid: true, status: "full" });
+      if (url === "/auth/full-directory") {
+        return response({ state: "available", participants: [] });
+      }
+      return response({ enabled: false });
+    },
+    messagingDeviceFactory: ({ authorizationEnabled, authorizationSigner, onState }) => {
+      controllers += 1;
+      assert.equal(authorizationEnabled, false);
+      assert.equal(authorizationSigner, undefined);
+      return {
+        async reconcile() {
+          reconciles += 1;
+          onState({ state: "ready", busy: false });
+        },
+        cancel() {}
+      };
+    }
+  });
+  await binding.ready;
+  assert.equal(controllers, 1);
+  assert.equal(reconciles, 1);
+  assert.match(document.elements["#app-page"].innerHTML, /This device is ready/);
 });

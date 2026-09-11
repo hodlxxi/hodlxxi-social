@@ -7,6 +7,9 @@ import {
   createMessagingDeviceStore,
   MESSAGING_DEVICE_TIMESTAMP_UNIT
 } from "../web/messaging-device-v128c1.mjs";
+import {
+  canonicalMessagingDeviceAuthorizationProposal
+} from "../web/messaging-device-authorization-v1.mjs";
 import { renderSecureMessagingAuthenticatedShell } from "../web/secure-messaging-v128.mjs";
 import { normalizeMessagingDeviceSnapshot, normalizeMessagingDeviceResult } from "../src/server/ubid-messaging-device-client.mjs";
 
@@ -38,6 +41,47 @@ const pending = () => ({
   publicKey: publicHex, requestId: "02".repeat(32), state: "pending-register", acceptedBinding: null
 });
 const metadata = () => ({ bindingId: "3".repeat(64), version: 1, validFrom: now - 100_000, expiresAt: now + 86_400_000 });
+const proofId = "hodlxxi-binding-authorization-v1-sha256:" + "8".repeat(64);
+const marker = (overrides = {}) => ({
+  action: "register", bindingId: metadata().bindingId, proofId,
+  requestId: pending().requestId, ...overrides
+});
+const authorized = () => ({
+  ...pending(), state: "ready", acceptedBinding: metadata(),
+  authorization: marker(), pendingAuthorization: null, rotation: null
+});
+const authorizationResult = (proposal, {
+  active: isActive = proposal.operation !== "revoke",
+  bindingId = metadata().bindingId,
+  bindingOperation = proposal.operation,
+  bindingVersion = proposal.operation === "register" ? 1 : 2,
+  deviceId: resultDeviceId = proposal.deviceId,
+  validFrom = now - 100_000,
+  expiresAt = now + 86_400_000
+} = {}) => ({
+  action: proposal.operation,
+  active: isActive,
+  authorizationExpiresAt: new Date(expiresAt).toISOString().replace(".000Z", "Z"),
+  authorizationProofId: proofId,
+  authorizationValidFrom: new Date(validFrom).toISOString().replace(".000Z", "Z"),
+  bindingId,
+  bindingOperation,
+  bindingVersion,
+  deviceId: resultDeviceId,
+  expiresAt: new Date(expiresAt).toISOString().replace(".000Z", "Z"),
+  requestId: proposal.requestId,
+  schema: "hodlxxi.social_messaging_device_binding_authorization_result.v1",
+  validFrom: new Date(validFrom).toISOString().replace(".000Z", "Z"),
+  version: 1
+});
+const publicRetry = (proposal, event = { public: true }) => ({
+  intentToken: "public-intent-token",
+  proposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+  schema: "hodlxxi.social_messaging_device_binding_authorization_retry.v1",
+  signedEvent: event,
+  subject,
+  version: 1
+});
 const active = (record = pending()) => ({
   deviceId: record.deviceId, publicKey: record.publicKey, algorithm: "x25519-v1",
   ...metadata(), snapshotId, revoked: false
@@ -90,7 +134,8 @@ function harness(options = {}) {
         assert.equal(format, "raw");
         assert.equal(key, pairs.at(-1).publicKey);
         assert.notEqual(key, pairs.at(-1).privateKey);
-        return options.raw ?? publicBytes.slice().buffer;
+        return (typeof options.raw === "function" ? options.raw(pairs.length) : options.raw) ??
+          publicBytes.slice().buffer;
       }
     },
     getRandomValues(bytes) {
@@ -200,6 +245,488 @@ test("registration uses the exact public allowlist and same-origin BFF options",
   assert.equal(init.body.includes(subject), false);
   for (const view of h.views) assert.deepEqual(Object.keys(view).sort(), ["busy", "state"]);
 });
+
+test("enabled authorization composes register only after explicit setup and blocks the legacy POST", async () => {
+  let authorized = false;
+  const h = harness({
+    snapshot: (record) => snapshot(authorized && record ? [active(record)] : [])
+  });
+  const calls = [];
+  const signer = Object.freeze({ signEventForSubject() {} });
+  const authorizedResult = {
+    action: "register",
+    active: true,
+    authorizationExpiresAt: new Date(now + 86_400_000).toISOString().replace(".000Z", "Z"),
+    authorizationProofId: proofId,
+    authorizationValidFrom: new Date(now - 100_000).toISOString().replace(".000Z", "Z"),
+    bindingId: "3".repeat(64),
+    bindingOperation: "register",
+    bindingVersion: 1,
+    deviceId: "01".repeat(32),
+    expiresAt: new Date(now + 86_400_000).toISOString().replace(".000Z", "Z"),
+    requestId: "02".repeat(32),
+    schema: "hodlxxi.social_messaging_device_binding_authorization_result.v1",
+    validFrom: new Date(now - 100_000).toISOString().replace(".000Z", "Z"),
+    version: 1
+  };
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: signer,
+    async authorizeBinding(input, dependencies) {
+      calls.push([input, dependencies]);
+      await dependencies.persistPending({
+        intentToken: "public-token",
+        proposal: canonicalMessagingDeviceAuthorizationProposal(input.proposal),
+        schema: "hodlxxi.social_messaging_device_binding_authorization_retry.v1",
+        signedEvent: { public: true },
+        subject,
+        version: 1
+      });
+      assert.equal(h.stored().state, "pending-register");
+      assert.equal(h.stored().pendingAuthorization.intentToken, "public-token");
+      authorized = true;
+      return authorizedResult;
+    }
+  });
+  assert.equal(calls.length, 0);
+  assert.equal((await controller.reconcile()).state, "not-configured");
+  assert.equal(calls.length, 0);
+  assert.equal((await controller.setup()).state, "ready");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][0], {
+    subject,
+    proposal: {
+      deviceId: "01".repeat(32), expectedBindingId: null, operation: "register",
+      publicKey: publicHex, requestId: "02".repeat(32)
+    }
+  });
+  assert.equal(calls[0][1].signer, signer);
+  assert.equal(h.posts().length, 0);
+  assert.deepEqual(h.stored().authorization, marker());
+  assert.equal(h.stored().pendingAuthorization, null);
+});
+
+test("legacy binding stays non-ready until an explicit adoption with a new requestId", async () => {
+  const legacy = { ...pending(), state: "ready", acceptedBinding: metadata() };
+  const predecessorKey = legacy.privateKey;
+  const calls = [];
+  const h = harness({ record: legacy, snapshot: () => snapshot([active(legacy)]) });
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() {} },
+    async authorizeBinding(input, dependencies) {
+      calls.push(input);
+      assert.equal(input.proposal.operation, "adopt");
+      assert.equal(input.proposal.bindingId, metadata().bindingId);
+      assert.notEqual(input.proposal.requestId, legacy.requestId);
+      await dependencies.persistPending(publicRetry(input.proposal));
+      assert.equal(h.stored().state, "pending-adopt");
+      assert.equal(h.stored().privateKey, predecessorKey);
+      return authorizationResult(input.proposal, {
+        bindingId: metadata().bindingId,
+        bindingOperation: "register",
+        bindingVersion: 1,
+        deviceId: legacy.deviceId
+      });
+    }
+  });
+  assert.equal((await controller.reconcile()).state, "authorization-required");
+  assert.equal(calls.length, 0);
+  assert.equal((await controller.adopt()).state, "ready");
+  assert.equal(calls.length, 1);
+  assert.equal(h.stored().privateKey, predecessorKey);
+  assert.deepEqual(h.stored().authorization, marker({
+    action: "adopt", requestId: calls[0].proposal.requestId
+  }));
+  assert.equal(h.posts().length, 0);
+});
+
+test("explicit rotate retains predecessor until accepted snapshot then promotes replacement", async () => {
+  const record = authorized();
+  const predecessorKey = record.privateKey;
+  const replacementBytes = Uint8Array.from({ length: 32 }, (_, index) => 64 + index);
+  const replacementPublicKey = Buffer.from(replacementBytes).toString("hex");
+  const replacementBindingId = "4".repeat(64);
+  let rotated = false;
+  let replacementKey;
+  const h = harness({
+    record,
+    raw: () => replacementBytes.slice().buffer,
+    snapshot: () => snapshot(rotated ? [{
+      ...active(record),
+      bindingId: replacementBindingId,
+      version: 2,
+      publicKey: replacementPublicKey
+    }] : [active(record)])
+  });
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() {} },
+    async authorizeBinding(input, dependencies) {
+      assert.deepEqual(input.proposal, {
+        deviceId: record.deviceId,
+        expectedBindingId: metadata().bindingId,
+        operation: "rotate",
+        publicKey: replacementPublicKey,
+        requestId: h.stored().rotation.requestId
+      });
+      replacementKey = h.stored().rotation.privateKey;
+      assert.equal(h.stored().privateKey, predecessorKey);
+      await dependencies.persistPending(publicRetry(input.proposal));
+      assert.equal(h.stored().privateKey, predecessorKey);
+      assert.equal(h.stored().rotation.privateKey, replacementKey);
+      rotated = true;
+      return authorizationResult(input.proposal, {
+        bindingId: replacementBindingId,
+        bindingOperation: "rotate",
+        bindingVersion: 2
+      });
+    }
+  });
+  assert.equal((await controller.reconcile()).state, "ready");
+  assert.equal((await controller.rotate()).state, "ready");
+  assert.equal(h.stored().privateKey, replacementKey);
+  assert.equal(h.stored().publicKey, replacementPublicKey);
+  assert.equal(h.stored().rotation, null);
+  assert.equal(h.stored().authorization.action, "rotate");
+  assert.equal(h.stored().authorization.bindingId, replacementBindingId);
+});
+
+for (const failure of ["intent", "NIP-07 rejection", "cancellation", "persistence"]) {
+  test(`rotate ${failure} before signed retry persistence retains one exact recoverable replacement`, async () => {
+    const predecessor = authorized();
+    const replacementBytes = Uint8Array.from({ length: 32 }, (_, index) => 32 + index);
+    const replacementPublicKey = Buffer.from(replacementBytes).toString("hex");
+    const replacementBindingId = "4".repeat(64);
+    let attempts = 0, rotated = false, failPersist = failure === "persistence";
+    let controller, retainedProposal, retainedRotation;
+    const h = harness({
+      record: predecessor,
+      raw: replacementBytes.slice().buffer,
+      update(candidate) {
+        if (failPersist && candidate.pendingAuthorization !== null) {
+          failPersist = false;
+          throw new Error("durable retry write failed");
+        }
+      },
+      snapshot: () => snapshot(rotated ? [{
+        ...active(predecessor), bindingId: replacementBindingId, version: 2,
+        publicKey: replacementPublicKey
+      }] : [active(predecessor)])
+    });
+    const dependencies = {
+      authorizationEnabled: true,
+      authorizationSigner: {
+        async signEventForSubject() { throw new Error("user rejected"); }
+      },
+      async authorizeBinding(input, authorizationDependencies) {
+        attempts += 1;
+        if (attempts === 1) {
+          retainedProposal = structuredClone(input.proposal);
+          retainedRotation = h.stored().rotation;
+          if (failure === "NIP-07 rejection") {
+            await authorizationDependencies.signer.signEventForSubject();
+          }
+          if (failure === "cancellation") controller.cancel();
+          if (failure === "persistence") {
+            await authorizationDependencies.persistPending(publicRetry(input.proposal));
+          }
+          throw new Error(`${failure} unavailable`);
+        }
+        assert.deepEqual(input.proposal, retainedProposal);
+        assert.equal(h.stored().rotation.privateKey, retainedRotation.privateKey);
+        assert.equal(h.stored().rotation.publicKey, retainedRotation.publicKey);
+        assert.equal(h.stored().rotation.requestId, retainedRotation.requestId);
+        await authorizationDependencies.persistPending(publicRetry(input.proposal));
+        rotated = true;
+        return authorizationResult(input.proposal, {
+          bindingId: replacementBindingId,
+          bindingOperation: "rotate",
+          bindingVersion: 2
+        });
+      }
+    };
+    controller = h.make(dependencies);
+    assert.equal((await controller.reconcile()).state, "ready");
+    const failed = await controller.rotate();
+    assert.equal(failed.state, failure === "cancellation" ? "unavailable" : "pending-rotate");
+    assert.equal(h.stored().state, "pending-rotate");
+    assert.equal(h.stored().pendingAuthorization, null);
+    assert.equal(h.stored().rotation, retainedRotation);
+    assert.equal(h.stored().pendingProposal,
+      canonicalMessagingDeviceAuthorizationProposal(retainedProposal));
+    const callsBeforeReconcile = attempts;
+    const reloaded = h.make(dependencies);
+    assert.equal((await reloaded.reconcile()).state, "pending-rotate");
+    assert.equal(attempts, callsBeforeReconcile, "reconcile must not invoke authorization or signer");
+    assert.equal((await reloaded.retry()).state, "ready");
+    assert.equal(attempts, callsBeforeReconcile + 1);
+    assert.equal(h.pairs.length, 1);
+    assert.equal(h.stored().privateKey, retainedRotation.privateKey);
+    assert.equal(h.stored().publicKey, retainedRotation.publicKey);
+    assert.equal(h.stored().requestId, retainedRotation.requestId);
+  });
+}
+
+test("explicit revoke retains local key until acceptance and becomes truthfully revoked", async () => {
+  const record = authorized();
+  const predecessorKey = record.privateKey;
+  let revoked = false;
+  const calls = [];
+  const h = harness({
+    record,
+    snapshot: () => snapshot(revoked ? [] : [active(record)])
+  });
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() {} },
+    async authorizeBinding(input, dependencies) {
+      calls.push(input);
+      assert.equal(input.proposal.operation, "revoke");
+      assert.equal(input.proposal.expectedBindingId, metadata().bindingId);
+      assert.equal(input.proposal.publicKey, null);
+      await dependencies.persistPending(publicRetry(input.proposal));
+      assert.equal(h.stored().state, "pending-revoke");
+      assert.equal(h.stored().privateKey, predecessorKey);
+      revoked = true;
+      return authorizationResult(input.proposal, {
+        active: false,
+        bindingId: "5".repeat(64),
+        bindingOperation: "revoke",
+        bindingVersion: 2
+      });
+    }
+  });
+  assert.equal((await controller.reconcile()).state, "ready");
+  assert.equal((await controller.revoke()).state, "revoked");
+  assert.equal(calls.length, 1);
+  assert.equal(h.stored().privateKey, predecessorKey);
+  assert.equal(h.stored().state, "revoked");
+  assert.equal(h.stored().acceptedBinding.bindingId, metadata().bindingId);
+  assert.equal(h.stored().authorization.action, "revoke");
+  assert.equal(h.stored().authorization.bindingId, "5".repeat(64));
+});
+
+test("authorization retry is durable, reconcile is signer-free, and explicit retry resubmits without a second signature", async () => {
+  let attempts = 0;
+  let signed = 0;
+  let registered = false;
+  let retainedRetry;
+  const h = harness({ snapshot: (record) => snapshot(registered && record ? [active(record)] : []) });
+  const make = () => h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() { signed += 1; } },
+    async parseAuthorizationRetry(value, { proposal }) {
+      assert.equal(value, retainedRetry);
+      return {
+        action: "register", bindingId: metadata().bindingId,
+        expiresAt: Math.floor(now / 1000) + 300,
+        proofId, requestId: proposal.requestId
+      };
+    },
+    async authorizeBinding(input, dependencies) {
+      attempts += 1;
+      if (!input.pendingAuthorization) {
+        signed += 1;
+        retainedRetry = publicRetry(input.proposal, { exact: "signed-event" });
+        await dependencies.persistPending(retainedRetry);
+        assert.equal(h.stored().pendingAuthorization, retainedRetry);
+        throw new Error("lost before response");
+      }
+      assert.equal(input.pendingAuthorization, retainedRetry);
+      registered = true;
+      return authorizationResult(input.proposal);
+    }
+  });
+  assert.equal((await make().setup()).state, "pending-register");
+  assert.equal(signed, 1);
+  const callsBeforeRetry = h.calls.length;
+  assert.equal((await make().reconcile()).state, "pending-register");
+  assert.equal(signed, 1);
+  assert.equal(attempts, 1);
+  assert.equal((await make().retry()).state, "ready");
+  assert.equal(signed, 1);
+  assert.equal(attempts, 2);
+  assert.equal(h.calls.slice(callsBeforeRetry).find(([url, init]) =>
+    url === route && init.method === "GET")[0], route);
+  assert.equal(h.stored().pendingAuthorization, null);
+});
+
+test("lost authorization response finalizes from snapshot without signer or resubmission", async () => {
+  let submissions = 0;
+  let registered = false;
+  let retainedRetry;
+  const h = harness({ snapshot: (record) => snapshot(registered && record ? [active(record)] : []) });
+  const make = () => h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() { throw new Error("not directly used"); } },
+    async parseAuthorizationRetry(value, { proposal }) {
+      assert.equal(value, retainedRetry);
+      return {
+        action: "register", bindingId: metadata().bindingId,
+        expiresAt: Math.floor(now / 1000) + 300,
+        proofId, requestId: proposal.requestId
+      };
+    },
+    async authorizeBinding(input, dependencies) {
+      submissions += 1;
+      retainedRetry = publicRetry(input.proposal, { exact: "signed-event" });
+      await dependencies.persistPending(retainedRetry);
+      registered = true;
+      throw new Error("response lost");
+    }
+  });
+  assert.equal((await make().setup()).state, "pending-register");
+  assert.equal(submissions, 1);
+  assert.equal((await make().reconcile()).state, "ready");
+  assert.equal(submissions, 1);
+  assert.deepEqual(h.stored().authorization, marker());
+});
+
+test("expired or tampered pending authorization never signs or submits during reconcile", async () => {
+  const proposal = {
+    deviceId: pending().deviceId, expectedBindingId: null, operation: "register",
+    publicKey: pending().publicKey, requestId: pending().requestId
+  };
+  for (const tampered of [false, true]) {
+    let submissions = 0;
+    const record = {
+      ...pending(), authorization: null,
+      pendingAuthorization: publicRetry(proposal), rotation: null
+    };
+    const h = harness({ record });
+    const controller = h.make({
+      authorizationEnabled: true,
+      authorizationSigner: { signEventForSubject() { throw new Error("must not sign"); } },
+      async parseAuthorizationRetry() {
+        if (tampered) throw new Error("tampered local retry");
+        return {
+          action: "register", bindingId: metadata().bindingId,
+          expiresAt: Math.floor(now / 1000) - 1,
+          proofId, requestId: proposal.requestId
+        };
+      },
+      async authorizeBinding() { submissions += 1; throw new Error("must not submit"); }
+    });
+    assert.equal((await controller.reconcile()).state,
+      tampered ? "unavailable" : "pending-register");
+    assert.equal(submissions, 0);
+    assert.notEqual(h.stored().pendingAuthorization, null);
+  }
+});
+
+for (const operation of ["register", "adopt", "rotate", "revoke"]) {
+  for (const freshness of ["fresh", "expired"]) {
+    test(`${freshness} pending ${operation} is signer-free on reconcile and recoverable by explicit retry`, async () => {
+      const replacementPublicKey = "d".repeat(64);
+      const operationRequestId = operation === "register"
+        ? pending().requestId : operation === "rotate" ? "6".repeat(64) : "7".repeat(64);
+      const proposal = operation === "adopt" ? {
+        bindingId: metadata().bindingId,
+        operation,
+        requestId: operationRequestId
+      } : {
+        deviceId: pending().deviceId,
+        expectedBindingId: operation === "register" ? null : metadata().bindingId,
+        operation,
+        publicKey: operation === "rotate" ? replacementPublicKey
+          : operation === "revoke" ? null : pending().publicKey,
+        requestId: operationRequestId
+      };
+      const retainedRetry = publicRetry(proposal, { exact: `${freshness}-${operation}` });
+      const base = operation === "register" ? {
+        ...pending(), authorization: null, rotation: null
+      } : {
+        ...authorized(),
+        ...(operation === "adopt" ? { authorization: null } : {})
+      };
+      const record = {
+        ...base,
+        state: operation === "adopt" ? "pending-adopt" : `pending-${operation}`,
+        pendingAuthorization: retainedRetry,
+        pendingProposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+        rotation: operation === "rotate" ? {
+          privateKey: new TestCryptoKey("private"),
+          publicKey: replacementPublicKey,
+          requestId: operationRequestId
+        } : null
+      };
+      let completed = false, submissions = 0, signerCalls = 0;
+      const h = harness({
+        record,
+        snapshot: () => {
+          if (!completed) return snapshot(operation === "register" ? [] : [active(record)]);
+          if (operation === "revoke") return snapshot([]);
+          if (operation === "rotate") return snapshot([{
+            ...active(record), bindingId: "4".repeat(64), version: 2,
+            publicKey: replacementPublicKey
+          }]);
+          return snapshot([active(record)]);
+        }
+      });
+      const signer = { signEventForSubject() { signerCalls += 1; } };
+      const controller = h.make({
+        authorizationEnabled: true,
+        authorizationSigner: signer,
+        async parseAuthorizationRetry(value, { proposal: checkedProposal }) {
+          assert.equal(value, retainedRetry);
+          assert.deepEqual(checkedProposal, proposal);
+          return {
+            action: operation,
+            bindingId: operation === "rotate" ? "4".repeat(64)
+              : operation === "revoke" ? "5".repeat(64) : metadata().bindingId,
+            expiresAt: Math.floor(now / 1000) + (freshness === "fresh" ? 300 : -1),
+            proofId,
+            requestId: operationRequestId
+          };
+        },
+        async authorizeBinding(input, authorizationDependencies) {
+          submissions += 1;
+          assert.deepEqual(input.proposal, proposal);
+          if (freshness === "fresh") {
+            assert.equal(input.pendingAuthorization, retainedRetry);
+            assert.equal(authorizationDependencies.signer, undefined);
+          } else {
+            assert.equal(input.pendingAuthorization, undefined);
+            assert.equal(authorizationDependencies.signer, signer);
+            authorizationDependencies.signer.signEventForSubject();
+            await authorizationDependencies.persistPending(
+              publicRetry(proposal, { replacement: `${operation}-retry` })
+            );
+          }
+          completed = true;
+          if (operation === "adopt") return authorizationResult(proposal, {
+            bindingId: metadata().bindingId,
+            bindingOperation: "register",
+            bindingVersion: 1,
+            deviceId: record.deviceId
+          });
+          if (operation === "rotate") return authorizationResult(proposal, {
+            bindingId: "4".repeat(64), bindingOperation: "rotate", bindingVersion: 2
+          });
+          if (operation === "revoke") return authorizationResult(proposal, {
+            active: false, bindingId: "5".repeat(64),
+            bindingOperation: "revoke", bindingVersion: 2
+          });
+          return authorizationResult(proposal);
+        }
+      });
+      assert.equal((await controller.reconcile()).state, record.state);
+      assert.equal(submissions, 0);
+      assert.equal(signerCalls, 0);
+      assert.equal((await controller.retry()).state,
+        operation === "revoke" ? "revoked" : "ready");
+      assert.equal(submissions, 1);
+      assert.equal(signerCalls, freshness === "expired" ? 1 : 0);
+      assert.equal(h.stored().pendingAuthorization, null);
+      assert.equal(h.stored().pendingProposal, null);
+      if (operation === "rotate") {
+        assert.equal(h.stored().privateKey, record.rotation.privateKey);
+        assert.equal(h.stored().publicKey, replacementPublicKey);
+      }
+    });
+  }
+}
 
 test("first startup is read-only and does not create a key", async () => {
   const h = harness();
@@ -417,8 +944,13 @@ test("browser validators consume unchanged BFF snapshot/result field contracts",
 
 for (const [state, title] of [
   ["not-configured", "Set up secure messaging on this device"],
-  ["pending-register", "Finishing secure device setup…"],
+  ["pending-register", "Secure device setup can continue"],
+  ["authorization-required", "Authorize this existing device"],
+  ["pending-adopt", "Device authorization can continue"],
+  ["pending-rotate", "Device-key rotation can continue"],
+  ["pending-revoke", "Device revocation can continue"],
   ["ready", "This device is ready for end-to-end encryption"],
+  ["revoked", "This device is revoked"],
   ["unavailable", "Secure device state unavailable"]
 ]) test(`Messages renders ${state} without identity/key data and keeps composer disabled`, () => {
   const html = renderSecureMessagingAuthenticatedShell({ state: "available", recipients: [{ alias: "pairwise.member", label: "Brother" }] }, {
@@ -430,6 +962,12 @@ for (const [state, title] of [
   assert.match(html, /button type="submit" disabled/);
   assert.match(html, /Brother/);
   assert.equal(html.includes("data-secure-v128-setup-device"), state === "not-configured");
+  assert.equal(html.includes("data-secure-v128-adopt-device"), state === "authorization-required");
+  assert.equal(html.includes("data-secure-v128-rotate-device"), state === "ready");
+  assert.equal(html.includes("data-secure-v128-revoke-device"), state === "ready");
+  assert.equal(html.includes("data-secure-v128-retry-device"), [
+    "pending-register", "pending-adopt", "pending-rotate", "pending-revoke"
+  ].includes(state));
   for (const forbidden of [subject, pending().deviceId, publicHex, metadata().bindingId, "never rendered"]) assert.equal(html.includes(forbidden), false);
 });
 
@@ -451,7 +989,7 @@ test("bounded module source permits only public export and same-origin session/d
   assert.match(source, /MESSAGING_DEVICE_TIMESTAMP_UNIT = "unix-milliseconds"/);
   assert.match(source, /now = Date\.now/);
   assert.doesNotMatch(source, /timestamp[^\n]*(?:magnitude|length)/i);
-  assert.match(source, /store\.add\(record, "current"\)/);
+  assert.match(source, /store\.add\(localRecord\(next, next\.subject, CryptoKeyImpl\), "current"\)/);
   assert.match(source, /tx\.oncomplete = \(\) => resolve\(result\)/);
 });
 
@@ -568,7 +1106,7 @@ test("native store cannot overwrite an existing account with add or update", asy
   await store.create(record);
   const other = { ...record, subject: secondSubject };
   await assert.rejects(store.create(other));
-  await assert.rejects(store.update(other));
+  await assert.rejects(store.update(other, record));
   assert.equal((await store.read()).subject, subject);
 });
 
@@ -577,12 +1115,191 @@ test("native store updates accepted metadata while retaining the cloned private 
   const pair = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
   const record = { ...pending(), privateKey: pair.privateKey };
   await store.create(record);
-  await store.update({ ...record, state: "ready", acceptedBinding: metadata(), privateKey: null });
+  await store.update({ ...record, state: "ready", acceptedBinding: metadata(), privateKey: null }, record);
   const ready = await store.read();
   assert.equal(ready.state, "ready");
   assert.equal(ready.privateKey.extractable, false);
   assert.deepEqual(ready.acceptedBinding, metadata());
-  await assert.rejects(store.update({ ...record, acceptedBinding: { ...metadata(), bindingId: "8".repeat(64) } }));
+  await assert.rejects(store.update(
+    { ...record, acceptedBinding: { ...metadata(), bindingId: "8".repeat(64) } }, ready
+  ));
+});
+
+test("native store prevents stale deletion of a persisted rotation predecessor", async () => {
+  const idb = idbHarness(), store = createMessagingDeviceStore(idb.factory);
+  const predecessor = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const replacement = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const predecessorPublicKey = Buffer.from(await webcrypto.subtle.exportKey("raw", predecessor.publicKey)).toString("hex");
+  const replacementPublicKey = Buffer.from(await webcrypto.subtle.exportKey("raw", replacement.publicKey)).toString("hex");
+  const record = {
+    ...authorized(),
+    privateKey: predecessor.privateKey,
+    publicKey: predecessorPublicKey
+  };
+  await store.create(record);
+  const rotation = {
+    privateKey: replacement.privateKey,
+    publicKey: replacementPublicKey,
+    requestId: "6".repeat(64)
+  };
+  await store.update({ ...record, rotation, state: "pending-rotate" }, record);
+  const pendingRotation = await store.read();
+  assert.equal(pendingRotation.privateKey.extractable, false);
+  assert.equal(pendingRotation.publicKey, predecessorPublicKey);
+  assert.equal(pendingRotation.rotation.privateKey.extractable, false);
+  assert.equal(pendingRotation.rotation.publicKey, replacementPublicKey);
+  await assert.rejects(store.update({ ...record, rotation: null, state: "ready" }, pendingRotation));
+  assert.equal((await store.read()).rotation.publicKey, replacementPublicKey);
+
+  const rotatedMetadata = {
+    ...metadata(), bindingId: "4".repeat(64), version: 2
+  };
+  await store.update({
+    ...pendingRotation,
+    privateKey: replacement.privateKey,
+    publicKey: replacementPublicKey,
+    requestId: rotation.requestId,
+    acceptedBinding: rotatedMetadata,
+    authorization: marker({
+      action: "rotate", bindingId: rotatedMetadata.bindingId,
+      requestId: rotation.requestId
+    }),
+    pendingAuthorization: null,
+    pendingProposal: null,
+    rotation: null,
+    state: "ready"
+  }, pendingRotation);
+  const ready = await store.read();
+  assert.equal(ready.privateKey.extractable, false);
+  assert.equal(ready.publicKey, replacementPublicKey);
+  assert.deepEqual(ready.acceptedBinding, rotatedMetadata);
+  assert.equal(ready.rotation, null);
+});
+
+test("native store CAS blocks stale tabs from replacing a different rotation and retains the winning private key", async () => {
+  const idb = idbHarness(), store = createMessagingDeviceStore(idb.factory);
+  const predecessor = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const firstReplacement = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const staleReplacement = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const peer = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const predecessorPublicKey = Buffer.from(
+    await webcrypto.subtle.exportKey("raw", predecessor.publicKey)
+  ).toString("hex");
+  const firstPublicKey = Buffer.from(
+    await webcrypto.subtle.exportKey("raw", firstReplacement.publicKey)
+  ).toString("hex");
+  const stalePublicKey = Buffer.from(
+    await webcrypto.subtle.exportKey("raw", staleReplacement.publicKey)
+  ).toString("hex");
+  const record = {
+    ...authorized(), privateKey: predecessor.privateKey, publicKey: predecessorPublicKey
+  };
+  await store.create(record);
+  const staleBase = await store.read();
+  const firstRotation = {
+    privateKey: firstReplacement.privateKey,
+    publicKey: firstPublicKey,
+    requestId: "6".repeat(64)
+  };
+  const staleRotation = {
+    privateKey: staleReplacement.privateKey,
+    publicKey: stalePublicKey,
+    requestId: "7".repeat(64)
+  };
+  const rotationCandidate = (rotation) => {
+    const proposal = {
+      deviceId: record.deviceId,
+      expectedBindingId: metadata().bindingId,
+      operation: "rotate",
+      publicKey: rotation.publicKey,
+      requestId: rotation.requestId
+    };
+    return {
+      ...staleBase,
+      pendingProposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+      rotation,
+      state: "pending-rotate"
+    };
+  };
+  await store.update(rotationCandidate(firstRotation), staleBase);
+  await assert.rejects(store.update(rotationCandidate(staleRotation), staleBase),
+    /device store unavailable/);
+  const winning = await store.read();
+  assert.equal(winning.rotation.publicKey, firstPublicKey);
+  assert.equal(winning.rotation.requestId, firstRotation.requestId);
+
+  await assert.rejects(store.update({ ...winning, state: "ready" }, winning),
+    /device store unavailable/);
+  assert.equal((await store.read()).state, "pending-rotate");
+
+  const rotatedMetadata = { ...metadata(), bindingId: "4".repeat(64), version: 2 };
+  await store.update({
+    ...winning,
+    privateKey: staleReplacement.privateKey,
+    publicKey: firstPublicKey,
+    requestId: firstRotation.requestId,
+    acceptedBinding: rotatedMetadata,
+    authorization: marker({
+      action: "rotate", bindingId: rotatedMetadata.bindingId,
+      requestId: firstRotation.requestId
+    }),
+    pendingAuthorization: null,
+    pendingProposal: null,
+    rotation: null,
+    state: "ready"
+  }, winning);
+  const accepted = await store.read();
+  const retainedSecret = Buffer.from(await webcrypto.subtle.deriveBits(
+    { name: "X25519", public: peer.publicKey }, accepted.privateKey, 256
+  ));
+  const winningSecret = Buffer.from(await webcrypto.subtle.deriveBits(
+    { name: "X25519", public: peer.publicKey }, firstReplacement.privateKey, 256
+  ));
+  const staleSecret = Buffer.from(await webcrypto.subtle.deriveBits(
+    { name: "X25519", public: peer.publicKey }, staleReplacement.privateKey, 256
+  ));
+  assert.equal(accepted.publicKey, firstPublicKey);
+  assert.deepEqual(retainedSecret, winningSecret);
+  assert.notDeepEqual(retainedSecret, staleSecret);
+});
+
+test("native store CAS blocks stale retry overwrite and stale retry clearing", async () => {
+  const idb = idbHarness(), store = createMessagingDeviceStore(idb.factory);
+  const pair = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const proposal = {
+    deviceId: pending().deviceId,
+    expectedBindingId: null,
+    operation: "register",
+    publicKey: pending().publicKey,
+    requestId: pending().requestId
+  };
+  const record = {
+    ...pending(),
+    privateKey: pair.privateKey,
+    authorization: null,
+    pendingAuthorization: null,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+    rotation: null
+  };
+  await store.create(record);
+  const staleBase = await store.read();
+  const firstRetry = publicRetry(proposal, { winner: true });
+  const staleRetry = publicRetry(proposal, { stale: true });
+  await store.update({ ...staleBase, pendingAuthorization: firstRetry }, staleBase);
+  await assert.rejects(
+    store.update({ ...staleBase, pendingAuthorization: staleRetry }, staleBase),
+    /device store unavailable/
+  );
+  await assert.rejects(store.update({
+    ...staleBase,
+    acceptedBinding: metadata(),
+    pendingAuthorization: null,
+    pendingProposal: null,
+    state: "ready"
+  }, staleBase), /device store unavailable/);
+  const retained = await store.read();
+  assert.deepEqual(retained.pendingAuthorization, firstRetry);
+  assert.equal(retained.state, "pending-register");
 });
 
 test("neither localStorage nor sessionStorage is accessed during setup or reconciliation", async () => {
