@@ -3,6 +3,8 @@ import { createPkceChallenge, createPkceVerifier, base64url } from "./hodlxxi-oa
 import { TRANSACTION_COOKIE_NAME, SESSION_COOKIE_NAME, parseCookieHeader, serializeHostCookie, expireTransactionCookie, expireSessionCookie } from "./social-oauth-cookie.mjs";
 import { canonicalWssRelayUrl } from "./social-oauth-config.mjs";
 import {
+  normalizeMessagingDeviceAuthorizationIntent,
+  normalizeMessagingDeviceAuthorizationResult,
   normalizeMessagingDeviceResult,
   normalizeMessagingDeviceSnapshot
 } from "./ubid-messaging-device-client.mjs";
@@ -30,6 +32,15 @@ const RECIPIENT_CAPABILITY_UNAVAILABLE =
 export const SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE =
   "/auth/messaging-device-bindings";
 
+export const SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_CONFIG_ROUTE =
+  "/auth/messaging-device-binding-authorization-config";
+
+export const SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE =
+  "/auth/messaging-device-binding-authorization-intents";
+
+export const SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE =
+  "/auth/messaging-device-binding-authorizations";
+
 export const SOCIAL_MESSAGING_RECIPIENT_PACKAGE_ROUTE =
   "/auth/messaging-recipient-package";
 
@@ -40,6 +51,9 @@ const MESSAGING_RECIPIENT_PACKAGE_UNAVAILABLE =
   Object.freeze({ state: "unavailable" });
 
 const MAX_MESSAGING_COMMAND_BYTES = 8192;
+const MAX_MESSAGING_SIGNED_EVENT_BYTES = 16 * 1024;
+const MESSAGING_DEVICE_INTENT_HEADER =
+  "x-hodlxxi-device-binding-intent";
 const RECIPIENT_ALIAS_HEADER =
   "x-hodlxxi-recipient-alias";
 const RECIPIENT_CAPABILITY =
@@ -452,8 +466,10 @@ export function createSocialOAuthBff({
   fullDirectoryClient,
   recipientCapabilityIssuer,
   messagingDeviceClient,
+  messagingDeviceAuthorizationClient,
   messagingRecipientClient,
-  random = randomBytes
+  random = randomBytes,
+  now = Date.now
 }) {
   const recipientCapabilityIssue =
     recipientCapabilityIssuer === undefined
@@ -495,9 +511,25 @@ export function createSocialOAuthBff({
           "applyForViewer"
         );
 
+  const messagingDeviceCreateIntent =
+    messagingDeviceAuthorizationClient === undefined
+      ? undefined
+      : ownDataMethod(
+          messagingDeviceAuthorizationClient,
+          "createIntentForViewer"
+        );
+
+  const messagingDeviceAuthorize =
+    messagingDeviceAuthorizationClient === undefined
+      ? undefined
+      : ownDataMethod(
+          messagingDeviceAuthorizationClient,
+          "authorizeForViewer"
+        );
+
   if (
     ![pendingTransactions, sessions, oauthClient].every(Boolean) ||
-    typeof random !== "function" ||
+    typeof random !== "function" || typeof now !== "function" ||
     (
       authorityReader !== undefined &&
       typeof authorityReader !== "function"
@@ -519,6 +551,10 @@ export function createSocialOAuthBff({
         !messagingDeviceRead ||
         !messagingDeviceApply
       )
+    ) ||
+    (
+      messagingDeviceAuthorizationClient !== undefined &&
+      (!messagingDeviceCreateIntent || !messagingDeviceAuthorize)
     )
   ) {
     throw new TypeError("invalid BFF dependencies");
@@ -644,6 +680,22 @@ export function createSocialOAuthBff({
       return json(200, configuredPublishRelayUrl
         ? { enabled: true, relayUrl: configuredPublishRelayUrl }
         : { enabled: false });
+    }
+    if (
+      target.path ===
+        SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_CONFIG_ROUTE
+    ) {
+      if (method !== "GET" || target.query.length !== 0) {
+        return error(method === "GET" ? 400 : 405);
+      }
+      if (!authenticatedSubject(cookieHeader)) {
+        return json(401, { error: "authentication_required" });
+      }
+      return json(200, {
+        enabled:
+          config?.messagingDeviceAuthorization?.enabled === true &&
+          Boolean(messagingDeviceCreateIntent && messagingDeviceAuthorize)
+      });
     }
     if (target.path === "/auth/authority") {
       if (method !== "GET" || target.query.length !== 0) {
@@ -933,6 +985,98 @@ export function createSocialOAuthBff({
 
 
     if (
+      [
+        SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
+        SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+      ].includes(target.path)
+    ) {
+      if (method !== "POST" || target.query.length !== 0) {
+        return json(
+          method === "POST" ? 400 : 405,
+          MESSAGING_DEVICE_UNAVAILABLE
+        );
+      }
+      if (request.headers?.origin !== config.publicOrigin) {
+        return json(403, MESSAGING_DEVICE_UNAVAILABLE);
+      }
+      const context = authenticatedSessionContext(cookieHeader);
+      if (!context) return json(401, MESSAGING_DEVICE_UNAVAILABLE);
+      const viewerAccessToken = context.session.viewerAccessToken;
+      if (
+        typeof viewerAccessToken !== "string" || viewerAccessToken.length === 0 ||
+        viewerAccessToken.length > 8192 || /[\u0000-\u0020\u007f]/.test(viewerAccessToken)
+      ) return json(403, MESSAGING_DEVICE_UNAVAILABLE);
+      let projection = failClosedAuthority(context.session.subject);
+      if (authorityReader) {
+        try {
+          projection = normalizeAuthorityProjection(
+            context.session.subject,
+            await authorityReader(context.session.subject)
+          );
+        } catch {
+          projection = failClosedAuthority(context.session.subject);
+        }
+      }
+      if (projection.valid !== true || projection.status !== "full") {
+        return json(403, MESSAGING_DEVICE_UNAVAILABLE);
+      }
+      if (
+        config?.messagingDeviceAuthorization?.enabled !== true ||
+        !messagingDeviceCreateIntent || !messagingDeviceAuthorize
+      ) return json(503, MESSAGING_DEVICE_UNAVAILABLE);
+      const contentType = request.headers?.["content-type"];
+      if (
+        typeof contentType !== "string" ||
+        !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(contentType) ||
+        typeof request.body !== "string" ||
+        Buffer.byteLength(request.body, "utf8") < 1 ||
+        Buffer.byteLength(request.body, "utf8") >
+          (target.path === SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+            ? MAX_MESSAGING_SIGNED_EVENT_BYTES
+            : MAX_MESSAGING_COMMAND_BYTES) ||
+        /[^\x20-\x7e]/.test(request.body)
+      ) return json(400, MESSAGING_DEVICE_UNAVAILABLE);
+
+      try {
+        if (target.path === SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE) {
+          const intent = await normalizeMessagingDeviceAuthorizationIntent(
+            await messagingDeviceCreateIntent.call(
+              messagingDeviceAuthorizationClient,
+              {
+                viewerAccessToken,
+                expectedSubject: context.session.subject,
+                proposalPayload: request.body
+              }
+            ),
+            { subject: context.session.subject, now }
+          );
+          return json(200, intent);
+        }
+        const intentToken = request.headers?.[MESSAGING_DEVICE_INTENT_HEADER];
+        if (
+          typeof intentToken !== "string" || intentToken.length < 1 ||
+          intentToken.length > 16 * 1024 ||
+          !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(intentToken)
+        ) return json(400, MESSAGING_DEVICE_UNAVAILABLE);
+        const result = normalizeMessagingDeviceAuthorizationResult(
+          await messagingDeviceAuthorize.call(
+            messagingDeviceAuthorizationClient,
+            {
+              viewerAccessToken,
+              expectedSubject: context.session.subject,
+              intentToken,
+              signedEventPayload: request.body
+            }
+          )
+        );
+        return json(200, result);
+      } catch {
+        return json(503, MESSAGING_DEVICE_UNAVAILABLE);
+      }
+    }
+
+
+    if (
       target.path ===
         SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE
     ) {
@@ -1042,6 +1186,12 @@ export function createSocialOAuthBff({
             );
 
           return json(200, result);
+        }
+
+        if (
+          config?.messagingDeviceAuthorization?.enabled === true
+        ) {
+          return json(503, MESSAGING_DEVICE_UNAVAILABLE);
         }
 
         const contentType =

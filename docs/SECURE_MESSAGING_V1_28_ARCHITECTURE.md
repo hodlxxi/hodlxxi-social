@@ -256,7 +256,8 @@ There is no extractable-private-key fallback or crypto dependency.
 The dedicated IndexedDB database `hodlxxi-social-messaging-device-v1`, version 1,
 has one `device` store and one `current` record. Its closed fields are `schema`,
 `version`, `subject`, `deviceId`, `privateKey` (the CryptoKey), `publicKey`,
-`requestId`, `state`, and `acceptedBinding`. The schema is
+`requestId`, `state`, `acceptedBinding`, `authorization`,
+`pendingAuthorization`, `pendingProposal`, and `rotation`. The schema is
 `hodlxxi.social_messaging_device_local.v1`. IndexedDB's native structured clone
 retains the non-extractable key; application JSON serialization, private-key
 export, localStorage, and sessionStorage are never used for this record. Only
@@ -329,6 +330,102 @@ encryption keys. Ready means device setup is reconciled; the composer remains
 disabled and no message encryption, decryption, plaintext submission, inbox,
 ciphertext storage, or transport is implemented. This slice does **not** select
 the final V1.28E message encryption construction or perform key agreement.
+
+## Identity-authorized device-binding successor
+
+The Social source now also contains a dedicated, disabled-by-default successor
+to the OAuth-only binding mutation. It is enabled only by the complete
+`messagingDeviceAuthorization` server configuration. The existing read-only
+binding snapshot remains unchanged. When the successor is enabled, the legacy
+Social and UBID device-binding POST paths are fail-closed; when it is disabled,
+the pre-existing OAuth/session behavior is unchanged.
+
+For register, rotate, revoke, or eligible legacy adoption, the browser sends
+only UBID's closed canonical proposal to the same-origin Social BFF. Social
+uses its existing confidential-service assertion machinery and the canonical
+viewer bearer held in the opaque server session to obtain one authoritative
+UBID intent. The BFF returns the closed intent document required for the
+explicit signing action: the derived claim and semantic digest, expected
+participant public key, exact unsigned kind-27236 event, signature format, and
+separate short-lived intent token. The proposal cannot supply a subject,
+binding version, binding interval, predecessor, derived binding ID, request
+clock, Current-Full proof, event ID, or event fields.
+
+Before either signer adapter is read, the browser compares the parsed semantic
+claim with the canonical proposal that initiated the action. Register binds
+the operation, request ID, device ID, proposed public key, null predecessor,
+and binding version 1. Rotate binds the operation, request ID, device ID,
+replacement public key, and exact predecessor binding ID. Revoke binds the
+operation, request ID, device ID, and exact predecessor. Adoption binds its
+action, new request ID, and selected existing binding ID. Cross-operation or
+field substitution fails before NIP-07 resolution or NIP-46 transport.
+
+The explicit browser action obtains the NIP-07 provider only for that action,
+calls `getPublicKey()`, and requires exact equality with the authenticated
+lowercase x-only session subject before reading or calling `signEvent`. It asks
+for exactly one signature over the returned event. The browser then requires
+the result to preserve the exact pubkey, kind, whole-second `created_at`,
+content, tag values, and tag order; recomputes the NIP-01 event ID; and verifies
+the BIP340 signature through the existing canonical browser verifier. The
+provider is released after the action. The event is not published and no relay
+operation exists in this path.
+
+`web/nip46-messaging-device-signer-v1.mjs` is a narrow injectable, single-use
+`sign_event` adapter with an exact configured subject, timeout, and cancellation
+boundary. It has no configured transport, relay URL, account, secret, polling,
+retry, discovery, publication, or automatic fallback. The same intent and
+signed-event validator is applied after either signer. Consequently this source
+contains the NIP-46 adapter seam but does not claim a live NIP-46 runtime.
+
+The browser submits only the closed signed event plus the intent token in
+`X-HODLXXI-Device-Binding-Intent`. Social revalidates the event ID, signature,
+subject, carrier fields, semantic content/digest, request ID, action, and token
+correspondence. It reconstructs UBID's existing canonical flattened signed
+payload and sends the intent token separately on the authoritative internal
+authorization route. UBID remains authoritative for the token signature,
+trusted clock, final Current-Full and lifecycle state, binding ID, replay, and
+atomic mutation. Exact accepted retries preserve the same canonical result;
+conflicts and malformed or expired intent/event results return only the generic
+unavailable response.
+
+Before requesting an intent or signer, the browser durably stores the exact
+canonical proposal and any dedicated rotation replacement key. After local
+event-ID and BIP340 verification, the browser durably stores the
+canonical signed public event, its exact canonical proposal, and the separate
+intent token in the existing device-local IndexedDB record before submission.
+No participant private key or serialized X25519 private key is present in this
+retry material. On re-entry, the controller first reads a fresh authoritative
+binding snapshot. A snapshot that proves register or rotate is active, or that
+the revoked predecessor is absent, completes the pending operation without a
+new signature. Otherwise startup exposes an explicit continue action and does
+not submit or sign. After that action reconciles authoritative state again, a
+still-valid pending operation resubmits the exact same event and token; an
+expired operation obtains replacement intent/signature material for the same
+persisted proposal. Tampered material fails closed. Pending material is cleared
+only following canonical success. IndexedDB updates compare the caller's exact
+public record revision inside the read-write transaction, reject stale rotation
+or retry replacement/clearing, and always promote the private CryptoKey from the
+winning stored rotation rather than from caller-supplied state.
+
+The enabled controller exposes four explicit product actions. Registration
+keeps generate, strict IndexedDB commit, read-back, then intent ordering and is
+not ready until its authorization proof and exact accepted binding reconcile.
+An old local record without an authorization marker remains schema-compatible
+but renders authorization-required even when its OAuth-only binding is active;
+explicit adoption uses a new request ID and leaves its binding row and X25519
+key unchanged. Rotation first persists a replacement non-extractable key while
+retaining its predecessor key and binding metadata, and promotes it only after
+canonical acceptance plus snapshot reconciliation. Revocation retains local
+key state until the same confirmation and then renders revoked, never ready or
+routable. Startup reconciliation is read-only with respect to signing: it may
+finalize already accepted signed material but never resubmits, opens NIP-07, or
+invokes NIP-46.
+
+The confidential-service private key remains server-only. Participant Nostr
+private keys and Social X25519 private keys are never sent to Social or UBID.
+The persisted non-extractable X25519 `CryptoKey` exception remains unchanged
+and is not used for identity signing. Kind 27236 is a deterministic private
+carrier only and is never published to relays.
 
 ## New-device history rule
 

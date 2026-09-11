@@ -331,17 +331,32 @@ const renderDeviceState = (state, busy, restricted) => {
   if (restricted) return `<div class="secure-v128-device"><strong>Full access required for secure device setup</strong></div>`;
   const states = {
     "not-configured": ["Set up secure messaging on this device", "This browser will create a dedicated local encryption key. The private key stays on this device."],
-    "pending-register": ["Finishing secure device setup…", "The private key is already stored locally. Public registration is being reconciled."],
+    "pending-register": ["Secure device setup can continue", "The private key is already stored locally. Continue to reconcile and finish public registration."],
+    "authorization-required": ["Authorize this existing device", "This device has a legacy binding, but it is not ready until you explicitly authorize adoption."],
+    "pending-adopt": ["Device authorization can continue", "The adoption operation is retained locally. Continue to reconcile and finish authorization."],
+    "pending-rotate": ["Device-key rotation can continue", "Both device keys remain local until you continue and the replacement binding is confirmed."],
+    "pending-revoke": ["Device revocation can continue", "The existing local key is retained until you continue and revocation is confirmed."],
     ready: ["This device is ready for end-to-end encryption", "The private device key remains local. Message encryption is not enabled yet in this phase."],
+    revoked: ["This device is revoked", "The local device is not routable or ready for secure messaging."],
     unavailable: ["Secure device state unavailable", "Device state could not be safely reconciled."]
   };
   const [title, explanation] = Object.hasOwn(states, state) ? states[state] : states.unavailable;
+  const recoverablePending = [
+    "pending-register", "pending-adopt", "pending-rotate", "pending-revoke"
+  ].includes(state);
   return `<div class="secure-v128-device" role="status" aria-live="polite" aria-busy="${busy === true}">` +
     `<span class="secure-v128-device-icon" aria-hidden="true">D</span>` +
     `<div><strong>${title}</strong><p>${explanation}</p></div>` +
     (state === "not-configured"
       ? `<button class="secure-v128-primary" type="button" data-secure-v128-setup-device${busy ? " disabled" : ""}>Set up this device</button>`
-      : "") + `</div>`;
+      : state === "authorization-required"
+        ? `<button class="secure-v128-primary" type="button" data-secure-v128-adopt-device${busy ? " disabled" : ""}>Authorize this device</button>`
+        : state === "ready"
+          ? `<div><button class="secure-v128-primary" type="button" data-secure-v128-rotate-device${busy ? " disabled" : ""}>Rotate device key</button>` +
+            `<button type="button" data-secure-v128-revoke-device${busy ? " disabled" : ""}>Revoke this device</button></div>`
+          : recoverablePending
+            ? `<button class="secure-v128-primary" type="button" data-secure-v128-retry-device${busy ? " disabled" : ""}>Continue securely</button>`
+          : "") + `</div>`;
 };
 
 export function renderSecureMessagingAuthenticatedShell(

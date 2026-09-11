@@ -16,6 +16,8 @@ Current source includes:
 - V1.28A secure-messaging architecture;
 - V1.28B authenticated secure-messaging UX shell;
 - V1.28C/C.1 Social messaging-device boundary and browser-local setup;
+- the default-off identity-authorized register, rotate, revoke, and eligible
+  legacy-adoption path using UBID's deterministic private kind-27236 carrier;
 - V1.28D recipient crypto-package BFF boundary;
 - V1.28E browser-local ciphertext envelope construction;
 - V1.28F.1 exact, uncomposed server envelope/wire/digest boundary.
@@ -142,6 +144,24 @@ Optional `--author <64-hex-public-key>` narrows the request further; `--json` se
 
 Implemented now: the authenticated Social product entry, opaque Social sessions, same-origin session/authority/social-read-config/social-publish-config/logout endpoints, server-side read-only HODLXXI Limited/Full projection, fail-closed Limited fallback, the Full-gated browser-visible Full Network shell, disabled source-only alias-directory BFF/client support, one explicit authenticated browser relay read, explicit external-signer kind `0`/`1` publication, NIP-01 event-id and BIP340 verification before rendering and publication, verified own profile/posts on Home and Profile, the isolated synthetic demo, local rehearsal, developer probes, and normalized composition/service boundaries.
 
+The source also includes a separately configured, disabled-by-default
+identity-authorized messaging-device successor. Each explicit browser action
+for registration, eligible legacy adoption, rotation, or revocation uses an
+exact-subject NIP-07 signer, or an injected one-shot NIP-46 adapter seam, for
+UBID's private deterministic kind-27236 carrier. Each returned intent is bound
+to the exact initiating proposal before signer access. The verified signed
+public event and separate intent token are retained in IndexedDB before submit
+so startup can reconcile first and an explicit continue action can retry
+without signing again. The canonical operation proposal is retained before
+intent/signing so pre-sign failures preserve the exact operation identity.
+Uncertain authorization configuration fails closed rather than selecting the
+legacy mode. Legacy local
+records remain readable but are not authorization-ready until explicit
+adoption succeeds. Social verifies the event locally and never publishes it.
+Enabling the successor blocks the old unsigned OAuth-only binding mutation; no
+production enablement, live NIP-46 transport, credential provisioning,
+migration, restart, or deployment is included.
+
 Not implemented or activated: production Full-directory configuration/credentials/key provisioning, live production alias delivery, names, profiles or presence, automatic relay/source selection, relay discovery or pools, fallback relays, reconnect, persistent subscriptions, polling, personalized network feeds, follows/friends from Nostr, participant/Nostr event server signing, participant key custody, automatic or background publishing, DMs, encryption, NIP-07 account management, durable shared session persistence, or horizontal-scale session coordination.
 
 Successful probe output means “a public Nostr relay read succeeded and accepted events passed current validation.” It does not mean HODLXXI membership, Full or Operator status, CRT, identity ownership, relay trust, or content trust was verified.
@@ -169,5 +189,10 @@ Notifications and Activity are synthetic local summaries, not live network telem
 - Social does not hold funds or control participant private keys.
 - Participation does not promise profit or investment return.
 - This repository contains no participant-key custody, application/server Nostr event signing, automatic/background publishing, automatic relay selection, database, Redis, Bitcoin RPC, or LND integration. Its ordinary Nostr paths are one bounded verified read and one explicit external-signer publication to separately configured relays. The disabled Full-directory client uses only separately provisioned service authentication and cannot sign participant events or grant authority.
+- Messaging-device authorization uses an external participant signer only for
+  the explicit private carrier action. Neither Social nor UBID receives the
+  participant private key, the persisted X25519 device private key, or a
+  confidential-service private key in the browser, and the carrier is never
+  sent to a Nostr relay.
 
 See [architecture](docs/architecture.md), [authenticated public write](docs/AUTHENTICATED_PUBLIC_WRITE_V1.md), [domain/access](docs/domain-access-model.md), [Nostr boundary](docs/nostr-boundary.md), and [graph/visibility](docs/social-graph-visibility.md).

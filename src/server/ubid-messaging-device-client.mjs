@@ -2,10 +2,17 @@ import http from "node:http";
 import {
   createPrivateKey,
   randomBytes,
-  sign
+  sign,
+  webcrypto
 } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { open as openFile } from "node:fs/promises";
+import {
+  canonicalMessagingDeviceJson,
+  composeMessagingDeviceAuthorizationPayload,
+  parseMessagingDeviceAuthorizationIntent,
+  parseMessagingDeviceAuthorizationResult
+} from "../../web/messaging-device-authorization-v1.mjs";
 
 export const MESSAGING_DEVICE_SCOPE =
   "social:messaging-device:manage";
@@ -16,6 +23,21 @@ export const UBID_MESSAGING_SERVICE_TOKEN_PATH =
 export const UBID_MESSAGING_DEVICE_BINDINGS_PATH =
   "/internal/v1/social/messaging/device-bindings";
 
+export const MESSAGING_DEVICE_AUTHORIZATION_SCOPE =
+  "social:messaging-device-binding-authorization:manage";
+
+export const UBID_MESSAGING_DEVICE_AUTHORIZATION_SERVICE_TOKEN_PATH =
+  "/internal/v1/social/messaging/device-binding-authorization-service-token";
+
+export const UBID_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_PATH =
+  "/internal/v1/social/messaging/device-binding-authorization-intents";
+
+export const UBID_MESSAGING_DEVICE_AUTHORIZATIONS_PATH =
+  "/internal/v1/social/messaging/device-binding-authorizations";
+
+export const UBID_MESSAGING_DEVICE_INTENT_HEADER =
+  "X-HODLXXI-Device-Binding-Intent";
+
 const CLIENT_ASSERTION_TYPE =
   "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 const GRANT_TYPE = "client_credentials";
@@ -25,12 +47,24 @@ const ASSERTION_PURPOSE = "service_client_authentication";
 const COMMAND_MAX_BYTES = 8192;
 const TOKEN_MAX_BYTES = 16 * 1024;
 const DEVICE_MAX_BYTES = 128 * 1024;
+const INTENT_MAX_BYTES = 32 * 1024;
+const AUTHORIZATION_MAX_BYTES = 16 * 1024;
 const PRIVATE_KEY_MAX_BYTES = 32 * 1024;
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const SNAPSHOT_ID = /^sha256:[0-9a-f]{64}$/;
 const ISO_UTC_SECOND =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+const isoSecondMilliseconds = (value) => {
+  if (!ISO_UTC_SECOND.test(value)) failure();
+  const milliseconds = Date.parse(value);
+  if (
+    !Number.isSafeInteger(milliseconds) ||
+    new Date(milliseconds).toISOString() !== value.replace("Z", ".000Z")
+  ) failure();
+  return milliseconds;
+};
 
 const failure = () => {
   throw new Error("messaging_device_unavailable");
@@ -133,6 +167,12 @@ const validConfig = (config) =>
   Number.isSafeInteger(config.requestTimeoutMs) &&
   config.requestTimeoutMs >= 250 &&
   config.requestTimeoutMs <= 30000;
+
+const validAuthorizationConfig = (config) =>
+  validConfig(config) &&
+  boundedText(config.serviceTokenUrl, 2048) &&
+  boundedText(config.authorizationIntentsUrl, 2048) &&
+  boundedText(config.authorizationsUrl, 2048);
 
 const createClientAssertion = (
   config,
@@ -540,6 +580,20 @@ const validateServiceToken = (value) => {
   return result.access_token;
 };
 
+const validateAuthorizationServiceToken = (value) => {
+  const result = exactRecord(
+    value,
+    ["access_token", "token_type", "expires_in", "scope"]
+  );
+  if (
+    !boundedBearer(result.access_token) ||
+    result.token_type !== "Bearer" ||
+    result.expires_in !== 60 ||
+    result.scope !== MESSAGING_DEVICE_AUTHORIZATION_SCOPE
+  ) failure();
+  return result.access_token;
+};
+
 const normalizeDevice = (
   value,
   {
@@ -690,6 +744,68 @@ export function normalizeMessagingDeviceResult(
     operation: record.operation,
     device: normalizeDevice(record.device)
   });
+}
+
+export function normalizeMessagingDeviceAuthorizationResult(
+  value
+) {
+  const fields = [
+    "action",
+    "active",
+    "authorizationExpiresAt",
+    "authorizationProofId",
+    "authorizationValidFrom",
+    "bindingId",
+    "bindingOperation",
+    "bindingVersion",
+    "deviceId",
+    "expiresAt",
+    "requestId",
+    "schema",
+    "validFrom",
+    "version"
+  ];
+  const record = exactRecord(value, fields);
+  const authorizationValidFrom = isoSecondMilliseconds(record.authorizationValidFrom);
+  const authorizationExpiresAt = isoSecondMilliseconds(record.authorizationExpiresAt);
+  const validFrom = isoSecondMilliseconds(record.validFrom);
+  const expiresAt = isoSecondMilliseconds(record.expiresAt);
+  if (
+    record.schema !==
+      "hodlxxi.social_messaging_device_binding_authorization_result.v1" ||
+    record.version !== 1 ||
+    !["register", "rotate", "revoke", "adopt"].includes(record.action) ||
+    !["register", "rotate", "revoke"].includes(record.bindingOperation) ||
+    typeof record.active !== "boolean" ||
+    record.active !== (record.bindingOperation !== "revoke") ||
+    (record.action === "adopt"
+      ? !["register", "rotate"].includes(record.bindingOperation)
+      : record.action !== record.bindingOperation) ||
+    !HEX64.test(record.bindingId) || !HEX64.test(record.deviceId) ||
+    !HEX64.test(record.requestId) ||
+    typeof record.authorizationProofId !== "string" ||
+    !/^hodlxxi-binding-authorization-v1-sha256:[0-9a-f]{64}$/.test(
+      record.authorizationProofId
+    ) ||
+    !Number.isSafeInteger(record.bindingVersion) ||
+    record.bindingVersion < 1 || record.bindingVersion > 1024 ||
+    authorizationValidFrom >= authorizationExpiresAt ||
+    validFrom >= expiresAt || authorizationValidFrom < validFrom ||
+    authorizationValidFrom >= expiresAt || authorizationExpiresAt !== expiresAt
+  ) failure();
+  return Object.freeze(record);
+}
+
+export async function normalizeMessagingDeviceAuthorizationIntent(
+  value,
+  { subject, cryptoImpl = webcrypto, now = Date.now } = {}
+) {
+  await parseMessagingDeviceAuthorizationIntent(value, {
+    subject,
+    cryptoImpl,
+    now
+  });
+  return deepFreeze(value);
 }
 
 export async function createUbidMessagingDeviceClient(
@@ -849,6 +965,167 @@ export async function createUbidMessagingDeviceClient(
 
       return normalizeMessagingDeviceResult(
         value
+      );
+    }
+  });
+}
+
+const deepFreeze = (value) => {
+  if (Array.isArray(value)) {
+    value.forEach(deepFreeze);
+    return Object.freeze(value);
+  }
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    Object.values(value).forEach(deepFreeze);
+    return Object.freeze(value);
+  }
+  return value;
+};
+
+export async function createUbidMessagingDeviceAuthorizationClient(
+  config,
+  {
+    requestImpl = http.request,
+    openFileImpl = openFile,
+    createPrivateKeyImpl = createPrivateKey,
+    now = Date.now,
+    random = randomBytes,
+    signImpl = sign,
+    cryptoImpl = webcrypto
+  } = {}
+) {
+  if (
+    !validAuthorizationConfig(config) ||
+    typeof requestImpl !== "function" ||
+    typeof cryptoImpl?.subtle?.digest !== "function"
+  ) failure();
+
+  const tokenEndpoint = canonicalHttpsEndpoint(
+    config.serviceTokenUrl,
+    UBID_MESSAGING_DEVICE_AUTHORIZATION_SERVICE_TOKEN_PATH
+  );
+  const intentEndpoint = canonicalHttpsEndpoint(
+    config.authorizationIntentsUrl,
+    UBID_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_PATH
+  );
+  const authorizationEndpoint = canonicalHttpsEndpoint(
+    config.authorizationsUrl,
+    UBID_MESSAGING_DEVICE_AUTHORIZATIONS_PATH
+  );
+  const privateKey = await readPrivateKey(config.signingKeyPath, {
+    openFileImpl,
+    createPrivateKeyImpl
+  });
+
+  const serviceToken = async () => {
+    const assertion = createClientAssertion(config, privateKey, {
+      now,
+      random,
+      signImpl
+    });
+    const body = new URLSearchParams([
+      ["grant_type", GRANT_TYPE],
+      ["client_id", config.clientId],
+      ["scope", MESSAGING_DEVICE_AUTHORIZATION_SCOPE],
+      ["client_assertion_type", CLIENT_ASSERTION_TYPE],
+      ["client_assertion", assertion]
+    ]).toString();
+    return validateAuthorizationServiceToken(await unixJsonRequest({
+      socketPath: config.socketPath,
+      endpoint: tokenEndpoint,
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body,
+      timeoutMs: config.tokenTimeoutMs,
+      maximumBytes: TOKEN_MAX_BYTES
+    }, requestImpl));
+  };
+
+  const authorizedHeaders = (token, viewerAccessToken) => ({
+    Accept: "application/json",
+    Authorization: `Bearer ${token}`,
+    "X-HODLXXI-Viewer-Authorization": `Bearer ${viewerAccessToken}`,
+    "Content-Type": "application/json"
+  });
+
+  return Object.freeze({
+    async createIntentForViewer({
+      viewerAccessToken,
+      expectedSubject,
+      proposalPayload
+    } = {}) {
+      if (
+        !boundedBearer(viewerAccessToken) || !HEX64.test(expectedSubject) ||
+        typeof proposalPayload !== "string" ||
+        Buffer.byteLength(proposalPayload, "utf8") < 1 ||
+        Buffer.byteLength(proposalPayload, "utf8") > 2048 ||
+        /[^\x20-\x7e]/.test(proposalPayload)
+      ) failure();
+      const proposal = parseJson(proposalPayload);
+      if (canonicalMessagingDeviceJson(proposal) !== proposalPayload) failure();
+      const token = await serviceToken();
+      if (token === viewerAccessToken) failure();
+      const value = await unixJsonRequest({
+        socketPath: config.socketPath,
+        endpoint: intentEndpoint,
+        method: "POST",
+        headers: authorizedHeaders(token, viewerAccessToken),
+        body: proposalPayload,
+        timeoutMs: config.requestTimeoutMs,
+        maximumBytes: INTENT_MAX_BYTES
+      }, requestImpl);
+      await parseMessagingDeviceAuthorizationIntent(value, {
+        subject: expectedSubject,
+        cryptoImpl,
+        now
+      });
+      return deepFreeze(value);
+    },
+
+    async authorizeForViewer({
+      viewerAccessToken,
+      expectedSubject,
+      intentToken,
+      signedEventPayload
+    } = {}) {
+      if (
+        !boundedBearer(viewerAccessToken) || !HEX64.test(expectedSubject) ||
+        typeof intentToken !== "string" || intentToken.length < 1 ||
+        intentToken.length > 16 * 1024 ||
+        !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(intentToken) ||
+        typeof signedEventPayload !== "string" ||
+        Buffer.byteLength(signedEventPayload, "utf8") < 1 ||
+        Buffer.byteLength(signedEventPayload, "utf8") > AUTHORIZATION_MAX_BYTES ||
+        /[^\x20-\x7e]/.test(signedEventPayload)
+      ) failure();
+      const signedEvent = parseJson(signedEventPayload);
+      if (canonicalMessagingDeviceJson(signedEvent) !== signedEventPayload) failure();
+      const authorizationPayload = await composeMessagingDeviceAuthorizationPayload({
+        subject: expectedSubject,
+        intentToken,
+        signedEvent
+      }, { cryptoImpl, now });
+      const token = await serviceToken();
+      if (token === viewerAccessToken || token === intentToken) failure();
+      const value = await unixJsonRequest({
+        socketPath: config.socketPath,
+        endpoint: authorizationEndpoint,
+        method: "POST",
+        headers: {
+          ...authorizedHeaders(token, viewerAccessToken),
+          [UBID_MESSAGING_DEVICE_INTENT_HEADER]: intentToken
+        },
+        body: authorizationPayload,
+        timeoutMs: config.requestTimeoutMs,
+        maximumBytes: AUTHORIZATION_MAX_BYTES
+      }, requestImpl);
+      return parseMessagingDeviceAuthorizationResult(
+        value,
+        { subject: expectedSubject, intentToken, signedEvent },
+        { cryptoImpl, now }
       );
     }
   });
