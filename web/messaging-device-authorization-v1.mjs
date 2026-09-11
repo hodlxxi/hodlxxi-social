@@ -43,6 +43,7 @@ const JWT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const ISO_SECOND = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const MAX_INTENT_BYTES = 32 * 1024;
 const MAX_RESULT_BYTES = 16 * 1024;
+const DEFINITIVE_UNAVAILABLE_BODY = '{"state":"unavailable"}';
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 const failureKinds = new WeakMap();
@@ -506,12 +507,50 @@ export async function parseMessagingDeviceAuthorizationResult(
   return Object.freeze(result);
 }
 
-const boundedResponse = async (response, maximum) => {
-  if (response?.status !== 200) {
-    if (Number.isInteger(response?.status) &&
-        response.status >= 500 && response.status <= 599) unavailable("ambiguous");
-    if (Number.isInteger(response?.status) &&
-        response.status >= 400 && response.status <= 499) unavailable("rejected");
+const exactDefinitiveResponseHeaders = (response) => {
+  try {
+    const headers = response?.headers;
+    return headers?.get?.("content-type") === "application/json; charset=utf-8" &&
+      headers.get("cache-control") === "no-store" &&
+      headers.get("referrer-policy") === "no-referrer" &&
+      headers.get("x-content-type-options") === "nosniff";
+  } catch {
+    return false;
+  }
+};
+
+const boundedResponse = async (
+  response,
+  maximum,
+  { acceptDefinitiveExpiredUnaccepted = false } = {}
+) => {
+  let status;
+  try { status = response?.status; } catch { unavailable(); }
+  if (
+    acceptDefinitiveExpiredUnaccepted === true &&
+    status === 409
+  ) {
+    let readBody;
+    try { readBody = response?.text; } catch { unavailable(); }
+    if (
+      typeof readBody !== "function" ||
+      !exactDefinitiveResponseHeaders(response)
+    ) unavailable();
+    let body;
+    try { body = await readBody.call(response); }
+    catch { unavailable("ambiguous"); }
+    if (
+      typeof body !== "string" ||
+      new TextEncoder().encode(body).byteLength > DEFINITIVE_UNAVAILABLE_BODY.length ||
+      body !== DEFINITIVE_UNAVAILABLE_BODY
+    ) unavailable();
+    unavailable("expired-unaccepted");
+  }
+  if (status !== 200) {
+    if (Number.isInteger(status) &&
+        status >= 500 && status <= 599) unavailable("ambiguous");
+    if (Number.isInteger(status) &&
+        status >= 400 && status <= 499) unavailable("rejected");
     unavailable();
   }
   if (
@@ -681,7 +720,9 @@ export async function authorizeMessagingDeviceBinding(
     body: canonicalMessagingDeviceJson(checkedRetry.signedEvent)
   });
   return parseMessagingDeviceAuthorizationResult(
-    await boundedResponse(resultResponse, MAX_RESULT_BYTES),
+    await boundedResponse(resultResponse, MAX_RESULT_BYTES, {
+      acceptDefinitiveExpiredUnaccepted: true
+    }),
     {
       subject,
       proposal,

@@ -13,7 +13,8 @@ import {
   SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE
 } from "../src/server/social-oauth-bff.mjs";
 import {
-  createUbidMessagingDeviceAuthorizationClient
+  createUbidMessagingDeviceAuthorizationClient,
+  isUbidMessagingDeviceAuthorizationDefinitiveRejection
 } from "../src/server/ubid-messaging-device-client.mjs";
 import { createBoundedStore } from "../src/server/social-oauth-memory.mjs";
 import { SESSION_COOKIE_NAME } from "../src/server/social-oauth-cookie.mjs";
@@ -100,6 +101,7 @@ const fixture = ({
   intentValue = intent,
   authorizationValue = result,
   authorizationFailure,
+  authorizationClient,
   now = () => 1_788_906_599_000
 } = {}) => {
   const sessions = createBoundedStore({ ttlSeconds: 3600, capacity: 10, now: () => 0 });
@@ -114,7 +116,7 @@ const fixture = ({
     }),
     async applyForViewer(value) { calls.push(["legacy", value]); return {}; }
   };
-  const messagingDeviceAuthorizationClient = enabled ? {
+  const messagingDeviceAuthorizationClient = enabled ? authorizationClient ?? {
     async createIntentForViewer(value) { calls.push(["intent", value]); return structuredClone(intentValue); },
     async authorizeForViewer(value) {
       calls.push(["authorize", value]);
@@ -233,6 +235,7 @@ test("CSRF query method content type body bounds and missing intent token fail b
     candidate.headers.cookie = cookie;
     const response = await bff(candidate);
     assert.notEqual(response.status, 200);
+    assert.notEqual(response.status, 409);
     assert.deepEqual(JSON.parse(response.body), { state: "unavailable" });
     assert.equal(calls.length, 0);
   }
@@ -278,6 +281,41 @@ test("real BFF collapses every ambiguous authorization-client failure to the sam
     assert.deepEqual(JSON.parse(response.body), { state: "unavailable" }, label);
     assert.equal(calls.filter(([kind]) => kind === "authorize").length, 1, label);
     assert.equal(calls.filter(([kind]) => kind === "intent").length, 0, label);
+  }
+});
+
+test("arbitrary injected errors and matching-looking objects cannot forge the BFF 409", async () => {
+  class SimilarlyNamedError extends Error {
+    constructor() {
+      super("device_binding_authorization_unavailable");
+      this.name = "MessagingDeviceBindingAuthorizationExpiredUnaccepted";
+      this.status = 409;
+    }
+  }
+  for (const authorizationFailure of [
+    new Error("device_binding_authorization_unavailable"),
+    { status: 409 },
+    { definitive: true, status: 409 },
+    new SimilarlyNamedError()
+  ]) {
+    assert.equal(
+      isUbidMessagingDeviceAuthorizationDefinitiveRejection(authorizationFailure),
+      false
+    );
+    const { bff, cookie } = fixture({ authorizationFailure });
+    const received = await bff({
+      method: "POST",
+      url: SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
+      headers: {
+        cookie,
+        origin: "https://social.example",
+        "content-type": "application/json",
+        "x-hodlxxi-device-binding-intent": intentToken
+      },
+      body: signedEventPayload
+    });
+    assert.equal(received.status, 503);
+    assert.equal(received.body, '{"state":"unavailable"}');
   }
 });
 
@@ -361,6 +399,200 @@ const keyHandle = {
   async readFile() { return "test-key"; },
   async close() {}
 };
+
+const ubidErrorBody = Buffer.from(
+  '{"error":"device_binding_authorization_unavailable"}\n',
+  "ascii"
+);
+const exactUbidErrorHeaders = {
+  "content-type": "application/json",
+  "cache-control": "no-store",
+  pragma: "no-cache"
+};
+const exactUbidRawHeaders = [
+  "Content-Type", "application/json",
+  "Cache-Control", "no-store",
+  "Pragma", "no-cache"
+];
+
+const parsedAuthorizationClientHarness = async () => {
+  let authorizationResponse = {};
+  const calls = [];
+  const requestImpl = (options, callback) => {
+    const outgoing = new EventEmitter();
+    outgoing.destroy = () => {};
+    outgoing.setTimeout = () => outgoing;
+    outgoing.end = (body) => {
+      calls.push({ options, body });
+      const isToken = options.path.endsWith("service-token");
+      const selected = isToken ? {
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        rawHeaders: ["Content-Type", "application/json"],
+        complete: true,
+        chunks: [Buffer.from(canonicalMessagingDeviceJson({
+          access_token: "service-private-token",
+          token_type: "Bearer",
+          expires_in: 60,
+          scope: "social:messaging-device-binding-authorization:manage"
+        }))]
+      } : {
+        statusCode: 409,
+        headers: exactUbidErrorHeaders,
+        rawHeaders: exactUbidRawHeaders,
+        complete: true,
+        chunks: [ubidErrorBody],
+        ...authorizationResponse
+      };
+      const incoming = new EventEmitter();
+      incoming.destroy = () => {};
+      incoming.statusCode = selected.statusCode;
+      incoming.headers = selected.headers;
+      incoming.rawHeaders = selected.rawHeaders;
+      incoming.complete = selected.complete;
+      callback(incoming);
+      queueMicrotask(() => {
+        for (const chunk of selected.chunks ?? []) incoming.emit("data", chunk);
+        if (selected.event) incoming.emit(selected.event, new Error("response failed"));
+        else incoming.emit("end");
+      });
+    };
+    return outgoing;
+  };
+  const client = await createUbidMessagingDeviceAuthorizationClient(clientConfig, {
+    requestImpl,
+    openFileImpl: async () => keyHandle,
+    createPrivateKeyImpl: () => ({
+      type: "private",
+      asymmetricKeyType: "rsa",
+      asymmetricKeyDetails: { modulusLength: 2048 }
+    }),
+    now: () => 1_788_906_899_000,
+    random: () => Buffer.alloc(32, 7),
+    signImpl: () => Buffer.from("signature"),
+    cryptoImpl: webcrypto
+  });
+  return {
+    calls,
+    client,
+    respondWith(value) { authorizationResponse = value; }
+  };
+};
+
+const captureAuthorizationFailure = async (client) => {
+  try {
+    await client.authorizeForViewer({
+      viewerAccessToken,
+      expectedSubject: subject,
+      intentToken,
+      signedEventPayload
+    });
+  } catch (caught) {
+    return caught;
+  }
+  assert.fail("authorization unexpectedly succeeded");
+};
+
+test("real parsed UBID 409 is privately branded and maps through the BFF without detail", async () => {
+  const harness = await parsedAuthorizationClientHarness();
+  const { bff, cookie } = fixture({ authorizationClient: harness.client });
+  const received = await bff({
+    method: "POST",
+    url: SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
+    headers: {
+      cookie,
+      origin: "https://social.example",
+      "content-type": "application/json",
+      "x-hodlxxi-device-binding-intent": intentToken
+    },
+    body: signedEventPayload
+  });
+  assert.equal(received.status, 409);
+  assert.equal(received.body, '{"state":"unavailable"}');
+  assert.deepEqual(received.headers, {
+    "Cache-Control": "no-store",
+    "Content-Type": "application/json; charset=utf-8",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff"
+  });
+  assert.deepEqual(harness.calls.map(({ options }) => options.path), [
+    "/internal/v1/social/messaging/device-binding-authorization-service-token",
+    "/internal/v1/social/messaging/device-binding-authorizations"
+  ]);
+});
+
+test("only the exact complete bounded UBID 409 response receives private provenance", async () => {
+  const harness = await parsedAuthorizationClientHarness();
+  const invalid = [
+    { headers: { ...exactUbidErrorHeaders, "content-type": "application/problem+json" } },
+    { headers: { ...exactUbidErrorHeaders, "content-type": "application/json; charset=utf-8" } },
+    { headers: { ...exactUbidErrorHeaders, "cache-control": undefined } },
+    { headers: { ...exactUbidErrorHeaders, pragma: undefined } },
+    { rawHeaders: [...exactUbidRawHeaders, "Cache-Control", "no-store"] },
+    { rawHeaders: ["Content-Type", "application/json", "Pragma", "no-cache"] },
+    { complete: false },
+    { chunks: [Buffer.from([0xc3, 0x28])] },
+    { chunks: [Buffer.alloc(16 * 1024 + 1, 0x20)] },
+    { chunks: [Buffer.from('{"error":"device_binding_authorization_unavailable"}')] },
+    { chunks: [Buffer.from(' {"error":"device_binding_authorization_unavailable"}\n')] },
+    { chunks: [Buffer.from('{"error":"device_binding_authorization_unavailable"}\n ')] },
+    { chunks: [Buffer.from('{"error":"device_binding_authorization_unavailable","extra":true}\n')] },
+    { chunks: [Buffer.from('{"error":"device_binding_authorization_unavailable","error":"device_binding_authorization_unavailable"}\n')] },
+    { chunks: [Buffer.from('{"error":"different"}\n')] },
+    { event: "aborted", chunks: [ubidErrorBody] },
+    { event: "error", chunks: [ubidErrorBody] }
+  ];
+  for (const candidate of invalid) {
+    harness.respondWith(candidate);
+    const caught = await captureAuthorizationFailure(harness.client);
+    assert.equal(isUbidMessagingDeviceAuthorizationDefinitiveRejection(caught), false);
+  }
+});
+
+test("every other UBID 4xx and every 5xx remains non-definitive", async () => {
+  const harness = await parsedAuthorizationClientHarness();
+  for (const statusCode of [
+    ...Array.from({ length: 100 }, (_, index) => 400 + index).filter((value) => value !== 409),
+    ...Array.from({ length: 100 }, (_, index) => 500 + index)
+  ]) {
+    harness.respondWith({ statusCode });
+    const caught = await captureAuthorizationFailure(harness.client);
+    assert.equal(
+      isUbidMessagingDeviceAuthorizationDefinitiveRejection(caught),
+      false,
+      String(statusCode)
+    );
+  }
+});
+
+test("the same exact UBID 409 on the intent endpoint is non-definitive and BFF 503", async () => {
+  const harness = await parsedAuthorizationClientHarness();
+  let caught;
+  try {
+    await harness.client.createIntentForViewer({
+      viewerAccessToken,
+      expectedSubject: subject,
+      proposalPayload
+    });
+  } catch (error) {
+    caught = error;
+  }
+  assert.equal(isUbidMessagingDeviceAuthorizationDefinitiveRejection(caught), false);
+
+  const { bff, cookie } = fixture({ authorizationClient: harness.client });
+  const received = await bff({
+    method: "POST",
+    url: SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
+    headers: {
+      cookie,
+      origin: "https://social.example",
+      "content-type": "application/json"
+    },
+    body: proposalPayload
+  });
+  assert.equal(received.status, 503);
+  assert.equal(received.body, '{"state":"unavailable"}');
+});
 
 test("UBID client uses exact routes and forwards a locally expired exact submission to UBID", async () => {
   const calls = [];

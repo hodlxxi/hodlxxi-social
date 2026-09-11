@@ -153,10 +153,16 @@ to the exact initiating proposal before signer access. The verified signed
 public event and separate intent token are retained in IndexedDB before submit
 so startup can reconcile first and an explicit continue action can submit the
 exact retained material once, even after local expiry, without signing again.
-The current generic BFF failure contract cannot distinguish authoritative
-rejection from timeout, socket loss, or response loss, so a failed expired
-replay remains pending and cannot automatically obtain a replacement intent or
-signature. The canonical operation proposal is retained before
+Only UBID's exact, complete, no-store HTTP 409 expired-unaccepted response on
+the authoritative authorization endpoint becomes Social's same generic-body
+HTTP 409. During that explicit continue action only, the browser revalidates
+the session and authoritative snapshot, atomically replaces the expired public
+proposal with a fresh request ID while retaining its operation, device key and
+predecessor, then obtains and signs at most one replacement intent. Every
+other 4xx, 5xx, malformed response, timeout, cancellation, socket loss, or
+response loss remains ambiguous and preserves the exact retained retry.
+Startup never renews or opens a signer, and a failed replacement is retained
+without a renewal loop. The canonical operation proposal is retained before
 intent/signing so pre-sign failures preserve the exact operation identity.
 Uncertain authorization configuration fails closed rather than selecting the
 legacy mode. Legacy local

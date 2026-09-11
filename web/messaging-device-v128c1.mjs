@@ -2,6 +2,7 @@ import {
   authorizeMessagingDeviceBinding,
   canonicalMessagingDeviceAuthorizationProposal,
   canonicalMessagingDeviceJson,
+  messagingDeviceAuthorizationFailureKind,
   parseMessagingDeviceAuthorizationRetry
 } from "./messaging-device-authorization-v1.mjs?v=1.28.1";
 
@@ -339,6 +340,73 @@ const samePublicRecordRevision = (a, b) => {
   } catch { return false; }
 };
 
+const sameNullablePublicValue = (left, right) => {
+  if (left === null || right === null) return left === right;
+  try {
+    return canonicalMessagingDeviceJson(left) === canonicalMessagingDeviceJson(right);
+  } catch {
+    return false;
+  }
+};
+
+const isExactPendingRenewal = (previous, next) => {
+  try {
+    if (
+      previous.pendingAuthorization === null || next.pendingAuthorization !== null ||
+      typeof previous.pendingProposal !== "string" ||
+      typeof next.pendingProposal !== "string" ||
+      previous.pendingProposal === next.pendingProposal ||
+      previous.schema !== next.schema || previous.version !== next.version ||
+      previous.subject !== next.subject || previous.deviceId !== next.deviceId ||
+      previous.publicKey !== next.publicKey || previous.state !== next.state ||
+      !sameNullablePublicValue(previous.acceptedBinding, next.acceptedBinding) ||
+      !sameNullablePublicValue(previous.authorization, next.authorization)
+    ) return false;
+    const oldProposal = JSON.parse(previous.pendingProposal);
+    const newProposal = JSON.parse(next.pendingProposal);
+    if (
+      canonicalMessagingDeviceAuthorizationProposal(oldProposal) !== previous.pendingProposal ||
+      canonicalMessagingDeviceAuthorizationProposal(newProposal) !== next.pendingProposal ||
+      oldProposal.operation !== newProposal.operation ||
+      [
+        oldProposal.requestId,
+        previous.requestId,
+        previous.rotation?.requestId,
+        previous.authorization?.requestId
+      ].filter(hex).includes(newProposal.requestId)
+    ) return false;
+    if (oldProposal.operation === "register") {
+      return previous.rotation === null && next.rotation === null &&
+        previous.requestId === oldProposal.requestId &&
+        next.requestId === newProposal.requestId &&
+        oldProposal.deviceId === newProposal.deviceId &&
+        oldProposal.publicKey === newProposal.publicKey &&
+        oldProposal.expectedBindingId === null &&
+        newProposal.expectedBindingId === null;
+    }
+    if (previous.requestId !== next.requestId) return false;
+    if (oldProposal.operation === "rotate") {
+      return previous.rotation !== null && next.rotation !== null &&
+        previous.rotation.publicKey === next.rotation.publicKey &&
+        previous.rotation.requestId === oldProposal.requestId &&
+        next.rotation.requestId === newProposal.requestId &&
+        oldProposal.deviceId === newProposal.deviceId &&
+        oldProposal.publicKey === newProposal.publicKey &&
+        oldProposal.expectedBindingId === newProposal.expectedBindingId;
+    }
+    if (previous.rotation !== null || next.rotation !== null) return false;
+    if (oldProposal.operation === "adopt") {
+      return oldProposal.bindingId === newProposal.bindingId;
+    }
+    return oldProposal.operation === "revoke" &&
+      oldProposal.deviceId === newProposal.deviceId &&
+      oldProposal.publicKey === null && newProposal.publicKey === null &&
+      oldProposal.expectedBindingId === newProposal.expectedBindingId;
+  } catch {
+    return false;
+  }
+};
+
 // A single slot cannot silently become a second account's device. add() is
 // atomic across tabs; native IndexedDB structured clone retains CryptoKeys.
 export function createMessagingDeviceStore(indexedDBImpl) {
@@ -398,12 +466,14 @@ export function createMessagingDeviceStore(indexedDBImpl) {
           let next = extended(record);
           if (!samePublicRecordRevision(previous, expected)) unavailable();
           if (!sameBaseIdentity(previous, next)) unavailable();
+          const renewsPendingAuthorization = isExactPendingRenewal(previous, next);
           const promotesRotation = previous.rotation !== null && next.rotation === null &&
             next.publicKey === previous.rotation.publicKey &&
             next.requestId === previous.rotation.requestId && next.state === "ready" &&
             next.authorization?.action === "rotate" &&
             next.authorization.requestId === previous.rotation.requestId;
-          if (!promotesRotation && !sameActiveIdentity(previous, next)) unavailable();
+          if (!promotesRotation && !renewsPendingAuthorization &&
+              !sameActiveIdentity(previous, next)) unavailable();
           if (previous.acceptedBinding && !next.acceptedBinding) unavailable();
           if (previous.acceptedBinding && next.acceptedBinding &&
               !sameMetadata(previous.acceptedBinding, next.acceptedBinding) &&
@@ -412,15 +482,18 @@ export function createMessagingDeviceStore(indexedDBImpl) {
           if (previous.rotation && next.rotation === null && !promotesRotation) unavailable();
           if (previous.rotation && next.rotation &&
               (previous.rotation.publicKey !== next.rotation.publicKey ||
-               previous.rotation.requestId !== next.rotation.requestId)) unavailable();
+               previous.rotation.requestId !== next.rotation.requestId) &&
+              !renewsPendingAuthorization) unavailable();
           if (previous.pendingProposal !== null && next.pendingProposal !== null &&
-              previous.pendingProposal !== next.pendingProposal) unavailable();
+              previous.pendingProposal !== next.pendingProposal &&
+              !renewsPendingAuthorization) unavailable();
           if (previous.pendingAuthorization !== null && next.pendingAuthorization !== null &&
               canonicalMessagingDeviceJson(previous.pendingAuthorization) !==
                 canonicalMessagingDeviceJson(next.pendingAuthorization) &&
               previous.pendingProposal !== next.pendingProposal) unavailable();
           if (previous.pendingAuthorization !== null && next.pendingAuthorization === null &&
-              !["ready", "revoked"].includes(next.state)) unavailable();
+              !["ready", "revoked"].includes(next.state) &&
+              !renewsPendingAuthorization) unavailable();
           if (previous.pendingProposal !== null && next.pendingProposal === null &&
               !["ready", "revoked"].includes(next.state)) unavailable();
           const privateKey = promotesRotation
@@ -522,12 +595,13 @@ export function createMessagingDevice({
         record = await readBack();
         return record;
       };
-      const randomId = (differentFrom) => {
+      const randomId = (...differentFrom) => {
+        const excluded = new Set(differentFrom.filter(hex));
         for (let attempt = 0; attempt < 4; attempt += 1) {
           const bytes = new Uint8Array(32);
           if (randomFill(bytes) !== bytes) unavailable();
           const id = hexBytes(bytes);
-          if (id !== differentFrom) return id;
+          if (!excluded.has(id)) return id;
         }
         unavailable();
       };
@@ -644,7 +718,11 @@ export function createMessagingDevice({
       const submitAuthorization = async (
         proposal,
         currentBinding,
-        { pendingAuthorization, expiredExactReplay = false } = {}
+        {
+          pendingAuthorization,
+          expiredExactReplay = false,
+          checkedRetry = null
+        } = {}
       ) => {
         const controller = new AbortController();
         requestController = controller;
@@ -696,8 +774,54 @@ export function createMessagingDevice({
           return finalizeReady(binding, accepted.marker, {
             promoteRotation: proposal.operation === "rotate"
           });
-        } catch {
+        } catch (caught) {
           if (generation !== epoch) return view;
+          if (
+            expiredExactReplay &&
+            messagingDeviceAuthorizationFailureKind(caught) === "expired-unaccepted"
+          ) {
+            await session();
+            const fresh = await readSnapshot();
+            const freshPredecessor = proposal.operation === "register"
+              ? null
+              : exactPredecessor(fresh, proposal);
+            if (
+              proposal.operation === "register" &&
+              relatedBindings(fresh, record.deviceId, record.publicKey).length !== 0
+            ) unavailable();
+            const replacementRequestId = randomId(
+              proposal.requestId,
+              record.requestId,
+              record.rotation?.requestId,
+              record.authorization?.requestId,
+              checkedRetry?.binding?.requestId
+            );
+            const replacementProposal = {
+              ...proposal,
+              requestId: replacementRequestId
+            };
+            const next = {
+              ...record,
+              ...(proposal.operation === "register"
+                ? { requestId: replacementRequestId }
+                : {}),
+              ...(proposal.operation === "rotate"
+                ? {
+                    rotation: {
+                      ...record.rotation,
+                      requestId: replacementRequestId
+                    }
+                  }
+                : {}),
+              pendingAuthorization: null,
+              pendingProposal:
+                canonicalMessagingDeviceAuthorizationProposal(replacementProposal),
+              state: pendingState(proposal.operation)
+            };
+            await write(next);
+            await session();
+            return submitAuthorization(replacementProposal, freshPredecessor);
+          }
           await session();
           return publish(record?.state ?? pendingState(proposal.operation));
         } finally {
@@ -805,9 +929,10 @@ export function createMessagingDevice({
           }
           const predecessor = exactPredecessor(current, proposal);
           const fresh = checked !== null && Math.floor(now() / 1000) < checked.expiresAt;
-          return submitAuthorization(proposal, predecessor, {
+          return await submitAuthorization(proposal, predecessor, {
             pendingAuthorization: checked === null ? undefined : record.pendingAuthorization,
-            expiredExactReplay: checked !== null && !fresh
+            expiredExactReplay: checked !== null && !fresh,
+            checkedRetry: checked
           });
         }
 

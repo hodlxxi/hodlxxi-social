@@ -10,6 +10,10 @@ import {
 import {
   canonicalMessagingDeviceAuthorizationProposal
 } from "../web/messaging-device-authorization-v1.mjs";
+import {
+  authorizeMessagingDeviceBinding as authorizeVersionedMessagingDeviceBinding,
+  messagingDeviceAuthorizationFailureKind as versionedAuthorizationFailureKind
+} from "../web/messaging-device-authorization-v1.mjs?v=1.28.1";
 import { renderSecureMessagingAuthenticatedShell } from "../web/secure-messaging-v128.mjs";
 import { normalizeMessagingDeviceSnapshot, normalizeMessagingDeviceResult } from "../src/server/ubid-messaging-device-client.mjs";
 
@@ -102,6 +106,93 @@ const response = (value) => ({
   status: 200, headers: { get: () => "application/json" },
   text: async () => JSON.stringify(value)
 });
+const definitiveExpiredUnacceptedError = async () => {
+  const vectorSubject = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+  const vectorDeviceId = "22".repeat(32);
+  const vectorRequestId = "33".repeat(32);
+  const vectorPublicKey = "09" + "00".repeat(31);
+  const vectorDigest = "70aa19a24077c3365a836f0476660f0132ab7959615d2c8c67ba75afd9071d9c";
+  const vectorEventId = "4fb89f90de1379e47893ad335c4839805be4265767d1972b7281aea2ef2e0ad0";
+  const vectorContent =
+    '{"authorization":{"algorithm":"x25519-v1","bindingExpiresAt":"2026-10-08T22:29:59Z",' +
+    '"bindingRecordSchema":"hodlxxi.social_messaging_device_binding_record.v1",' +
+    '"bindingRecordVersion":1,"bindingValidFrom":"2026-09-08T22:29:59Z",' +
+    '"bindingVersion":1,"deviceId":"' + vectorDeviceId + '","expiresAt":"2026-09-08T22:34:59Z",' +
+    '"issuedAt":"2026-09-08T22:29:59Z","operation":"register","priorBindingId":null,' +
+    '"publicKey":"' + vectorPublicKey + '","requestId":"' + vectorRequestId + '",' +
+    '"schema":"hodlxxi.social_messaging_device_binding_authorization.v1","subject":"' + vectorSubject + '",' +
+    '"version":1},"domain":"HODLXXI_SOCIAL_MESSAGING_DEVICE_BINDING_AUTHORIZATION_V1"}';
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const token = [
+    encode({ alg: "RS256", kid: "service-key", typ: "hodlxxi-device-binding-intent+jwt" }),
+    encode({
+      iss: "https://identity.example", sub: vectorSubject, iat: 1788906599, exp: 1788906899,
+      jti: vectorRequestId,
+      aud: "urn:hodlxxi:ubid:social-messaging-device-binding-authorization-submit:v1",
+      tokenUse: "device_binding_authorization_intent",
+      purpose: "social_messaging_device_binding_authorization_intent_v1",
+      claimType: "lifecycle", action: "register", digest: vectorDigest,
+      eventId: vectorEventId, signatureFormat: "nostr_event_id_bip340_v1"
+    }),
+    "signature"
+  ].join(".");
+  const vectorProposal = {
+    deviceId: vectorDeviceId,
+    expectedBindingId: null,
+    operation: "register",
+    publicKey: vectorPublicKey,
+    requestId: vectorRequestId
+  };
+  const signedEvent = {
+    content: vectorContent,
+    created_at: 1788906599,
+    id: vectorEventId,
+    kind: 27236,
+    pubkey: vectorSubject,
+    sig: "6fb5dcbb6791eaf44bb2fa9282a1db21c702e88db58ab388d974baae4b082ff69" +
+      "cfbfe4eb62fe36a8040fb9de010a1e6a9a2b6232332fac21d2d7a2a7e689570",
+    tags: [
+      ["purpose", "hodlxxi-social-messaging-device-binding-authorization-v1"],
+      ["semantic-digest", vectorDigest],
+      ["request-id", vectorRequestId],
+      ["action", "register"]
+    ]
+  };
+  const retry = {
+    intentToken: token,
+    proposal: canonicalMessagingDeviceAuthorizationProposal(vectorProposal),
+    schema: "hodlxxi.social_messaging_device_binding_authorization_retry.v1",
+    signedEvent,
+    subject: vectorSubject,
+    version: 1
+  };
+  try {
+    await authorizeVersionedMessagingDeviceBinding({
+      subject: vectorSubject,
+      proposal: vectorProposal,
+      expiredPendingAuthorization: retry
+    }, {
+      cryptoImpl: webcrypto,
+      now: () => 1_788_906_899_000,
+      fetchImpl: async () => ({
+        status: 409,
+        headers: { get(name) {
+          return ({
+            "cache-control": "no-store",
+            "content-type": "application/json; charset=utf-8",
+            "referrer-policy": "no-referrer",
+            "x-content-type-options": "nosniff"
+          })[name.toLowerCase()] ?? null;
+        } },
+        text: async () => '{"state":"unavailable"}'
+      })
+    });
+  } catch (caught) {
+    assert.equal(versionedAuthorizationFailureKind(caught), "expired-unaccepted");
+    return caught;
+  }
+  assert.fail("exact definitive response unexpectedly succeeded");
+};
 function harness(options = {}) {
   const events = [], calls = [], views = [], pairs = [], randomArrays = [];
   let stored = options.record;
@@ -729,6 +820,499 @@ for (const operation of ["register", "adopt", "rotate", "revoke"]) {
     });
   }
 }
+
+for (const operation of ["register", "adopt", "rotate", "revoke"]) {
+  test(`definitive expired-unaccepted ${operation} replay replaces only public authorization identity once`, async () => {
+    const replacementPublicKey = "d".repeat(64);
+    const expiredRequestId = operation === "register"
+      ? pending().requestId
+      : operation === "rotate" ? "6".repeat(64) : "7".repeat(64);
+    const expiredProposal = operation === "adopt" ? {
+      bindingId: metadata().bindingId,
+      operation,
+      requestId: expiredRequestId
+    } : {
+      deviceId: pending().deviceId,
+      expectedBindingId: operation === "register" ? null : metadata().bindingId,
+      operation,
+      publicKey: operation === "rotate" ? replacementPublicKey
+        : operation === "revoke" ? null : pending().publicKey,
+      requestId: expiredRequestId
+    };
+    const expiredRetry = publicRetry(expiredProposal, { exact: `expired-${operation}` });
+    const base = operation === "register" ? {
+      ...pending(), authorization: null, rotation: null
+    } : {
+      ...authorized(), ...(operation === "adopt" ? { authorization: null } : {})
+    };
+    const replacementKey = operation === "rotate" ? new TestCryptoKey("private") : null;
+    const record = {
+      ...base,
+      state: operation === "adopt" ? "pending-adopt" : `pending-${operation}`,
+      pendingAuthorization: expiredRetry,
+      pendingProposal: canonicalMessagingDeviceAuthorizationProposal(expiredProposal),
+      rotation: operation === "rotate" ? {
+        privateKey: replacementKey,
+        publicKey: replacementPublicKey,
+        requestId: expiredRequestId
+      } : null
+    };
+    const predecessorPrivateKey = record.privateKey;
+    let accepted = false;
+    const order = [];
+    const h = harness({
+      record,
+      snapshot: () => {
+        order.push("snapshot");
+        if (!accepted) return snapshot(operation === "register" ? [] : [active(record)]);
+        if (operation === "revoke") return snapshot([]);
+        if (operation === "rotate") return snapshot([{
+          ...active(record),
+          bindingId: "4".repeat(64),
+          version: 2,
+          publicKey: replacementPublicKey
+        }]);
+        return snapshot([active(record)]);
+      }
+    });
+    let calls = 0;
+    let signerCalls = 0;
+    let replacementRetry;
+    let replacementProposal;
+    const signer = {
+      signEventForSubject() {
+        order.push("signer");
+        signerCalls += 1;
+      }
+    };
+    const controller = h.make({
+      authorizationEnabled: true,
+      authorizationSigner: signer,
+      async parseAuthorizationRetry(value, { proposal }) {
+        assert.equal(value, expiredRetry);
+        assert.deepEqual(proposal, expiredProposal);
+        return {
+          action: operation,
+          binding: { requestId: record.requestId },
+          bindingId: operation === "rotate" ? "4".repeat(64)
+            : operation === "revoke" ? "5".repeat(64) : metadata().bindingId,
+          expiresAt: Math.floor(now / 1000) - 1,
+          proofId,
+          requestId: expiredRequestId
+        };
+      },
+      async authorizeBinding(input, dependencies) {
+        calls += 1;
+        if (calls === 1) {
+          order.push("expired-exact-replay");
+          assert.equal(input.expiredPendingAuthorization, expiredRetry);
+          assert.equal(dependencies.signer, undefined);
+          throw await definitiveExpiredUnacceptedError();
+        }
+        order.push("replacement-intent");
+        replacementProposal = structuredClone(input.proposal);
+        assert.equal(input.pendingAuthorization, undefined);
+        assert.equal(input.expiredPendingAuthorization, undefined);
+        assert.equal(dependencies.signer, signer);
+        assert.equal(h.stored().pendingAuthorization, null);
+        assert.equal(
+          h.stored().pendingProposal,
+          canonicalMessagingDeviceAuthorizationProposal(replacementProposal)
+        );
+        assert.notEqual(replacementProposal.requestId, expiredRequestId);
+        for (const excluded of [
+          record.requestId,
+          record.rotation?.requestId,
+          record.authorization?.requestId
+        ].filter(Boolean)) assert.notEqual(replacementProposal.requestId, excluded);
+        await dependencies.signer.signEventForSubject();
+        replacementRetry = publicRetry(replacementProposal, { exact: `replacement-${operation}` });
+        await dependencies.persistPending(replacementRetry);
+        order.push("replacement-submit");
+        assert.equal(h.stored().pendingAuthorization, replacementRetry);
+        accepted = true;
+        if (operation === "adopt") return authorizationResult(replacementProposal, {
+          bindingId: metadata().bindingId,
+          bindingOperation: "register",
+          bindingVersion: 1,
+          deviceId: record.deviceId
+        });
+        if (operation === "rotate") return authorizationResult(replacementProposal, {
+          bindingId: "4".repeat(64), bindingOperation: "rotate", bindingVersion: 2
+        });
+        if (operation === "revoke") return authorizationResult(replacementProposal, {
+          active: false, bindingId: "5".repeat(64),
+          bindingOperation: "revoke", bindingVersion: 2
+        });
+        return authorizationResult(replacementProposal);
+      }
+    });
+    assert.equal((await controller.retry()).state,
+      operation === "revoke" ? "revoked" : "ready");
+    assert.equal(calls, 2);
+    assert.equal(signerCalls, 1);
+    assert.equal(h.pairs.length, 0);
+    assert.equal(h.stored().privateKey,
+      operation === "rotate" ? replacementKey : predecessorPrivateKey);
+    if (operation === "rotate") assert.equal(h.stored().publicKey, replacementPublicKey);
+    if (operation === "adopt") assert.deepEqual(h.stored().acceptedBinding, metadata());
+    if (operation === "revoke") {
+      assert.equal(h.stored().state, "revoked");
+      assert.equal(h.stored().privateKey, predecessorPrivateKey);
+      assert.deepEqual(h.stored().acceptedBinding, metadata());
+    }
+    assert.deepEqual(order, [
+      "snapshot",
+      "expired-exact-replay",
+      "snapshot",
+      "replacement-intent",
+      "signer",
+      "replacement-submit",
+      "snapshot"
+    ]);
+  });
+}
+
+test("a second definitive 409 retains the replacement retry and cannot start a third intent", async () => {
+  const record = pending();
+  const expiredProposal = {
+    deviceId: record.deviceId,
+    expectedBindingId: null,
+    operation: "register",
+    publicKey: record.publicKey,
+    requestId: record.requestId
+  };
+  const expiredRetry = publicRetry(expiredProposal, { exact: "expired" });
+  Object.assign(record, {
+    authorization: null,
+    pendingAuthorization: expiredRetry,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal(expiredProposal),
+    rotation: null
+  });
+  const h = harness({ record, snapshot: () => snapshot([]) });
+  let calls = 0;
+  let signerCalls = 0;
+  let replacementRetry;
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() { signerCalls += 1; } },
+    async parseAuthorizationRetry() {
+      return {
+        action: "register", binding: { requestId: record.requestId },
+        bindingId: metadata().bindingId, expiresAt: Math.floor(now / 1000) - 1,
+        proofId, requestId: expiredProposal.requestId
+      };
+    },
+    async authorizeBinding(input, dependencies) {
+      calls += 1;
+      if (calls === 1) throw await definitiveExpiredUnacceptedError();
+      await dependencies.signer.signEventForSubject();
+      replacementRetry = publicRetry(input.proposal, { exact: "replacement" });
+      await dependencies.persistPending(replacementRetry);
+      throw await definitiveExpiredUnacceptedError();
+    }
+  });
+  assert.equal((await controller.retry()).state, "pending-register");
+  assert.equal(calls, 2);
+  assert.equal(signerCalls, 1);
+  assert.equal(h.stored().pendingAuthorization, replacementRetry);
+  assert.notEqual(h.stored().pendingProposal,
+    canonicalMessagingDeviceAuthorizationProposal(expiredProposal));
+  assert.equal(h.stored().pendingAuthorization.proposal, h.stored().pendingProposal);
+});
+
+test("a definitive 409 for a fresh retained intent does not renew in the same action", async () => {
+  const record = pending();
+  const proposal = {
+    deviceId: record.deviceId, expectedBindingId: null, operation: "register",
+    publicKey: record.publicKey, requestId: record.requestId
+  };
+  const retained = publicRetry(proposal, { exact: "fresh" });
+  Object.assign(record, {
+    authorization: null,
+    pendingAuthorization: retained,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+    rotation: null
+  });
+  const h = harness({ record, snapshot: () => snapshot([]) });
+  let calls = 0;
+  let signerCalls = 0;
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() { signerCalls += 1; } },
+    async parseAuthorizationRetry() {
+      return {
+        action: "register", binding: { requestId: record.requestId },
+        bindingId: metadata().bindingId, expiresAt: Math.floor(now / 1000) + 300,
+        proofId, requestId: proposal.requestId
+      };
+    },
+    async authorizeBinding() {
+      calls += 1;
+      throw await definitiveExpiredUnacceptedError();
+    }
+  });
+  assert.equal((await controller.retry()).state, "pending-register");
+  assert.equal(calls, 1);
+  assert.equal(signerCalls, 0);
+  assert.equal(h.stored().pendingAuthorization, retained);
+  assert.equal(h.stored().pendingProposal,
+    canonicalMessagingDeviceAuthorizationProposal(proposal));
+});
+
+for (const failure of ["503", "timeout", "malformed-response"]) {
+  test(`${failure} after replacement preserves the new exact retry without another renewal`, async () => {
+    const record = pending();
+    const expiredProposal = {
+      deviceId: record.deviceId, expectedBindingId: null, operation: "register",
+      publicKey: record.publicKey, requestId: record.requestId
+    };
+    const expiredRetry = publicRetry(expiredProposal, { exact: "expired" });
+    Object.assign(record, {
+      authorization: null,
+      pendingAuthorization: expiredRetry,
+      pendingProposal: canonicalMessagingDeviceAuthorizationProposal(expiredProposal),
+      rotation: null
+    });
+    const h = harness({ record, snapshot: () => snapshot([]) });
+    let calls = 0;
+    let signerCalls = 0;
+    let replacementRetry;
+    const controller = h.make({
+      authorizationEnabled: true,
+      authorizationSigner: { signEventForSubject() { signerCalls += 1; } },
+      async parseAuthorizationRetry() {
+        return {
+          action: "register", binding: { requestId: record.requestId },
+          bindingId: metadata().bindingId, expiresAt: Math.floor(now / 1000) - 1,
+          proofId, requestId: expiredProposal.requestId
+        };
+      },
+      async authorizeBinding(input, dependencies) {
+        calls += 1;
+        if (calls === 1) throw await definitiveExpiredUnacceptedError();
+        await dependencies.signer.signEventForSubject();
+        replacementRetry = publicRetry(input.proposal, { exact: failure });
+        await dependencies.persistPending(replacementRetry);
+        throw new Error("messaging device authorization unavailable");
+      }
+    });
+    assert.equal((await controller.retry()).state, "pending-register");
+    assert.equal(calls, 2);
+    assert.equal(signerCalls, 1);
+    assert.equal(h.stored().pendingAuthorization, replacementRetry);
+    assert.equal(h.stored().pendingAuthorization.proposal, h.stored().pendingProposal);
+    assert.notEqual(h.stored().pendingProposal,
+      canonicalMessagingDeviceAuthorizationProposal(expiredProposal));
+  });
+}
+
+test("cancellation during replacement submission retains the new signed retry", async () => {
+  const record = pending();
+  const expiredProposal = {
+    deviceId: record.deviceId, expectedBindingId: null, operation: "register",
+    publicKey: record.publicKey, requestId: record.requestId
+  };
+  const expiredRetry = publicRetry(expiredProposal, { exact: "expired" });
+  Object.assign(record, {
+    authorization: null,
+    pendingAuthorization: expiredRetry,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal(expiredProposal),
+    rotation: null
+  });
+  const entered = deferred();
+  const h = harness({ record, snapshot: () => snapshot([]) });
+  let calls = 0;
+  let signerCalls = 0;
+  let replacementRetry;
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() { signerCalls += 1; } },
+    async parseAuthorizationRetry() {
+      return {
+        action: "register", binding: { requestId: record.requestId },
+        bindingId: metadata().bindingId, expiresAt: Math.floor(now / 1000) - 1,
+        proofId, requestId: expiredProposal.requestId
+      };
+    },
+    async authorizeBinding(input, dependencies) {
+      calls += 1;
+      if (calls === 1) throw await definitiveExpiredUnacceptedError();
+      await dependencies.signer.signEventForSubject();
+      replacementRetry = publicRetry(input.proposal, { exact: "replacement-cancelled" });
+      await dependencies.persistPending(replacementRetry);
+      entered.resolve();
+      return new Promise((resolve, reject) => {
+        dependencies.signal.addEventListener("abort", () => reject(new Error("cancelled")));
+      });
+    }
+  });
+  const work = controller.retry();
+  await entered.promise;
+  controller.cancel();
+  assert.equal((await work).state, "unavailable");
+  assert.equal(calls, 2);
+  assert.equal(signerCalls, 1);
+  assert.equal(h.stored().pendingAuthorization, replacementRetry);
+  assert.equal(h.stored().pendingAuthorization.proposal, h.stored().pendingProposal);
+});
+
+for (const operation of ["register", "adopt", "rotate", "revoke"]) {
+  test(`${operation} state change after definitive 409 fails before replacement intent or signer`, async () => {
+    const replacementPublicKey = "d".repeat(64);
+    const expiredRequestId = operation === "register"
+      ? pending().requestId : operation === "rotate" ? "6".repeat(64) : "7".repeat(64);
+    const expiredProposal = operation === "adopt" ? {
+      bindingId: metadata().bindingId, operation, requestId: expiredRequestId
+    } : {
+      deviceId: pending().deviceId,
+      expectedBindingId: operation === "register" ? null : metadata().bindingId,
+      operation,
+      publicKey: operation === "rotate" ? replacementPublicKey
+        : operation === "revoke" ? null : pending().publicKey,
+      requestId: expiredRequestId
+    };
+    const base = operation === "register"
+      ? { ...pending(), authorization: null }
+      : { ...authorized(), ...(operation === "adopt" ? { authorization: null } : {}) };
+    const record = {
+      ...base,
+      state: operation === "adopt" ? "pending-adopt" : `pending-${operation}`,
+      pendingAuthorization: publicRetry(expiredProposal),
+      pendingProposal: canonicalMessagingDeviceAuthorizationProposal(expiredProposal),
+      rotation: operation === "rotate" ? {
+        privateKey: new TestCryptoKey("private"),
+        publicKey: replacementPublicKey,
+        requestId: expiredRequestId
+      } : null
+    };
+    let snapshots = 0;
+    const h = harness({
+      record,
+      snapshot: () => {
+        snapshots += 1;
+        if (snapshots === 1) return snapshot(operation === "register" ? [] : [active(record)]);
+        return snapshot(operation === "register" ? [active(record)] : []);
+      }
+    });
+    let calls = 0;
+    let signerCalls = 0;
+    const controller = h.make({
+      authorizationEnabled: true,
+      authorizationSigner: { signEventForSubject() { signerCalls += 1; } },
+      async parseAuthorizationRetry() {
+        return {
+          action: operation, binding: { requestId: record.requestId },
+          bindingId: metadata().bindingId, expiresAt: Math.floor(now / 1000) - 1,
+          proofId, requestId: expiredRequestId
+        };
+      },
+      async authorizeBinding() {
+        calls += 1;
+        throw await definitiveExpiredUnacceptedError();
+      }
+    });
+    assert.equal((await controller.retry()).state, "unavailable");
+    assert.equal(calls, 1);
+    assert.equal(signerCalls, 0);
+    assert.equal(h.stored().pendingAuthorization.proposal,
+      canonicalMessagingDeviceAuthorizationProposal(expiredProposal));
+  });
+}
+
+test("cross-tab update after definitive 409 blocks replacement overwrite before signer", async () => {
+  const record = pending();
+  const expiredProposal = {
+    deviceId: record.deviceId, expectedBindingId: null, operation: "register",
+    publicKey: record.publicKey, requestId: record.requestId
+  };
+  const expiredRetry = publicRetry(expiredProposal);
+  Object.assign(record, {
+    authorization: null,
+    pendingAuthorization: expiredRetry,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal(expiredProposal),
+    rotation: null
+  });
+  let blockReplacement = false;
+  const h = harness({
+    record,
+    snapshot: () => snapshot([]),
+    update(candidate) {
+      if (blockReplacement && candidate.pendingAuthorization === null) {
+        throw new Error("stale compare-and-swap revision");
+      }
+    }
+  });
+  let calls = 0;
+  let signerCalls = 0;
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() { signerCalls += 1; } },
+    async parseAuthorizationRetry() {
+      return {
+        action: "register", binding: { requestId: record.requestId },
+        bindingId: metadata().bindingId, expiresAt: Math.floor(now / 1000) - 1,
+        proofId, requestId: record.requestId
+      };
+    },
+    async authorizeBinding() {
+      calls += 1;
+      blockReplacement = true;
+      throw await definitiveExpiredUnacceptedError();
+    }
+  });
+  assert.equal((await controller.retry()).state, "unavailable");
+  assert.equal(calls, 1);
+  assert.equal(signerCalls, 0);
+  assert.equal(h.stored().pendingAuthorization, expiredRetry);
+  assert.equal(h.stored().pendingProposal,
+    canonicalMessagingDeviceAuthorizationProposal(expiredProposal));
+});
+
+test("authenticated subject change after definitive 409 stops before replacement intent and signer", async () => {
+  const record = pending();
+  const proposal = {
+    deviceId: record.deviceId, expectedBindingId: null, operation: "register",
+    publicKey: record.publicKey, requestId: record.requestId
+  };
+  const retained = publicRetry(proposal);
+  Object.assign(record, {
+    authorization: null,
+    pendingAuthorization: retained,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+    rotation: null
+  });
+  let sessionReads = 0;
+  const h = harness({
+    record,
+    snapshot: () => snapshot([]),
+    session: () => {
+      sessionReads += 1;
+      if (sessionReads === 4) h.setSubject(secondSubject);
+    }
+  });
+  let calls = 0;
+  let signerCalls = 0;
+  const controller = h.make({
+    authorizationEnabled: true,
+    authorizationSigner: { signEventForSubject() { signerCalls += 1; } },
+    async parseAuthorizationRetry() {
+      return {
+        action: "register", binding: { requestId: record.requestId },
+        bindingId: metadata().bindingId, expiresAt: Math.floor(now / 1000) - 1,
+        proofId, requestId: proposal.requestId
+      };
+    },
+    async authorizeBinding() {
+      calls += 1;
+      throw await definitiveExpiredUnacceptedError();
+    }
+  });
+  assert.equal((await controller.retry()).state, "unavailable");
+  assert.equal(calls, 1);
+  assert.equal(signerCalls, 0);
+  assert.equal(h.stored().pendingAuthorization, retained);
+});
 
 for (const operation of ["register", "adopt", "rotate", "revoke"]) {
   for (const failure of [
@@ -1412,6 +1996,122 @@ test("native store CAS blocks stale retry overwrite and stale retry clearing", a
   assert.deepEqual(retained.pendingAuthorization, firstRetry);
   assert.equal(retained.state, "pending-register");
 });
+
+test("native store atomically renews an expired public proposal and rejects a stale competing tab", async () => {
+  const idb = idbHarness();
+  const store = createMessagingDeviceStore(idb.factory);
+  const pair = await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const oldProposal = {
+    deviceId: pending().deviceId,
+    expectedBindingId: null,
+    operation: "register",
+    publicKey: pending().publicKey,
+    requestId: pending().requestId
+  };
+  const oldRetry = publicRetry(oldProposal, { exact: "expired" });
+  const record = {
+    ...pending(),
+    privateKey: pair.privateKey,
+    authorization: null,
+    pendingAuthorization: oldRetry,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal(oldProposal),
+    rotation: null
+  };
+  await store.create(record);
+  const staleBase = await store.read();
+  const replacementRequestId = "9".repeat(64);
+  const replacementProposal = { ...oldProposal, requestId: replacementRequestId };
+  await store.update({
+    ...staleBase,
+    requestId: replacementRequestId,
+    pendingAuthorization: null,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal(replacementProposal)
+  }, staleBase);
+  const renewed = await store.read();
+  assert.equal(renewed.privateKey.extractable, false);
+  assert.equal(renewed.publicKey, record.publicKey);
+  assert.equal(renewed.requestId, replacementRequestId);
+  assert.equal(renewed.pendingAuthorization, null);
+
+  const staleRequestId = "8".repeat(64);
+  await assert.rejects(store.update({
+    ...staleBase,
+    requestId: staleRequestId,
+    pendingAuthorization: null,
+    pendingProposal: canonicalMessagingDeviceAuthorizationProposal({
+      ...oldProposal,
+      requestId: staleRequestId
+    })
+  }, staleBase), /device store unavailable/);
+  assert.equal((await store.read()).requestId, replacementRequestId);
+
+  const replacementRetry = publicRetry(replacementProposal, { exact: "replacement" });
+  await store.update({ ...renewed, pendingAuthorization: replacementRetry }, renewed);
+  assert.deepEqual((await store.read()).pendingAuthorization, replacementRetry);
+});
+
+for (const operation of ["adopt", "rotate", "revoke"]) {
+  test(`native store permits only the exact CAS public renewal transition for ${operation}`, async () => {
+    const idb = idbHarness();
+    const store = createMessagingDeviceStore(idb.factory);
+    const predecessor = await webcrypto.subtle.generateKey(
+      { name: "X25519" }, false, ["deriveBits"]
+    );
+    const replacement = operation === "rotate"
+      ? await webcrypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])
+      : null;
+    const oldRequestId = operation === "rotate" ? "6".repeat(64) : "7".repeat(64);
+    const replacementPublicKey = "d".repeat(64);
+    const oldProposal = operation === "adopt" ? {
+      bindingId: metadata().bindingId,
+      operation,
+      requestId: oldRequestId
+    } : {
+      deviceId: pending().deviceId,
+      expectedBindingId: metadata().bindingId,
+      operation,
+      publicKey: operation === "rotate" ? replacementPublicKey : null,
+      requestId: oldRequestId
+    };
+    const record = {
+      ...authorized(),
+      ...(operation === "adopt" ? { authorization: null } : {}),
+      privateKey: predecessor.privateKey,
+      state: operation === "adopt" ? "pending-adopt" : `pending-${operation}`,
+      pendingAuthorization: publicRetry(oldProposal),
+      pendingProposal: canonicalMessagingDeviceAuthorizationProposal(oldProposal),
+      rotation: operation === "rotate" ? {
+        privateKey: replacement.privateKey,
+        publicKey: replacementPublicKey,
+        requestId: oldRequestId
+      } : null
+    };
+    await store.create(record);
+    const old = await store.read();
+    const replacementRequestId = "9".repeat(64);
+    const newProposal = { ...oldProposal, requestId: replacementRequestId };
+    await store.update({
+      ...old,
+      ...(operation === "rotate" ? {
+        rotation: { ...old.rotation, requestId: replacementRequestId }
+      } : {}),
+      pendingAuthorization: null,
+      pendingProposal: canonicalMessagingDeviceAuthorizationProposal(newProposal)
+    }, old);
+    const renewed = await store.read();
+    assert.equal(renewed.privateKey.extractable, false);
+    assert.equal(renewed.publicKey, record.publicKey);
+    assert.equal(renewed.acceptedBinding.bindingId, metadata().bindingId);
+    assert.equal(renewed.pendingAuthorization, null);
+    assert.equal(renewed.pendingProposal,
+      canonicalMessagingDeviceAuthorizationProposal(newProposal));
+    if (operation === "rotate") {
+      assert.equal(renewed.rotation.privateKey.extractable, false);
+      assert.equal(renewed.rotation.publicKey, replacementPublicKey);
+      assert.equal(renewed.rotation.requestId, replacementRequestId);
+    }
+  });
+}
 
 test("neither localStorage nor sessionStorage is accessed during setup or reconciliation", async () => {
   const names = ["localStorage", "sessionStorage"];
