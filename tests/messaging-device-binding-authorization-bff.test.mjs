@@ -99,6 +99,7 @@ const fixture = ({
   enabled = true,
   intentValue = intent,
   authorizationValue = result,
+  authorizationFailure,
   now = () => 1_788_906_599_000
 } = {}) => {
   const sessions = createBoundedStore({ ttlSeconds: 3600, capacity: 10, now: () => 0 });
@@ -115,7 +116,11 @@ const fixture = ({
   };
   const messagingDeviceAuthorizationClient = enabled ? {
     async createIntentForViewer(value) { calls.push(["intent", value]); return structuredClone(intentValue); },
-    async authorizeForViewer(value) { calls.push(["authorize", value]); return structuredClone(authorizationValue); }
+    async authorizeForViewer(value) {
+      calls.push(["authorize", value]);
+      if (authorizationFailure !== undefined) throw authorizationFailure;
+      return structuredClone(authorizationValue);
+    }
   } : undefined;
   const config = {
     publicOrigin: "https://social.example",
@@ -247,6 +252,35 @@ test("malformed authorization result and conflicting UBID retry stay generic", a
   assert.doesNotMatch(response.body, new RegExp(subject));
 });
 
+test("real BFF collapses every ambiguous authorization-client failure to the same 503", async () => {
+  const cases = [
+    ["upstream non-200", { authorizationFailure: new Error("upstream rejected") }],
+    ["socket loss", { authorizationFailure: new Error("socket reset") }],
+    ["timeout", { authorizationFailure: new Error("timeout") }],
+    ["service-token failure", { authorizationFailure: new Error("token unavailable") }],
+    ["response loss", { authorizationFailure: new Error("response closed") }],
+    ["malformed response", { authorizationValue: { accepted: true } }]
+  ];
+  for (const [label, options] of cases) {
+    const { bff, calls, cookie } = fixture(options);
+    const response = await bff({
+      method: "POST",
+      url: SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
+      headers: {
+        cookie,
+        origin: "https://social.example",
+        "content-type": "application/json",
+        "x-hodlxxi-device-binding-intent": intentToken
+      },
+      body: signedEventPayload
+    });
+    assert.equal(response.status, 503, label);
+    assert.deepEqual(JSON.parse(response.body), { state: "unavailable" }, label);
+    assert.equal(calls.filter(([kind]) => kind === "authorize").length, 1, label);
+    assert.equal(calls.filter(([kind]) => kind === "intent").length, 0, label);
+  }
+});
+
 test("enabled authorization blocks the legacy unsigned mutation path", async () => {
   const { bff, calls, cookie } = fixture();
   const response = await bff({
@@ -328,8 +362,9 @@ const keyHandle = {
   async close() {}
 };
 
-test("UBID client uses exact dedicated routes, scope, headers, and flattened final payload", async () => {
+test("UBID client uses exact routes and forwards a locally expired exact submission to UBID", async () => {
   const calls = [];
+  let clientNow = 1_788_906_599_000;
   const requestImpl = (options, callback) => {
     const outgoing = new EventEmitter();
     outgoing.destroy = () => {};
@@ -357,7 +392,7 @@ test("UBID client uses exact dedicated routes, scope, headers, and flattened fin
     openFileImpl: async () => keyHandle,
     createPrivateKeyImpl: () => ({ type: "private", asymmetricKeyType: "rsa",
       asymmetricKeyDetails: { modulusLength: 2048 } }),
-    now: () => 1_788_906_599_000,
+    now: () => clientNow,
     random: () => Buffer.alloc(32, 7),
     signImpl: () => Buffer.from("signature"),
     cryptoImpl: webcrypto
@@ -365,6 +400,7 @@ test("UBID client uses exact dedicated routes, scope, headers, and flattened fin
   assert.equal((await client.createIntentForViewer({
     viewerAccessToken, expectedSubject: subject, proposalPayload
   })).intentToken, intentToken);
+  clientNow = 1_788_906_899_000;
   const received = await client.authorizeForViewer({
     viewerAccessToken, expectedSubject: subject, intentToken, signedEventPayload
   });

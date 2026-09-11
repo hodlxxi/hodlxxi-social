@@ -1107,7 +1107,7 @@ export async function createUbidMessagingDeviceAuthorizationClient(
         subject: expectedSubject,
         intentToken,
         signedEvent
-      }, { cryptoImpl, now });
+      }, { cryptoImpl, now, allowExpiredExactReplay: true });
       const token = await serviceToken();
       if (token === viewerAccessToken || token === intentToken) failure();
       const value = await unixJsonRequest({
@@ -1125,7 +1125,7 @@ export async function createUbidMessagingDeviceAuthorizationClient(
       return parseMessagingDeviceAuthorizationResult(
         value,
         { subject: expectedSubject, intentToken, signedEvent },
-        { cryptoImpl, now }
+        { cryptoImpl, now, allowExpiredExactReplay: true }
       );
     }
   });

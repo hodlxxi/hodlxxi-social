@@ -8,7 +8,9 @@ import {
   canonicalMessagingDeviceAuthorizationProposal,
   composeMessagingDeviceAuthorizationPayload,
   createNip07MessagingDeviceSigner,
+  messagingDeviceAuthorizationFailureKind,
   parseMessagingDeviceAuthorizationIntent,
+  parseMessagingDeviceAuthorizationResult,
   parseMessagingDeviceAuthorizationRetry,
   signMessagingDeviceAuthorizationIntent
 } from "../web/messaging-device-authorization-v1.mjs";
@@ -203,6 +205,19 @@ test("authoritative UBID rotate revoke and adoption carrier vectors verify byte-
     }, domain: "HODLXXI_SOCIAL_MESSAGING_DEVICE_BINDING_ADOPTION_V1" }
   });
   for (const vector of vectors) {
+    const vectorClaim = vector.claimType === "lifecycle"
+      ? vector.envelope.authorization : vector.envelope.adoption;
+    const vectorProposal = vector.action === "adopt" ? {
+      bindingId: vectorClaim.bindingId,
+      operation: "adopt",
+      requestId: vector.requestId
+    } : {
+      deviceId: vectorClaim.deviceId,
+      expectedBindingId: vector.action === "register" ? null : vectorClaim.priorBindingId,
+      operation: vector.action,
+      publicKey: vector.action === "revoke" ? null : vectorClaim.publicKey,
+      requestId: vector.requestId
+    };
     const vectorContent = canonicalMessagingDeviceJson(vector.envelope);
     const vectorTags = [
       ["purpose", "hodlxxi-social-messaging-device-binding-authorization-v1"],
@@ -233,7 +248,7 @@ test("authoritative UBID rotate revoke and adoption carrier vectors verify byte-
       version: 1
     };
     const parsed = await parseMessagingDeviceAuthorizationIntent(vectorIntent, {
-      subject, cryptoImpl: webcrypto, now: () => 1_788_906_600_000
+      subject, proposal: vectorProposal, cryptoImpl: webcrypto, now: () => 1_788_906_600_000
     });
     assert.equal(parsed.digest, vector.digest);
     assert.equal(parsed.eventId, vector.eventId);
@@ -248,6 +263,53 @@ test("authoritative UBID rotate revoke and adoption carrier vectors verify byte-
       }
     }, { cryptoImpl: webcrypto, now: () => 1_788_906_600_000 });
     assert.equal(JSON.parse(payload).signature, vector.signature);
+    const vectorSignedEvent = {
+      ...vectorIntent.unsignedEvent,
+      id: vector.eventId,
+      pubkey: subject,
+      sig: vector.signature
+    };
+    const expiredResult = {
+      action: vector.action,
+      active: parsed.binding.operation !== "revoke",
+      authorizationExpiresAt: parsed.binding.expiresAt,
+      authorizationProofId: "hodlxxi-binding-authorization-v1-sha256:" + vector.digest,
+      authorizationValidFrom: vectorClaim.issuedAt,
+      bindingId: parsed.bindingId,
+      bindingOperation: parsed.binding.operation,
+      bindingVersion: parsed.binding.bindingVersion,
+      deviceId: parsed.binding.deviceId,
+      expiresAt: parsed.binding.expiresAt,
+      requestId: vector.requestId,
+      schema: "hodlxxi.social_messaging_device_binding_authorization_result.v1",
+      validFrom: parsed.binding.validFrom,
+      version: 1
+    };
+    const expiredOptions = {
+      cryptoImpl: webcrypto,
+      now: () => 1_788_906_900_000,
+      allowExpiredExactReplay: true
+    };
+    assert.deepEqual(await parseMessagingDeviceAuthorizationResult(
+      expiredResult,
+      {
+        subject,
+        proposal: vectorProposal,
+        intentToken: vectorToken,
+        signedEvent: vectorSignedEvent
+      },
+      expiredOptions
+    ), expiredResult);
+    await assert.rejects(parseMessagingDeviceAuthorizationResult(
+      expiredResult,
+      {
+        subject,
+        proposal: vectorProposal,
+        intentToken: vectorToken,
+        signedEvent: vectorSignedEvent
+      },
+      { cryptoImpl: webcrypto, now: () => 1_788_906_900_000 }
+    ), /authorization unavailable/);
   }
 });
 
@@ -430,6 +492,155 @@ test("signed public retry material persists before submit and retries exactly wi
   ]);
   assert.equal(retryCalls[0][1].headers["X-HODLXXI-Device-Binding-Intent"], intentToken);
   assert.equal(retryCalls[0][1].body, canonicalMessagingDeviceJson(signedEvent));
+});
+
+test("expired persisted exact replay reuses its token and event and validates canonical success", async () => {
+  const proposal = {
+    operation: "register", deviceId, publicKey, expectedBindingId: null, requestId
+  };
+  const retained = {
+    intentToken,
+    proposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+    schema: "hodlxxi.social_messaging_device_binding_authorization_retry.v1",
+    signedEvent,
+    subject,
+    version: 1
+  };
+  const calls = [];
+  let signerReads = 0;
+  const signer = {};
+  Object.defineProperty(signer, "signEventForSubject", {
+    get() { signerReads += 1; throw new Error("must not read signer"); }
+  });
+  const expiredNow = () => 1_788_906_899_000;
+  const received = await authorizeMessagingDeviceBinding({
+    subject, proposal, expiredPendingAuthorization: retained
+  }, {
+    signer,
+    cryptoImpl: webcrypto,
+    now: expiredNow,
+    fetchImpl: async (url, init) => {
+      calls.push([url, init]);
+      return response(registerAuthorizationResult());
+    }
+  });
+  assert.deepEqual(received, registerAuthorizationResult());
+  assert.equal(signerReads, 0);
+  assert.deepEqual(calls.map(([url]) => url), [
+    "/auth/messaging-device-binding-authorizations"
+  ]);
+  assert.equal(calls[0][1].headers["X-HODLXXI-Device-Binding-Intent"], intentToken);
+  assert.equal(calls[0][1].body, canonicalMessagingDeviceJson(signedEvent));
+
+  await assert.rejects(composeMessagingDeviceAuthorizationPayload(
+    { subject, intentToken, signedEvent },
+    { cryptoImpl: webcrypto, now: expiredNow }
+  ), /authorization unavailable/);
+  await assert.rejects(parseMessagingDeviceAuthorizationResult(
+    registerAuthorizationResult(),
+    { subject, proposal, intentToken, signedEvent },
+    { cryptoImpl: webcrypto, now: expiredNow }
+  ), /authorization unavailable/);
+  for (const field of [
+    "action", "active", "authorizationExpiresAt", "authorizationProofId",
+    "authorizationValidFrom", "bindingId", "bindingOperation", "bindingVersion",
+    "deviceId", "expiresAt", "requestId", "validFrom"
+  ]) {
+    const tampered = registerAuthorizationResult();
+    tampered[field] = field === "active" ? false : field === "bindingVersion" ? 2 : "0".repeat(64);
+    await assert.rejects(parseMessagingDeviceAuthorizationResult(
+      tampered,
+      { subject, proposal, intentToken, signedEvent },
+      { cryptoImpl: webcrypto, now: expiredNow, allowExpiredExactReplay: true }
+    ), /authorization unavailable/, field);
+  }
+});
+
+test("expired exact-replay mode preserves every non-time retry validation", async () => {
+  const proposal = {
+    operation: "register", deviceId, publicKey, expectedBindingId: null, requestId
+  };
+  const retained = {
+    intentToken,
+    proposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+    schema: "hodlxxi.social_messaging_device_binding_authorization_retry.v1",
+    signedEvent,
+    subject,
+    version: 1
+  };
+  const mutations = [
+    (value) => { value.subject = "b".repeat(64); },
+    (value) => { value.proposal = value.proposal.replace(deviceId, "f".repeat(64)); },
+    (value) => { value.intentToken = makeIntentToken({ jti: "4".repeat(64) }); },
+    (value) => { value.intentToken = makeIntentToken({ action: "rotate" }); },
+    (value) => { value.intentToken = makeIntentToken({ digest: "0".repeat(64) }); },
+    (value) => { value.intentToken = makeIntentToken({ eventId: "0".repeat(64) }); },
+    (value) => { value.signedEvent.tags.reverse(); },
+    (value) => { value.signedEvent.id = "0".repeat(64); },
+    (value) => { value.signedEvent.sig = "0".repeat(128); },
+    (value) => { value.extra = true; }
+  ];
+  let networkCalls = 0, signerReads = 0;
+  const signer = {};
+  Object.defineProperty(signer, "signEventForSubject", {
+    get() { signerReads += 1; throw new Error("must not inspect signer"); }
+  });
+  for (const mutate of mutations) {
+    const candidate = structuredClone(retained);
+    mutate(candidate);
+    await assert.rejects(authorizeMessagingDeviceBinding({
+      subject, proposal, expiredPendingAuthorization: candidate
+    }, {
+      signer,
+      cryptoImpl: webcrypto,
+      now: () => 1_788_906_899_000,
+      fetchImpl: async () => { networkCalls += 1; return response(registerAuthorizationResult()); }
+    }), /authorization unavailable/);
+  }
+  assert.equal(networkCalls, 0);
+  assert.equal(signerReads, 0);
+});
+
+test("authorization failures stay generic and every HTTP 5xx is ambiguous", async () => {
+  const proposal = {
+    operation: "register", deviceId, publicKey, expectedBindingId: null, requestId
+  };
+  const retained = {
+    intentToken,
+    proposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+    schema: "hodlxxi.social_messaging_device_binding_authorization_retry.v1",
+    signedEvent,
+    subject,
+    version: 1
+  };
+  const cases = [
+    ["ambiguous", async () => { throw new Error("network detail"); }],
+    ["ambiguous", async () => ({ status: 500, headers: { get: () => "application/json" } })],
+    ["ambiguous", async () => ({ status: 503, headers: { get: () => "application/json" } })],
+    ["ambiguous", async () => ({ status: 599, headers: { get: () => "application/json" } })],
+    ["ambiguous", async () => ({
+      status: 200,
+      headers: { get: () => "application/json" },
+      text: async () => { throw new Error("response lost"); }
+    })],
+    ["rejected", async () => ({ status: 400, headers: { get: () => "application/json" } })],
+    ["malformed", async () => response({ accepted: true })],
+    ["malformed", async () => ({ status: 0 })]
+  ];
+  for (const [kind, fetchImpl] of cases) {
+    let caught;
+    try {
+      await authorizeMessagingDeviceBinding({ subject, proposal, pendingAuthorization: retained }, {
+        cryptoImpl: webcrypto,
+        now: vectorNow,
+        fetchImpl
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert.equal(caught?.message, "messaging device authorization unavailable", kind);
+    assert.equal(messagingDeviceAuthorizationFailureKind(caught), kind, kind);
+  }
 });
 
 test("expired cancelled subject-changed and tampered retry material never submits or signs", async () => {

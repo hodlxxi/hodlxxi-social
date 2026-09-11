@@ -615,14 +615,50 @@ export function createMessagingDevice({
       };
       const pendingState = (operation) => operation === "adopt"
         ? "pending-adopt" : `pending-${operation}`;
-      const submitAuthorization = async (proposal, currentBinding, pendingAuthorization) => {
+      const reconcileRetainedAuthorization = async (snapshot, proposal, checked) => {
+        const marker = markerFromRetry(checked);
+        if (proposal.operation === "register") {
+          const binding = exactBinding(snapshot, {
+            deviceId: record.deviceId, publicKey: record.publicKey,
+            bindingId: checked.bindingId
+          });
+          if (binding) return finalizeReady(binding, marker);
+        } else if (proposal.operation === "rotate") {
+          const binding = acceptedRotationBinding(snapshot, record, checked.bindingId);
+          if (binding) return finalizeReady(binding, marker, { promoteRotation: true });
+        } else if (proposal.operation === "revoke" &&
+          relatedBindings(snapshot, record.deviceId, record.publicKey).length === 0) {
+          return finalizeRevoked(marker);
+        }
+        return null;
+      };
+      const exactPredecessor = (snapshot, proposal) => {
+        if (proposal.operation === "register") return null;
+        const predecessor = exactBinding(snapshot, {
+          deviceId: record.deviceId, publicKey: record.publicKey,
+          acceptedBinding: record.acceptedBinding
+        });
+        if (!predecessor) unavailable();
+        return predecessor;
+      };
+      const submitAuthorization = async (
+        proposal,
+        currentBinding,
+        { pendingAuthorization, expiredExactReplay = false } = {}
+      ) => {
         const controller = new AbortController();
         requestController = controller;
         try {
           const result = await authorizeBinding(
-            { subject, proposal, ...(pendingAuthorization ? { pendingAuthorization } : {}) },
             {
-              signer: pendingAuthorization ? undefined : authorizationSigner,
+              subject,
+              proposal,
+              ...(pendingAuthorization === undefined ? {} : expiredExactReplay
+                ? { expiredPendingAuthorization: pendingAuthorization }
+                : { pendingAuthorization })
+            },
+            {
+              signer: pendingAuthorization === undefined ? authorizationSigner : undefined,
               fetchImpl,
               cryptoImpl,
               now,
@@ -636,7 +672,7 @@ export function createMessagingDevice({
                   state: pendingState(proposal.operation)
                 });
                 if (canonicalMessagingDeviceJson(record.pendingAuthorization) !==
-                    canonicalMessagingDeviceJson(value)) unavailable();
+                  canonicalMessagingDeviceJson(value)) unavailable();
               }
             }
           );
@@ -757,37 +793,22 @@ export function createMessagingDevice({
             checked = await parseAuthorizationRetry(
               record.pendingAuthorization,
               { subject, proposal },
-              { cryptoImpl, now, allowExpired: true }
+              { cryptoImpl, now, allowExpiredExactReplay: true }
             );
-            const marker = markerFromRetry(checked);
-            if (proposal.operation === "register") {
-              const binding = exactBinding(current, {
-                deviceId: record.deviceId, publicKey: record.publicKey,
-                bindingId: checked.bindingId
-              });
-              if (binding) return finalizeReady(binding, marker);
-            } else if (proposal.operation === "rotate") {
-              const binding = acceptedRotationBinding(current, record, checked.bindingId);
-              if (binding) return finalizeReady(binding, marker, { promoteRotation: true });
-            } else if (proposal.operation === "revoke") {
-              if (relatedBindings(current, record.deviceId, record.publicKey).length === 0) {
-                return finalizeRevoked(marker);
-              }
-            }
+            const finalized = await reconcileRetainedAuthorization(current, proposal, checked);
+            if (finalized !== null) return finalized;
           }
           const continuesUnsignedInitialAction = record.pendingAuthorization === null &&
             explicitAction === (proposal.operation === "adopt" ? "adopt" : proposal.operation);
           if (explicitAction !== "retry" && !continuesUnsignedInitialAction) {
             return publish(record.state);
           }
-          const predecessor = proposal.operation === "register" ? null : exactBinding(current, {
-            deviceId: record.deviceId, publicKey: record.publicKey,
-            acceptedBinding: record.acceptedBinding
-          });
-          if (proposal.operation !== "register" && !predecessor) unavailable();
+          const predecessor = exactPredecessor(current, proposal);
           const fresh = checked !== null && Math.floor(now() / 1000) < checked.expiresAt;
-          return submitAuthorization(proposal,
-            predecessor, fresh ? record.pendingAuthorization : undefined);
+          return submitAuthorization(proposal, predecessor, {
+            pendingAuthorization: checked === null ? undefined : record.pendingAuthorization,
+            expiredExactReplay: checked !== null && !fresh
+          });
         }
 
         // Compatibility recovery for a pre-fix revoke that persisted only its

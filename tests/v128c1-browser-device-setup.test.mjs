@@ -652,9 +652,11 @@ for (const operation of ["register", "adopt", "rotate", "revoke"]) {
         } : null
       };
       let completed = false, submissions = 0, signerCalls = 0;
+      const authorizationOrder = [];
       const h = harness({
         record,
         snapshot: () => {
+          authorizationOrder.push("snapshot");
           if (!completed) return snapshot(operation === "register" ? [] : [active(record)]);
           if (operation === "revoke") return snapshot([]);
           if (operation === "rotate") return snapshot([{
@@ -681,18 +683,17 @@ for (const operation of ["register", "adopt", "rotate", "revoke"]) {
           };
         },
         async authorizeBinding(input, authorizationDependencies) {
+          authorizationOrder.push("submit");
           submissions += 1;
           assert.deepEqual(input.proposal, proposal);
           if (freshness === "fresh") {
             assert.equal(input.pendingAuthorization, retainedRetry);
+            assert.equal(input.expiredPendingAuthorization, undefined);
             assert.equal(authorizationDependencies.signer, undefined);
           } else {
             assert.equal(input.pendingAuthorization, undefined);
-            assert.equal(authorizationDependencies.signer, signer);
-            authorizationDependencies.signer.signEventForSubject();
-            await authorizationDependencies.persistPending(
-              publicRetry(proposal, { replacement: `${operation}-retry` })
-            );
+            assert.equal(input.expiredPendingAuthorization, retainedRetry);
+            assert.equal(authorizationDependencies.signer, undefined);
           }
           completed = true;
           if (operation === "adopt") return authorizationResult(proposal, {
@@ -717,13 +718,123 @@ for (const operation of ["register", "adopt", "rotate", "revoke"]) {
       assert.equal((await controller.retry()).state,
         operation === "revoke" ? "revoked" : "ready");
       assert.equal(submissions, 1);
-      assert.equal(signerCalls, freshness === "expired" ? 1 : 0);
+      assert.equal(signerCalls, 0);
+      assert.deepEqual(authorizationOrder, ["snapshot", "snapshot", "submit", "snapshot"]);
       assert.equal(h.stored().pendingAuthorization, null);
       assert.equal(h.stored().pendingProposal, null);
       if (operation === "rotate") {
         assert.equal(h.stored().privateKey, record.rotation.privateKey);
         assert.equal(h.stored().publicKey, replacementPublicKey);
       }
+    });
+  }
+}
+
+for (const operation of ["register", "adopt", "rotate", "revoke"]) {
+  for (const failure of [
+    "real BFF 503", "upstream timeout/socket failure", "response loss",
+    "malformed response", "cancellation"
+  ]) {
+    test(`${failure} retains expired exact ${operation} without intent or signer`, async () => {
+      const replacementPublicKey = "d".repeat(64);
+      const operationRequestId = operation === "register"
+        ? pending().requestId : operation === "rotate" ? "6".repeat(64) : "7".repeat(64);
+      const proposal = operation === "adopt" ? {
+        bindingId: metadata().bindingId, operation, requestId: operationRequestId
+      } : {
+        deviceId: pending().deviceId,
+        expectedBindingId: operation === "register" ? null : metadata().bindingId,
+        operation,
+        publicKey: operation === "rotate" ? replacementPublicKey
+          : operation === "revoke" ? null : pending().publicKey,
+        requestId: operationRequestId
+      };
+      const retainedRetry = publicRetry(proposal, {
+        intentToken: `${failure}-${operation}`,
+        signedEvent: `${failure}-${operation}`
+      });
+      const base = operation === "register" ? {
+        ...pending(), authorization: null, rotation: null
+      } : {
+        ...authorized(), ...(operation === "adopt" ? { authorization: null } : {})
+      };
+      const record = {
+        ...base,
+        state: operation === "adopt" ? "pending-adopt" : `pending-${operation}`,
+        pendingAuthorization: retainedRetry,
+        pendingProposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+        rotation: operation === "rotate" ? {
+          privateKey: new TestCryptoKey("private"),
+          publicKey: replacementPublicKey,
+          requestId: operationRequestId
+        } : null
+      };
+      const retainedBefore = structuredClone(retainedRetry);
+      let snapshots = 0, exactSubmissions = 0, intentRequests = 0;
+      let nip07Calls = 0, nip46Calls = 0;
+      const cancellationEntered = failure === "cancellation" ? deferred() : null;
+      const h = harness({
+        record,
+        snapshot: () => {
+          snapshots += 1;
+          return snapshot(operation === "register" ? [] : [active(record)]);
+        }
+      });
+      const signer = {};
+      Object.defineProperty(signer, "signEventForSubject", {
+        get() {
+          nip07Calls += 1;
+          nip46Calls += 1;
+          throw new Error("must not access either signer adapter");
+        }
+      });
+      const controller = h.make({
+        authorizationEnabled: true,
+        authorizationSigner: signer,
+        async parseAuthorizationRetry(value, { proposal: checkedProposal }, options) {
+          assert.equal(value, retainedRetry);
+          assert.deepEqual(checkedProposal, proposal);
+          assert.equal(options.allowExpiredExactReplay, true);
+          return {
+            action: operation,
+            bindingId: operation === "rotate" ? "4".repeat(64)
+              : operation === "revoke" ? "5".repeat(64) : metadata().bindingId,
+            expiresAt: Math.floor(now / 1000) - 1,
+            proofId,
+            requestId: operationRequestId
+          };
+        },
+        async authorizeBinding(input, dependencies) {
+          if (input.pendingAuthorization === undefined &&
+              input.expiredPendingAuthorization === undefined) intentRequests += 1;
+          assert.equal(input.expiredPendingAuthorization, retainedRetry);
+          assert.equal(input.pendingAuthorization, undefined);
+          assert.equal(dependencies.signer, undefined);
+          exactSubmissions += 1;
+          if (cancellationEntered) {
+            cancellationEntered.resolve();
+            return new Promise((resolve, reject) => {
+              dependencies.signal.addEventListener("abort", () => reject(new Error("cancelled")));
+            });
+          }
+          throw new Error("messaging device authorization unavailable");
+        }
+      });
+      const work = controller.retry();
+      if (cancellationEntered) {
+        await cancellationEntered.promise;
+        controller.cancel();
+      }
+      assert.equal((await work).state, cancellationEntered ? "unavailable" : record.state);
+      assert.equal(snapshots, 1);
+      assert.equal(exactSubmissions, 1);
+      assert.equal(intentRequests, 0);
+      assert.equal(nip07Calls, 0);
+      assert.equal(nip46Calls, 0);
+      assert.equal(h.stored().pendingAuthorization, retainedRetry);
+      assert.deepEqual(h.stored().pendingAuthorization, retainedBefore);
+      assert.equal(h.stored().pendingProposal,
+        canonicalMessagingDeviceAuthorizationProposal(proposal));
     });
   }
 }

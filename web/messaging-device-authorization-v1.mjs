@@ -45,9 +45,15 @@ const MAX_INTENT_BYTES = 32 * 1024;
 const MAX_RESULT_BYTES = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-const unavailable = () => {
-  throw new TypeError("messaging device authorization unavailable");
+const failureKinds = new WeakMap();
+const unavailable = (kind = "malformed") => {
+  const error = new TypeError("messaging device authorization unavailable");
+  failureKinds.set(error, kind);
+  throw error;
 };
+
+export const messagingDeviceAuthorizationFailureKind = (error) =>
+  failureKinds.get(error) ?? "malformed";
 
 const ownPlain = (value) =>
   value !== null &&
@@ -403,7 +409,7 @@ export async function signMessagingDeviceAuthorizationIntent(
       unsignedEvent: checked.unsignedEvent
     });
   } catch {
-    unavailable();
+    unavailable("ambiguous");
   }
   let verified;
   try { verified = await verifyEvent(candidate, { cryptoImpl }); } catch { unavailable(); }
@@ -424,9 +430,15 @@ export async function signMessagingDeviceAuthorizationIntent(
 
 export async function composeMessagingDeviceAuthorizationPayload(
   { subject, intentToken, signedEvent } = {},
-  { cryptoImpl = globalThis.crypto, verifyEvent = verifyNostrEvent, now = Date.now } = {}
+  {
+    cryptoImpl = globalThis.crypto,
+    verifyEvent = verifyNostrEvent,
+    now = Date.now,
+    allowExpiredExactReplay = false
+  } = {}
 ) {
-  if (!HEX64.test(subject) || typeof verifyEvent !== "function") unavailable();
+  if (!HEX64.test(subject) || typeof verifyEvent !== "function" ||
+      typeof allowExpiredExactReplay !== "boolean") unavailable();
   const token = tokenIdentity(intentToken);
   let verified;
   try { verified = await verifyEvent(signedEvent, { cryptoImpl }); } catch { unavailable(); }
@@ -436,7 +448,8 @@ export async function composeMessagingDeviceAuthorizationPayload(
   const digest = await digestHex(verified.content, cryptoImpl);
   exactTags(verified.tags, digest, semantic.requestId, semantic.action);
   if (
-    !Number.isSafeInteger(current) || claims.iat > current || current >= claims.exp ||
+    !Number.isSafeInteger(current) || claims.iat > current ||
+    (!allowExpiredExactReplay && current >= claims.exp) ||
     verified.pubkey !== subject || verified.kind !== MESSAGING_DEVICE_EVENT_KIND ||
     verified.created_at !== semantic.issuedAt || claims.sub !== subject ||
     claims.iat !== semantic.issuedAt || claims.exp !== semantic.expiresAt ||
@@ -455,11 +468,17 @@ export async function composeMessagingDeviceAuthorizationPayload(
 export async function parseMessagingDeviceAuthorizationResult(
   value,
   { subject, proposal, intentToken, signedEvent } = {},
-  { cryptoImpl = globalThis.crypto, verifyEvent = verifyNostrEvent, now = Date.now } = {}
+  {
+    cryptoImpl = globalThis.crypto,
+    verifyEvent = verifyNostrEvent,
+    now = Date.now,
+    allowExpiredExactReplay = false
+  } = {}
 ) {
+  if (typeof allowExpiredExactReplay !== "boolean") unavailable();
   await composeMessagingDeviceAuthorizationPayload(
     { subject, intentToken, signedEvent },
-    { cryptoImpl, verifyEvent, now }
+    { cryptoImpl, verifyEvent, now, allowExpiredExactReplay }
   );
   const verified = await verifyEvent(signedEvent, { cryptoImpl });
   const token = tokenIdentity(intentToken);
@@ -488,13 +507,22 @@ export async function parseMessagingDeviceAuthorizationResult(
 }
 
 const boundedResponse = async (response, maximum) => {
+  if (response?.status !== 200) {
+    if (Number.isInteger(response?.status) &&
+        response.status >= 500 && response.status <= 599) unavailable("ambiguous");
+    if (Number.isInteger(response?.status) &&
+        response.status >= 400 && response.status <= 499) unavailable("rejected");
+    unavailable();
+  }
   if (
-    response?.status !== 200 || typeof response.text !== "function" ||
+    typeof response.text !== "function" ||
     !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(
       response.headers?.get?.("content-type") ?? ""
     )
   ) unavailable();
-  const body = await response.text();
+  let body;
+  try { body = await response.text(); }
+  catch { unavailable("ambiguous"); }
   return canonicalParsedJson(body, maximum);
 };
 
@@ -522,9 +550,10 @@ export async function parseMessagingDeviceAuthorizationRetry(
     cryptoImpl = globalThis.crypto,
     verifyEvent = verifyNostrEvent,
     now = Date.now,
-    allowExpired = false
+    allowExpiredExactReplay = false
   } = {}
 ) {
+  if (typeof allowExpiredExactReplay !== "boolean") unavailable();
   const retry = exact(value, [
     "intentToken", "proposal", "schema", "signedEvent", "subject", "version"
   ]);
@@ -551,7 +580,7 @@ export async function parseMessagingDeviceAuthorizationRetry(
   const current = typeof now === "function" ? Math.floor(now() / 1000) : NaN;
   if (
     !Number.isSafeInteger(current) || claims.iat > current ||
-    (!allowExpired && current >= claims.exp) ||
+    (!allowExpiredExactReplay && current >= claims.exp) ||
     verified.pubkey !== subject || verified.kind !== MESSAGING_DEVICE_EVENT_KIND ||
     verified.created_at !== semantic.issuedAt || claims.sub !== subject ||
     claims.iat !== semantic.issuedAt || claims.exp !== semantic.expiresAt ||
@@ -575,7 +604,7 @@ export async function parseMessagingDeviceAuthorizationRetry(
 }
 
 export async function authorizeMessagingDeviceBinding(
-  { subject, proposal, pendingAuthorization } = {},
+  { subject, proposal, pendingAuthorization, expiredPendingAuthorization } = {},
   {
     signer,
     persistPending,
@@ -596,34 +625,33 @@ export async function authorizeMessagingDeviceBinding(
       signal === null || typeof signal !== "object" ||
       typeof signal.addEventListener !== "function" ||
       typeof signal.removeEventListener !== "function"
-    )) || signal?.aborted === true
+    )) || (pendingAuthorization !== undefined && expiredPendingAuthorization !== undefined)
   ) unavailable();
+  if (signal?.aborted === true) unavailable("ambiguous");
   const fetchOnce = async (url, init) => {
     const controller = new AbortController();
     const timer = setTimer(() => controller.abort(), timeoutMs);
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
     try { return await fetchImpl(url, { ...init, signal: controller.signal }); }
-    catch { unavailable(); }
+    catch { unavailable("ambiguous"); }
     finally {
       clearTimer(timer);
       signal?.removeEventListener("abort", abort);
     }
   };
   const proposalBody = canonicalMessagingDeviceAuthorizationProposal(proposal);
-  let retry = pendingAuthorization;
+  const allowExpiredExactReplay = expiredPendingAuthorization !== undefined;
+  let retry = allowExpiredExactReplay ? expiredPendingAuthorization : pendingAuthorization;
   if (retry === undefined) {
     if (typeof persistPending !== "function") unavailable();
-    let intentResponse;
-    try {
-      intentResponse = await fetchOnce(MESSAGING_DEVICE_AUTHORIZATION_INTENT_ROUTE, {
-        method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: proposalBody
-      });
-    } catch { unavailable(); }
+    const intentResponse = await fetchOnce(MESSAGING_DEVICE_AUTHORIZATION_INTENT_ROUTE, {
+      method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: proposalBody
+    });
     const intent = await boundedResponse(intentResponse, MAX_INTENT_BYTES);
-    if (signal?.aborted === true) unavailable();
+    if (signal?.aborted === true) unavailable("ambiguous");
     const signed = await signMessagingDeviceAuthorizationIntent(
       { subject, proposal, intent }, { signer, cryptoImpl, now }
     );
@@ -640,21 +668,18 @@ export async function authorizeMessagingDeviceBinding(
   const checkedRetry = await parseMessagingDeviceAuthorizationRetry(
     retry,
     { subject, proposal },
-    { cryptoImpl, now }
+    { cryptoImpl, now, allowExpiredExactReplay }
   );
-  if (signal?.aborted === true) unavailable();
-  let resultResponse;
-  try {
-    resultResponse = await fetchOnce(MESSAGING_DEVICE_AUTHORIZATION_ROUTE, {
-      method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        [MESSAGING_DEVICE_INTENT_HEADER]: checkedRetry.intentToken
-      },
-      body: canonicalMessagingDeviceJson(checkedRetry.signedEvent)
-    });
-  } catch { unavailable(); }
+  if (signal?.aborted === true) unavailable("ambiguous");
+  const resultResponse = await fetchOnce(MESSAGING_DEVICE_AUTHORIZATION_ROUTE, {
+    method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      [MESSAGING_DEVICE_INTENT_HEADER]: checkedRetry.intentToken
+    },
+    body: canonicalMessagingDeviceJson(checkedRetry.signedEvent)
+  });
   return parseMessagingDeviceAuthorizationResult(
     await boundedResponse(resultResponse, MAX_RESULT_BYTES),
     {
@@ -663,7 +688,7 @@ export async function authorizeMessagingDeviceBinding(
       intentToken: checkedRetry.intentToken,
       signedEvent: checkedRetry.signedEvent
     },
-    { cryptoImpl, now }
+    { cryptoImpl, now, allowExpiredExactReplay }
   );
 }
 
