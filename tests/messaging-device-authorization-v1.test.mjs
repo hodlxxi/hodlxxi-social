@@ -79,6 +79,22 @@ const response = (value) => ({
   headers: { get: () => "application/json" },
   text: async () => canonicalMessagingDeviceJson(value)
 });
+const socialSecurityHeaders = Object.freeze({
+  "cache-control": "no-store",
+  "content-type": "application/json; charset=utf-8",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff"
+});
+const socialUnavailableResponse = (overrides = {}) => {
+  const values = { ...socialSecurityHeaders, ...(overrides.headers ?? {}) };
+  return {
+    status: 409,
+    headers: { get: (name) => values[name.toLowerCase()] ?? null },
+    text: async () => '{"state":"unavailable"}',
+    ...overrides,
+    headers: { get: (name) => values[name.toLowerCase()] ?? null }
+  };
+};
 const registerAuthorizationResult = () => ({
   action: "register", active: true,
   authorizationExpiresAt: "2026-10-08T22:29:59Z",
@@ -640,6 +656,96 @@ test("authorization failures stay generic and every HTTP 5xx is ambiguous", asyn
     }
     assert.equal(caught?.message, "messaging device authorization unavailable", kind);
     assert.equal(messagingDeviceAuthorizationFailureKind(caught), kind, kind);
+  }
+});
+
+test("only exact closed Social 409 response is classified expired-unaccepted", async () => {
+  const proposal = {
+    operation: "register", deviceId, publicKey, expectedBindingId: null, requestId
+  };
+  const retained = {
+    intentToken,
+    proposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+    schema: "hodlxxi.social_messaging_device_binding_authorization_retry.v1",
+    signedEvent,
+    subject,
+    version: 1
+  };
+  const classify = async (fetchImpl) => {
+    try {
+      await authorizeMessagingDeviceBinding({
+        subject, proposal, expiredPendingAuthorization: retained
+      }, {
+        cryptoImpl: webcrypto,
+        now: () => 1_788_906_899_000,
+        fetchImpl
+      });
+    } catch (caught) {
+      return messagingDeviceAuthorizationFailureKind(caught);
+    }
+    assert.fail("authorization unexpectedly succeeded");
+  };
+  assert.equal(
+    await classify(async () => socialUnavailableResponse()),
+    "expired-unaccepted"
+  );
+
+  const malformed = [
+    socialUnavailableResponse({ headers: { "content-type": "application/json" } }),
+    socialUnavailableResponse({ headers: { "cache-control": "private" } }),
+    socialUnavailableResponse({ headers: { "referrer-policy": "same-origin" } }),
+    socialUnavailableResponse({ headers: { "x-content-type-options": "" } }),
+    socialUnavailableResponse({ text: async () => '{"state":"unavailable","extra":true}' }),
+    socialUnavailableResponse({ text: async () => '{"state":"unavailable"}\n' }),
+    socialUnavailableResponse({ text: async () => '{"state":"unavailable","state":"unavailable"}' }),
+    socialUnavailableResponse({ text: async () => "x".repeat(16 * 1024) })
+  ];
+  for (const candidate of malformed) {
+    assert.notEqual(await classify(async () => candidate), "expired-unaccepted");
+  }
+  assert.equal(await classify(async () => socialUnavailableResponse({
+    text: async () => { throw new Error("body read failed"); }
+  })), "ambiguous");
+});
+
+test("browser treats every non-409 4xx and every 5xx as non-definitive", async () => {
+  const proposal = {
+    operation: "register", deviceId, publicKey, expectedBindingId: null, requestId
+  };
+  const retained = {
+    intentToken,
+    proposal: canonicalMessagingDeviceAuthorizationProposal(proposal),
+    schema: "hodlxxi.social_messaging_device_binding_authorization_retry.v1",
+    signedEvent,
+    subject,
+    version: 1
+  };
+  for (const status of [
+    ...Array.from({ length: 100 }, (_, index) => 400 + index).filter((value) => value !== 409),
+    ...Array.from({ length: 100 }, (_, index) => 500 + index)
+  ]) {
+    let caught;
+    try {
+      await authorizeMessagingDeviceBinding({
+        subject, proposal, pendingAuthorization: retained
+      }, {
+        cryptoImpl: webcrypto,
+        now: vectorNow,
+        fetchImpl: async () => ({ status })
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert.notEqual(
+      messagingDeviceAuthorizationFailureKind(caught),
+      "expired-unaccepted",
+      String(status)
+    );
+    assert.equal(
+      messagingDeviceAuthorizationFailureKind(caught),
+      status >= 500 ? "ambiguous" : "rejected",
+      String(status)
+    );
   }
 });
 

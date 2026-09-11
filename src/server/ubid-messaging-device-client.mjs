@@ -50,6 +50,8 @@ const DEVICE_MAX_BYTES = 128 * 1024;
 const INTENT_MAX_BYTES = 32 * 1024;
 const AUTHORIZATION_MAX_BYTES = 16 * 1024;
 const PRIVATE_KEY_MAX_BYTES = 32 * 1024;
+const DEFINITIVE_AUTHORIZATION_ERROR_BODY =
+  '{"error":"device_binding_authorization_unavailable"}\n';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const SNAPSHOT_ID = /^sha256:[0-9a-f]{64}$/;
@@ -68,6 +70,29 @@ const isoSecondMilliseconds = (value) => {
 
 const failure = () => {
   throw new Error("messaging_device_unavailable");
+};
+
+const definitiveAuthorizationRejections = new WeakSet();
+const definitiveAuthorizationRejection = () => {
+  const error = new Error("messaging_device_unavailable");
+  definitiveAuthorizationRejections.add(error);
+  return error;
+};
+
+export const isUbidMessagingDeviceAuthorizationDefinitiveRejection =
+  (error) => definitiveAuthorizationRejections.has(error);
+
+const hasOneExactRawHeader = (incoming, expectedName, expectedValue) => {
+  const raw = incoming?.rawHeaders;
+  if (!Array.isArray(raw) || raw.length % 2 !== 0) return false;
+  const values = [];
+  for (let index = 0; index < raw.length; index += 2) {
+    if (typeof raw[index] !== "string" || typeof raw[index + 1] !== "string") {
+      return false;
+    }
+    if (raw[index].toLowerCase() === expectedName) values.push(raw[index + 1]);
+  }
+  return values.length === 1 && values[0] === expectedValue;
 };
 
 const boundedText = (value, maximum) =>
@@ -379,7 +404,8 @@ const unixJsonRequest = (
     headers,
     body,
     timeoutMs,
-    maximumBytes
+    maximumBytes,
+    acceptDefinitiveAuthorizationRejection = false
   },
   requestImpl
 ) =>
@@ -418,68 +444,101 @@ const unixJsonRequest = (
           maxHeaderSize: 16 * 1024
         },
         (incoming) => {
-          response = incoming;
+          try {
+            response = incoming;
 
-          if (
-            !incoming ||
-            incoming.statusCode !== 200
-          ) {
-            rejectUnavailable();
-            return;
-          }
+            const definitiveCandidate =
+              acceptDefinitiveAuthorizationRejection === true &&
+              endpoint.path === UBID_MESSAGING_DEVICE_AUTHORIZATIONS_PATH &&
+              method === "POST" &&
+              incoming?.statusCode === 409;
 
-          const contentType =
-            incoming.headers?.["content-type"];
-
-          if (
-            typeof contentType !== "string" ||
-            !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(
-              contentType
-            )
-          ) {
-            rejectUnavailable();
-            return;
-          }
-
-          const chunks = [];
-          let length = 0;
-
-          incoming.on("data", (chunk) => {
-            if (settled) return;
-
-            if (!(chunk instanceof Uint8Array)) {
+            if (!incoming || (incoming.statusCode !== 200 && !definitiveCandidate)) {
               rejectUnavailable();
               return;
             }
 
-            length += chunk.byteLength;
+            const contentType =
+              incoming.headers?.["content-type"];
 
-            if (length > maximumBytes) {
+            if (
+              typeof contentType !== "string" ||
+              (definitiveCandidate
+                ? contentType !== "application/json"
+                : !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(
+                    contentType
+                  )) ||
+              (definitiveCandidate && (
+                incoming.headers?.["cache-control"] !== "no-store" ||
+                incoming.headers?.pragma !== "no-cache" ||
+                !hasOneExactRawHeader(incoming, "content-type", "application/json") ||
+                !hasOneExactRawHeader(incoming, "cache-control", "no-store") ||
+                !hasOneExactRawHeader(incoming, "pragma", "no-cache")
+              ))
+            ) {
               rejectUnavailable();
               return;
             }
 
-            chunks.push(Buffer.from(chunk));
-          });
+            const chunks = [];
+            let length = 0;
 
-          incoming.once("error", rejectUnavailable);
+            incoming.on("data", (chunk) => {
+              if (settled) return;
 
-          incoming.once("end", () => {
-            if (settled) return;
+              if (!(chunk instanceof Uint8Array)) {
+                rejectUnavailable();
+                return;
+              }
 
-            try {
-              const source =
-                Buffer.concat(chunks, length)
-                  .toString("utf8");
+              length += chunk.byteLength;
 
-              const value = parseJson(source);
+              if (length > maximumBytes) {
+                rejectUnavailable();
+                return;
+              }
 
-              settled = true;
-              resolve(value);
-            } catch {
-              rejectUnavailable();
-            }
-          });
+              chunks.push(Buffer.from(chunk));
+            });
+
+            incoming.once("error", rejectUnavailable);
+            incoming.once("aborted", rejectUnavailable);
+            incoming.once("close", () => {
+              try {
+                if (!settled && incoming.complete !== true) rejectUnavailable();
+              } catch {
+                rejectUnavailable();
+              }
+            });
+
+            incoming.once("end", () => {
+              if (settled) return;
+
+              try {
+                const bytes = Buffer.concat(chunks, length);
+                if (definitiveCandidate) {
+                  if (
+                    incoming.complete !== true ||
+                    !bytes.equals(Buffer.from(DEFINITIVE_AUTHORIZATION_ERROR_BODY, "ascii"))
+                  ) failure();
+                  settled = true;
+                  reject(definitiveAuthorizationRejection());
+                  return;
+                }
+
+                const source = bytes.toString("utf8");
+
+                const value = parseJson(source);
+
+                settled = true;
+                resolve(value);
+              } catch {
+                rejectUnavailable();
+              }
+            });
+          } catch {
+            rejectUnavailable();
+          }
         }
       );
 
@@ -1120,7 +1179,8 @@ export async function createUbidMessagingDeviceAuthorizationClient(
         },
         body: authorizationPayload,
         timeoutMs: config.requestTimeoutMs,
-        maximumBytes: AUTHORIZATION_MAX_BYTES
+        maximumBytes: AUTHORIZATION_MAX_BYTES,
+        acceptDefinitiveAuthorizationRejection: true
       }, requestImpl);
       return parseMessagingDeviceAuthorizationResult(
         value,

@@ -6,7 +6,8 @@ import {
   normalizeMessagingDeviceAuthorizationIntent,
   normalizeMessagingDeviceAuthorizationResult,
   normalizeMessagingDeviceResult,
-  normalizeMessagingDeviceSnapshot
+  normalizeMessagingDeviceSnapshot,
+  isUbidMessagingDeviceAuthorizationDefinitiveRejection
 } from "./ubid-messaging-device-client.mjs";
 import {
   normalizeMessagingRecipientPackage
@@ -1070,8 +1071,14 @@ export function createSocialOAuthBff({
           )
         );
         return json(200, result);
-      } catch {
-        return json(503, MESSAGING_DEVICE_UNAVAILABLE);
+      } catch (caught) {
+        return json(
+          target.path === SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE &&
+            isUbidMessagingDeviceAuthorizationDefinitiveRejection(caught)
+            ? 409
+            : 503,
+          MESSAGING_DEVICE_UNAVAILABLE
+        );
       }
     }
 

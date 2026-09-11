@@ -403,13 +403,29 @@ pending operation always submits the exact same retained event and token once,
 including when that material is locally expired. Canonical accepted replay is
 verified against the retained token, event, and proposal before another
 authoritative reconciliation finalizes it. Ambiguous submission outcomes keep
-the exact material and never reach an intent or signer. The current BFF maps
-upstream rejection, timeout, socket loss, response loss, service-token failure,
-and malformed output to the same generic HTTP 503. Because no trustworthy
-end-to-end definitive-rejection signal exists, any failed expired replay
-remains pending and replacement authorization is blocked. A separately
-reviewed protocol signal is required before the controller may request a fresh
-intent or signature. Tampered or conflicting material fails closed. Pending material is cleared
+the exact material and never reach an intent or signer. The Unix-socket client
+recognizes UBID's definitive expired-unaccepted outcome only on the exact
+authorizations request: HTTP 409, the exact closed generic body, exact JSON
+content type, required no-store headers, a bounded complete stream, and no
+malformed encoding, duplicate/extra field, truncation, or trailing byte. A
+module-private brand carries that provenance to the BFF, which returns the
+same closed `{"state":"unavailable"}` body and security headers with HTTP 409
+only on the public authorizations route. Arbitrary errors, status-bearing
+objects, other routes, every other upstream 4xx, every upstream 5xx, and all
+transport or parsing ambiguity remain HTTP 503 at this boundary.
+
+Only an explicit retry of locally expired exact material may consume that
+proven browser response. It revalidates the authenticated session and a new
+authoritative snapshot, requires the operation prerequisite and predecessor to
+remain exact, creates a fresh request ID distinct from relevant retained
+identities, and compare-and-swap persists the replacement unsigned proposal
+before requesting an intent. It preserves the register key, adoption binding,
+rotation replacement key and predecessor, or revoke predecessor as applicable.
+The same user action may obtain one intent, invoke its configured signer once,
+verify and persist the new signed public retry, and submit once. A second 409
+or any ambiguous replacement outcome retains that new retry and stops; startup
+and background reconciliation never renew or open a signer. Tampered,
+conflicting, cross-tab-stale, or session-changed material fails closed. Pending material is cleared
 only following authoritative reconciliation. IndexedDB updates compare the caller's exact
 public record revision inside the read-write transaction, reject stale rotation
 or retry replacement/clearing, and always promote the private CryptoKey from the
