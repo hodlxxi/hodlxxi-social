@@ -209,7 +209,11 @@ speculative UBID semantics. See
 
 Internal Social messaging must not require a NIP-07 browser extension.
 
-Login and decryption are separate concerns.
+Participant login, authorization of an exact messaging device, and ciphertext
+messaging are separate boundaries. The canonical next implementation sequence
+is [Messaging completion plan](MESSAGING_COMPLETION_PLAN.md). Its Phase 1
+contracts include challenge-bound LEGACY authorization and desktop-approved
+phone pairing; their source presence does not activate those flows.
 
 A user may authenticate through any accepted UBID login path, including a
 mobile-compatible path, and then use that device's own Social encryption key to

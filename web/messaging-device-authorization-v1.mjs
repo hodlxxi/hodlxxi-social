@@ -317,6 +317,28 @@ const bindSemanticToProposal = async (semantic, value, subject, cryptoImpl) => {
   return Object.freeze({ proposal: Object.freeze(proposal), ...identity });
 };
 
+// Pure inspection seam for additional authorization methods. Parsing a claim
+// proves no authority; callers must separately verify its method-specific proof.
+export async function inspectMessagingDeviceAuthorizationClaim(
+  content,
+  { subject, proposal, cryptoImpl = globalThis.crypto } = {}
+) {
+  if (!HEX64.test(subject)) unavailable();
+  const root = canonicalParsedJson(content, 8192);
+  const claimType = Object.hasOwn(root, "authorization") ? "lifecycle" : "adoption";
+  const semantic = semanticClaim(content, claimType, subject);
+  const identity = proposal === undefined
+    ? await bindingIdentity(semantic, subject, cryptoImpl)
+    : await bindSemanticToProposal(semantic, proposal, subject, cryptoImpl);
+  if (semantic.expiresAt - semantic.issuedAt > 300 ||
+      identity.binding.bindingVersion > 1024 ||
+      utcSecond(identity.binding.validFrom) > semantic.issuedAt) unavailable();
+  return Object.freeze({
+    ...semantic, ...identity, content, claimType,
+    subject, digest: await digestHex(content, cryptoImpl)
+  });
+}
+
 const expectedEventId = (subject, unsignedEvent, cryptoImpl) =>
   computeNostrEventId({
     content: unsignedEvent.content,
