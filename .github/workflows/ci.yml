@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Contract fixtures verify files at the pinned historical Social base.
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
