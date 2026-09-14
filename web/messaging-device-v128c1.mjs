@@ -450,6 +450,22 @@ export function createMessagingDeviceStore(indexedDBImpl) {
       const request = deviceStore.get("current");
       request.onsuccess = () => done(request.result);
     }),
+    // Caller must obtain an irreversible authoritative cancellation/rejection
+    // for this exact proposal. Logout/expiry/never-accepted are insufficient.
+    discardCancelledPending: (expectedRecord) => transaction("readwrite", (deviceStore, _done, tx) => {
+      const request = deviceStore.get("current");
+      request.onsuccess = () => {
+        try {
+          const raw = request.result, CryptoKeyImpl = raw?.privateKey?.constructor;
+          const previous = localRecord(raw, raw?.subject, CryptoKeyImpl);
+          const expected = localRecord(expectedRecord, previous.subject, CryptoKeyImpl);
+          if (!samePublicRecordRevision(previous, expected) || previous.state !== "pending-register" ||
+              previous.acceptedBinding !== null || previous.authorization !== null || previous.pendingAuthorization !== null ||
+              previous.rotation !== null || !previous.pendingProposal) unavailable();
+          deviceStore.delete("current");
+        } catch { tx.abort(); }
+      };
+    }),
     create: (record) => transaction("readwrite", (store) => {
       const next = extended(record);
       const CryptoKeyImpl = next.privateKey?.constructor;

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { MOBILE_POST_ROUTES } from "../src/server/social-mobile-bff-v1.mjs";
 import http from "node:http";
 import { pathToFileURL } from "node:url";
 import { configFromEnvironment } from "../src/server/social-oauth-config.mjs";
@@ -200,7 +201,8 @@ export function classifyRequestTarget(target, publicOrigin) {
 
 const messagingBodyFraming = (
   request,
-  publicOrigin
+  publicOrigin,
+  mobilePostRoutes = []
 ) => {
   const raw = request.rawHeaders ?? [];
   const lengths = [];
@@ -233,6 +235,19 @@ const messagingBodyFraming = (
       publicOrigin
     );
 
+  const mobilePost = parsedTarget.valid && mobilePostRoutes.includes(parsedTarget.path);
+  if (mobilePost) {
+    if (parsedTarget.query.length || request.method !== "POST") return false;
+    const counts = new Map();
+    for (let i = 0; i < raw.length; i += 2) {
+      const name = String(raw[i]).toLowerCase();
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    if (["host", "origin", "content-type", "cookie", "x-hodlxxi-mobile-csrf"].some((n) => (counts.get(n) ?? 0) > 1) ||
+        counts.has("content-encoding") || counts.has("authorization") || counts.has("x-hodlxxi-viewer-authorization") ||
+        lengths.length !== 1 || !/^[1-9][0-9]*$/.test(lengths[0]) || Number(lengths[0]) > 65536) return false;
+    return true;
+  }
   const messagingPost =
     parsedTarget.valid &&
     [
@@ -326,8 +341,11 @@ const send = (outgoing, result) => {
 
 export function createHttpHandler({
   publicOrigin,
-  bff
+  bff,
+  mobilePostRoutes = []
 }) {
+  if (!Array.isArray(mobilePostRoutes) || mobilePostRoutes.some((p) => !MOBILE_POST_ROUTES.includes(p))) throw new TypeError("invalid mobile routes");
+  mobilePostRoutes = Object.freeze([...mobilePostRoutes]);
   return async (incoming, outgoing) => {
     const target =
       classifyRequestTarget(
@@ -338,7 +356,8 @@ export function createHttpHandler({
     const framingAccepted =
       messagingBodyFraming(
         incoming,
-        publicOrigin
+        publicOrigin,
+        mobilePostRoutes
       );
 
     if (
@@ -401,6 +420,20 @@ export function createHttpHandler({
           incoming.url,
           publicOrigin
         );
+
+      if (parsedTarget.valid && mobilePostRoutes.includes(parsedTarget.path)) {
+        const timer = setTimeout(() => incoming.destroy(new Error("request body unavailable")), 5000);
+        try {
+          const chunks = []; let size = 0;
+          for await (const chunk of incoming) {
+            size += chunk.byteLength;
+            if (!(chunk instanceof Uint8Array) || size > 65536) throw new TypeError("request body unavailable");
+            chunks.push(chunk);
+          }
+          if (size !== Number(incoming.headers["content-length"])) throw new TypeError("request body unavailable");
+          body = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+        } finally { clearTimeout(timer); }
+      }
 
       if (
         parsedTarget.valid &&

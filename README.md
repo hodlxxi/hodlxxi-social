@@ -4,6 +4,8 @@ An independent, Nostr-first social layer for the HODLXXI covenant trust network.
 
 ## Current source and deployment model
 
+The dormant [Social Phase 2B mobile consumer](docs/SOCIAL_MOBILE_CONSUMER_PHASE2B.md) adds an explicitly injected browser/BFF flow for the pinned UBID issuance contract. It remains disabled in normal composition and does not activate mobile login or messaging. Its login ends within the original pairing window, at most five minutes from offer creation.
+
 This repository contains HODLXXI Social source through the inert V1.28F.1
 envelope boundary. Source capability and deployed capability are separate
 facts.
