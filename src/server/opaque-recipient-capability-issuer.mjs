@@ -358,6 +358,7 @@ const normalizeIssuedCapability = (
 
 export function createOpaqueRecipientCapabilityIssuer({
   sessions,
+  sessionReader,
   authorityReader,
   fullDirectoryClient,
   capabilityStore,
@@ -383,6 +384,7 @@ export function createOpaqueRecipientCapabilityIssuer({
 
   if (
     !sessionGet ||
+    (sessionReader !== undefined && typeof sessionReader !== "function") ||
     typeof authorityReader !==
       "function" ||
     !directoryRead ||
@@ -443,10 +445,7 @@ export function createOpaqueRecipientCapabilityIssuer({
     try {
       const session =
         normalizeSession(
-          sessionGet.call(
-            sessions,
-            sessionId
-          ),
+          await (sessionReader ? sessionReader(sessionId) : sessionGet.call(sessions, sessionId)),
           now
         );
 

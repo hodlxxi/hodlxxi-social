@@ -463,6 +463,8 @@ export function createSocialOAuthBff({
   pendingTransactions,
   sessions,
   oauthClient,
+  sessionReader,
+  oauthGuard,
   authorityReader,
   fullDirectoryClient,
   recipientCapabilityIssuer,
@@ -573,7 +575,7 @@ export function createSocialOAuthBff({
   const configuredPublishRelayUrl = configuredRelay(
     config?.nostrPublishRelayUrl
   );
-  const authenticatedSessionContext = (cookieHeader) => {
+  const authenticatedSessionContext = async (cookieHeader) => {
     let sessionId;
 
     try {
@@ -589,7 +591,7 @@ export function createSocialOAuthBff({
 
     const session =
       sessionId
-        ? sessions.get(sessionId)
+        ? await (sessionReader ? sessionReader(sessionId) : Promise.resolve(sessions.get(sessionId)).then((s) => s && (Object.hasOwn(s, "kind") || Object.hasOwn(s, "issuanceId")) ? null : s))
         : null;
 
     return (
@@ -605,13 +607,10 @@ export function createSocialOAuthBff({
       : null;
   };
 
-  const authenticatedSession = (cookieHeader) =>
-    authenticatedSessionContext(
-      cookieHeader
-    )?.session ?? null;
-
-  const authenticatedSubject = (cookieHeader) =>
-    authenticatedSession(cookieHeader)?.subject ?? null;
+  const authenticatedSession = async (cookieHeader) =>
+    (await authenticatedSessionContext(cookieHeader))?.session ?? null;
+  const authenticatedSubject = async (cookieHeader) =>
+    (await authenticatedSession(cookieHeader))?.subject ?? null;
   const callbackHeaders = (extra = {}) => ({ "Set-Cookie": expireTransactionCookie(), ...extra });
   return async function handle(request) {
     const method = request.method;
@@ -620,8 +619,9 @@ export function createSocialOAuthBff({
     const cookieHeader = request.headers?.cookie;
     if (target.path === "/auth/login") {
       if (method !== "GET" || target.query.length !== 0) return error(method === "GET" ? 400 : 405);
+      let fence; try { fence = oauthGuard?.begin(cookieHeader); } catch { return error(409); }
       const state = randomId(random), transactionId = randomId(random), verifier = createPkceVerifier(random);
-      if (!pendingTransactions.create(transactionId, { state, verifier })) return error(503);
+      if (!pendingTransactions.create(transactionId, { state, verifier, ...(oauthGuard ? { fence } : {}) })) return error(503);
       const authorize = new URL("/oauth/authorize", config.authorityOrigin);
       for (const [name, value] of Object.entries({ response_type: "code", client_id: config.clientId, redirect_uri: config.callbackUri,
         scope: config.scope, state, code_challenge: createPkceChallenge(verifier), code_challenge_method: "S256" })) authorize.searchParams.set(name, value);
@@ -643,6 +643,7 @@ export function createSocialOAuthBff({
           })
         );
         if (!authentication) return terminal(502);
+        if (oauthGuard && !oauthGuard.valid(transaction.fence, cookieHeader)) return terminal(409);
         let sessionId; for (let attempt = 0; attempt < 4; attempt += 1) { sessionId = randomId(random); if (sessions.create(sessionId, { subject: authentication.subject, viewerAccessToken: authentication.accessToken })) break; sessionId = null; }
         if (!sessionId) return terminal(503);
         return response(303, "", callbackHeaders({ Location: "/", "Set-Cookie": [expireTransactionCookie(), serializeHostCookie(SESSION_COOKIE_NAME, sessionId, config.sessionTtlSeconds)] }));
@@ -657,14 +658,14 @@ export function createSocialOAuthBff({
     if (target.path === "/auth/session") {
       if (method !== "GET" || target.query.length !== 0) return error(method === "GET" ? 400 : 405);
       let id; try { id = parseCookieHeader(cookieHeader).get(SESSION_COOKIE_NAME); } catch { return json(200, { authenticated: false }); }
-      const session = id ? sessions.get(id) : null;
+      const session = await authenticatedSession(cookieHeader);
       return json(200, session ? { authenticated: true, subject: session.subject } : { authenticated: false });
     }
     if (target.path === "/auth/social-read-config") {
       if (method !== "GET" || target.query.length !== 0) {
         return error(method === "GET" ? 400 : 405);
       }
-      if (!authenticatedSubject(cookieHeader)) {
+      if (!(await authenticatedSubject(cookieHeader))) {
         return json(401, { error: "authentication_required" });
       }
       return json(200, configuredRelayUrl
@@ -675,7 +676,7 @@ export function createSocialOAuthBff({
       if (method !== "GET" || target.query.length !== 0) {
         return error(method === "GET" ? 400 : 405);
       }
-      if (!authenticatedSubject(cookieHeader)) {
+      if (!(await authenticatedSubject(cookieHeader))) {
         return json(401, { error: "authentication_required" });
       }
       return json(200, configuredPublishRelayUrl
@@ -689,7 +690,7 @@ export function createSocialOAuthBff({
       if (method !== "GET" || target.query.length !== 0) {
         return error(method === "GET" ? 400 : 405);
       }
-      if (!authenticatedSubject(cookieHeader)) {
+      if (!(await authenticatedSubject(cookieHeader))) {
         return json(401, { error: "authentication_required" });
       }
       return json(200, {
@@ -703,7 +704,7 @@ export function createSocialOAuthBff({
         return error(method === "GET" ? 400 : 405);
       }
 
-      const subject = authenticatedSubject(cookieHeader);
+      const subject = (await authenticatedSubject(cookieHeader));
       if (!subject) {
         return json(401, { error: "authentication_required" });
       }
@@ -731,7 +732,7 @@ export function createSocialOAuthBff({
           FULL_DIRECTORY_UNAVAILABLE
         );
       }
-      const session = authenticatedSession(cookieHeader);
+      const session = (await authenticatedSession(cookieHeader));
       if (!session) return json(401, FULL_DIRECTORY_UNAVAILABLE);
       if (
         typeof session.viewerAccessToken !== "string" ||
@@ -795,9 +796,7 @@ export function createSocialOAuthBff({
       }
 
       const context =
-        authenticatedSessionContext(
-          cookieHeader
-        );
+        (await authenticatedSessionContext(cookieHeader));
 
       if (!context) {
         return json(
@@ -880,9 +879,7 @@ export function createSocialOAuthBff({
       }
 
       const context =
-        authenticatedSessionContext(
-          cookieHeader
-        );
+        (await authenticatedSessionContext(cookieHeader));
 
       if (!context) {
         return json(
@@ -1000,7 +997,7 @@ export function createSocialOAuthBff({
       if (request.headers?.origin !== config.publicOrigin) {
         return json(403, MESSAGING_DEVICE_UNAVAILABLE);
       }
-      const context = authenticatedSessionContext(cookieHeader);
+      const context = (await authenticatedSessionContext(cookieHeader));
       if (!context) return json(401, MESSAGING_DEVICE_UNAVAILABLE);
       const viewerAccessToken = context.session.viewerAccessToken;
       if (
@@ -1111,9 +1108,7 @@ export function createSocialOAuthBff({
       }
 
       const context =
-        authenticatedSessionContext(
-          cookieHeader
-        );
+        (await authenticatedSessionContext(cookieHeader));
 
       if (!context) {
         return json(
