@@ -318,6 +318,40 @@ const messagingRecipientConfig = (
 };
 
 
+// This is the existing mobile client's closed server configuration vocabulary.
+const mobileIdentity = (value) => {
+  const parsed = exactCredentialString(value, 255);
+  if (!/^[A-Za-z0-9._:-]{1,255}$/.test(parsed)) fail();
+  return parsed;
+};
+
+export function mobileServiceConfig(input, prefix) {
+  if (!featureEnabled(input[prefix + "Enabled"])) return Object.freeze({ enabled: false });
+  const signingKeyPath = text(input[prefix + "SigningKeyPath"], 2048);
+  if (!posix.isAbsolute(signingKeyPath) || posix.normalize(signingKeyPath) !== signingKeyPath || signingKeyPath.endsWith("/")) fail();
+  return Object.freeze({
+    enabled: true,
+    issuerOrigin: canonicalHttpsOrigin(input[prefix + "IssuerOrigin"]),
+    socketPath: canonicalUnixSocketPath(input[prefix + "SocketPath"]),
+    clientId: mobileIdentity(input[prefix + "ServiceClientId"]),
+    clientSigningKeyId: mobileIdentity(input[prefix + "ServiceClientSigningKeyId"]),
+    signingKeyPath,
+    timeoutMs: integer(input[prefix + "TimeoutMs"], [250, 5000])
+  });
+}
+
+export function validateMobileRuntimeConfig({ sessionIssuance, mobile, authorityOrigin, clientId }) {
+  if (sessionIssuance?.enabled === true) {
+    mobileIdentity(sessionIssuance.clientId);
+    if (sessionIssuance.issuerOrigin !== authorityOrigin) fail();
+  }
+  if (mobile?.enabled === true) {
+    mobileIdentity(clientId);
+    mobileIdentity(mobile.clientId);
+    if (sessionIssuance?.enabled !== true || mobile.issuerOrigin !== authorityOrigin) fail();
+  }
+}
+
 export function parseSocialOAuthConfig(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) fail();
   const publicOrigin = canonicalHttpsOrigin(input.publicOrigin);
@@ -356,6 +390,10 @@ export function parseSocialOAuthConfig(input) {
       recipientCapability
     );
 
+  const sessionIssuance = mobileServiceConfig(input, "sessionIssuance");
+  const mobile = mobileServiceConfig(input, "mobile");
+  validateMobileRuntimeConfig({ sessionIssuance, mobile, authorityOrigin, clientId });
+
   const result = {
     publicOrigin, authorityOrigin, clientId, clientSecret: input.clientSecret, bindHost, nostrRelayUrl, nostrPublishRelayUrl,
     port: integer(input.port, LIMITS.port), transactionTtlSeconds: integer(input.transactionTtlSeconds, LIMITS.ttl),
@@ -366,7 +404,9 @@ export function parseSocialOAuthConfig(input) {
     recipientCapability,
     messagingDevice,
     messagingDeviceAuthorization,
-    messagingRecipient
+    messagingRecipient,
+    sessionIssuance,
+    mobile
   };
   return Object.freeze(result);
 }
@@ -378,6 +418,20 @@ export function configFromEnvironment(env) {
     maxPendingTransactions: env.SOCIAL_MAX_PENDING_TRANSACTIONS, maxSessions: env.SOCIAL_MAX_SESSIONS,
     outboundTimeoutMs: env.SOCIAL_OUTBOUND_TIMEOUT_MS, nostrRelayUrl: env.SOCIAL_NOSTR_RELAY_URL,
     nostrPublishRelayUrl: env.SOCIAL_NOSTR_PUBLISH_RELAY_URL,
+    sessionIssuanceEnabled: env.SOCIAL_UBID_SESSION_ISSUANCE_ENABLED,
+    mobileEnabled: env.SOCIAL_MOBILE_ENABLED,
+    sessionIssuanceIssuerOrigin: env.SOCIAL_UBID_SESSION_ISSUANCE_ISSUER_ORIGIN,
+    sessionIssuanceSocketPath: env.SOCIAL_UBID_SESSION_ISSUANCE_PRIVATE_SOCKET_PATH,
+    sessionIssuanceServiceClientId: env.SOCIAL_UBID_SESSION_ISSUANCE_SERVICE_CLIENT_ID,
+    sessionIssuanceServiceClientSigningKeyId: env.SOCIAL_UBID_SESSION_ISSUANCE_SERVICE_CLIENT_SIGNING_KEY_ID,
+    sessionIssuanceSigningKeyPath: env.SOCIAL_UBID_SESSION_ISSUANCE_SERVICE_SIGNING_KEY_PATH,
+    sessionIssuanceTimeoutMs: env.SOCIAL_UBID_SESSION_ISSUANCE_TIMEOUT_MS,
+    mobileIssuerOrigin: env.SOCIAL_UBID_MOBILE_AUTHORIZATION_ISSUER_ORIGIN,
+    mobileSocketPath: env.SOCIAL_UBID_MOBILE_AUTHORIZATION_PRIVATE_SOCKET_PATH,
+    mobileServiceClientId: env.SOCIAL_UBID_MOBILE_AUTHORIZATION_SERVICE_CLIENT_ID,
+    mobileServiceClientSigningKeyId: env.SOCIAL_UBID_MOBILE_AUTHORIZATION_SERVICE_CLIENT_SIGNING_KEY_ID,
+    mobileSigningKeyPath: env.SOCIAL_UBID_MOBILE_AUTHORIZATION_SERVICE_SIGNING_KEY_PATH,
+    mobileTimeoutMs: env.SOCIAL_UBID_MOBILE_AUTHORIZATION_TIMEOUT_MS,
     recipientCapabilityEnabled:
       env.SOCIAL_RECIPIENT_CAPABILITY_ENABLED,
     fullDirectoryEnabled: env.SOCIAL_FULL_DIRECTORY_ENABLED,

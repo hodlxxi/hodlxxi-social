@@ -3,11 +3,11 @@ import { MOBILE_POST_ROUTES } from "../src/server/social-mobile-bff-v1.mjs";
 import http from "node:http";
 import { pathToFileURL } from "node:url";
 import { configFromEnvironment } from "../src/server/social-oauth-config.mjs";
-import { createBoundedStore } from "../src/server/social-oauth-memory.mjs";
+import { createBoundedStore, createSessionStore } from "../src/server/social-oauth-memory.mjs";
 import { createHodlxxiOAuthClient } from "../src/server/hodlxxi-oauth-client.mjs";
 import { createSocialAuthorityReader } from "../src/server/social-authority-reader.mjs";
+import { createSocialMobileRuntime } from "../src/server/social-mobile-runtime-v1.mjs";
 import {
-  createSocialOAuthBff,
   parseRawRequestTarget,
   SECURITY_HEADERS,
   SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE,
@@ -50,6 +50,7 @@ export function createRecipientCapabilityIntegration(
     sessions,
     authorityReader,
     fullDirectoryClient,
+    sessionReader,
     storeFactory =
       createOpaqueRecipientCapabilityStore,
     issuerFactory =
@@ -90,7 +91,8 @@ export function createRecipientCapabilityIntegration(
       sessions,
       authorityReader,
       fullDirectoryClient,
-      capabilityStore
+      capabilityStore,
+      ...(sessionReader === undefined ? {} : { sessionReader })
     });
 
   const resolver =
@@ -98,7 +100,8 @@ export function createRecipientCapabilityIntegration(
       sessions,
       authorityReader,
       fullDirectoryClient,
-      capabilityStore
+      capabilityStore,
+      ...(sessionReader === undefined ? {} : { sessionReader })
     });
 
   const issue =
@@ -485,11 +488,13 @@ export function createHttpHandler({
   };
 }
 
-export async function runServer({ env = process.env, stdout = console.log, stderr = console.error, createServer = http.createServer } = {}) {
+export async function runServer({ env = process.env, stdout = console.log, stderr = console.error, createServer = http.createServer, mobileRuntimeFactory = createSocialMobileRuntime } = {}) {
   let config;
   try { config = configFromEnvironment(env); } catch { stderr("invalid configuration"); return 2; }
   const pendingTransactions = createBoundedStore({ ttlSeconds: config.transactionTtlSeconds, capacity: config.maxPendingTransactions });
-  const sessions = createBoundedStore({ ttlSeconds: config.sessionTtlSeconds, capacity: config.maxSessions });
+  const sessions = (config.mobile.enabled ? createSessionStore : createBoundedStore)({
+    ttlSeconds: config.sessionTtlSeconds, capacity: config.maxSessions
+  });
   const oauthClient = createHodlxxiOAuthClient(config);
   const authorityReader = createSocialAuthorityReader(config);
   let fullDirectoryClient;
@@ -504,6 +509,7 @@ export async function runServer({ env = process.env, stdout = console.log, stder
     }
   }
   let recipientCapabilityIssuer;
+  let composition;
 
   if (
     config.recipientCapability.enabled
@@ -515,7 +521,8 @@ export async function runServer({ env = process.env, stdout = console.log, stder
           {
             sessions,
             authorityReader,
-            fullDirectoryClient
+            fullDirectoryClient,
+            ...(config.mobile.enabled ? { sessionReader: (id) => composition.capabilitySessionReader(id) } : {})
           }
         );
     } catch {
@@ -570,19 +577,26 @@ export async function runServer({ env = process.env, stdout = console.log, stder
     }
   }
 
-  const bff = createSocialOAuthBff({
-    config,
-    pendingTransactions,
-    sessions,
-    oauthClient,
-    authorityReader,
-    fullDirectoryClient,
-    recipientCapabilityIssuer,
-    messagingDeviceClient,
-    messagingDeviceAuthorizationClient,
-    messagingRecipientClient
-  });
-  const server = createServer(createHttpHandler({ publicOrigin: config.publicOrigin, bff }));
+  try {
+    composition = await mobileRuntimeFactory({
+      config,
+      pendingTransactions,
+      sessions,
+      oauthClient,
+      authorityReader,
+      fullDirectoryClient,
+      recipientCapabilityIssuer,
+      messagingDeviceClient,
+      messagingDeviceAuthorizationClient,
+      messagingRecipientClient
+    });
+  } catch {
+    stderr("invalid configuration");
+    return 2;
+  }
+  const server = createServer(createHttpHandler({
+    publicOrigin: config.publicOrigin, bff: composition.bff, mobilePostRoutes: composition.mobilePostRoutes
+  }));
   try { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(config.port, config.bindHost, resolve); }); }
   catch { stderr("listener unavailable"); return 3; }
   stdout(`listening ${config.bindHost}:${config.port}`);
