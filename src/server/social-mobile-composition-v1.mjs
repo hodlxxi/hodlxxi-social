@@ -1,4 +1,4 @@
-// Trusted test/Phase-3 composition only. The normal CLI never imports this.
+// Trusted composition only; the runtime's separate mobile flag controls install.
 import { createSocialOAuthBff } from "./social-oauth-bff.mjs";
 import { createMobileSessionManager } from "./social-mobile-session-v1.mjs";
 import { createMobileBffRoutes, MOBILE_POST_ROUTES } from "./social-mobile-bff-v1.mjs";

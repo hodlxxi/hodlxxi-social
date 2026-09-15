@@ -4,7 +4,7 @@ The canonical contract is UBID `a8c409dbe4c900cc8f99c08346cd15bf83604336`. The t
 
 The implemented journey is desktop offer, phone proposal/scan, comparison, explicit desktop approval, exact saved approval retry, status/close, phone reconciliation, exchange, separate issuance/recovery, authenticated use, and logout. LEGACY reserve/accept/status/close remains bound to desktop OAuth; it has no QR session issuance. Existing NIP-07 authorization is separate.
 
-No normal CLI, browser entrypoint, discovery or configuration installs this composition. A trusted caller must explicitly construct the confidential clients, call `createSocialMobileComposition({enabled:true,...})`, pass its `mobilePostRoutes` to `createHttpHandler`, and explicitly mount `mountSocialMobileAuthorization`. Off/absent leaves the original BFF in place. The UI accepts a pairing locator; camera scanning and physical-phone E2E are deferred.
+The [trusted runtime wiring](SOCIAL_MOBILE_RUNTIME_WIRING.md) provides explicit server configuration and an independent mobile enable boundary. Default/off CLI behavior leaves the original BFF in place. An enabled trusted caller constructs the confidential clients, calls `createSocialMobileComposition({enabled:true,...})`, and passes its `mobilePostRoutes` to `createHttpHandler`. The separate browser `mountSocialMobileAuthorization` remains explicit and unused by ordinary browser entrypoints. The UI accepts a pairing locator; camera scanning and physical-phone E2E are deferred.
 
 ## Source and authority map
 
