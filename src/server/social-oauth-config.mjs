@@ -399,7 +399,7 @@ export function parseSocialOAuthConfig(input) {
     port: integer(input.port, LIMITS.port), transactionTtlSeconds: integer(input.transactionTtlSeconds, LIMITS.ttl),
     sessionTtlSeconds: integer(input.sessionTtlSeconds, LIMITS.ttl), maxPendingTransactions: integer(input.maxPendingTransactions, LIMITS.capacity),
     maxSessions: integer(input.maxSessions, LIMITS.capacity), outboundTimeoutMs: integer(input.outboundTimeoutMs, LIMITS.timeout),
-    callbackUri: `${publicOrigin}/auth/callback`, scope: "openid",
+    callbackUri: `${publicOrigin}/auth/callback`, scope: "openid profile",
     fullDirectory,
     recipientCapability,
     messagingDevice,

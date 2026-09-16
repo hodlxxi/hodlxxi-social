@@ -123,6 +123,14 @@ export function validateTokenResponse(value) {
   if (Object.hasOwn(value, "scope") && !bounded(value.scope, 1024)) failure();
   return value.access_token;
 }
+const scopeTokens = (value) => {
+  if (!bounded(value, 8192)) failure();
+  const tokens = value.split(" ");
+  // RFC 6749 section 3.3: nonempty scope tokens separated by one ASCII space.
+  if (tokens.some((token) => !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(token))) failure();
+  return tokens;
+};
+
 export function validateIntrospectionResponse(value, { clientId, scope }) {
   if (!plain(value) || value.active !== true || typeof value.sub !== "string" || !/^[0-9a-f]{64}$/.test(value.sub)) failure();
   for (const item of Object.values(value)) {
@@ -130,7 +138,9 @@ export function validateIntrospectionResponse(value, { clientId, scope }) {
     if (typeof item === "number" && (!Number.isSafeInteger(item) || item < 0)) failure();
   }
   if (Object.hasOwn(value, "client_id") && value.client_id !== clientId) failure();
-  if (Object.hasOwn(value, "scope") && !value.scope.split(" ").includes(scope)) failure();
+  if (!Object.hasOwn(value, "scope")) failure();
+  const granted = new Set(scopeTokens(value.scope));
+  if (!scopeTokens(scope).every((token) => granted.has(token))) failure();
   return value.sub;
 }
 

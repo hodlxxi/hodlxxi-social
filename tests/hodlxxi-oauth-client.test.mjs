@@ -151,6 +151,54 @@ test("strict token and introspection shapes fail closed", () => {
   ]) assert.throws(() => validateIntrospectionResponse(value, config));
 });
 
+test("introspection accepts requested scope sets regardless of order or valid extra scopes", () => {
+  const value = { active: true, sub: "a".repeat(64), client_id: config.clientId };
+  for (const requested of ["openid", "openid profile", "profile openid"]) {
+    for (const scope of ["openid profile", "profile openid", "openid profile extra", "extra profile openid", "openid profile openid"]) {
+      assert.equal(validateIntrospectionResponse({ ...value, scope }, { ...config, scope: requested }), value.sub);
+    }
+  }
+});
+
+test("introspection rejects missing requested scopes, substrings, and case mismatches", () => {
+  const multiScopeConfig = { ...config, scope: "openid profile" };
+  for (const scope of ["openid", "profile", "openid other", "profile other", "openid profiles", "xopenid profile", "openidprofile", "openid Profile", "Openid profile"]) {
+    assert.throws(() => validateIntrospectionResponse({
+      active: true, sub: "a".repeat(64), scope
+    }, multiScopeConfig), /oauth_request_failed/);
+  }
+});
+
+test("introspection rejects omitted scope because containment cannot be verified", () => {
+  for (const scope of ["openid", "openid profile"]) {
+    assert.throws(() => validateIntrospectionResponse({
+      active: true, sub: "a".repeat(64)
+    }, { ...config, scope }), /oauth_request_failed/);
+  }
+});
+
+test("introspection rejects malformed granted and requested scope serialization", () => {
+  const value = { active: true, sub: "a".repeat(64), scope: "openid profile" };
+  for (const scope of [
+    undefined, null, true, 1, ["openid", "profile"], {}, "", " ",
+    " openid profile", "openid profile ", "openid  profile", "openid\tprofile",
+    "openid profile\n", "openid\rprofile", "openid profile\u0000", "openid profile\u007f",
+    "openid profile\u0080", "openid\u00a0profile", 'openid profile "extra"', "openid profile \\extra",
+    "openid profile café", "openid " + "x".repeat(8186)
+  ]) {
+    assert.throws(() => validateIntrospectionResponse({ ...value, scope }, config), /oauth_request_failed/);
+    assert.throws(() => validateIntrospectionResponse(value, { ...config, scope }), /oauth_request_failed/);
+  }
+});
+
+test("introspection preserves scope string bounds and accepts OAuth token punctuation", () => {
+  for (const scope of ["openid " + "x".repeat(8185), "openid !#[]~:read"]) {
+    const value = { active: true, sub: "a".repeat(64), scope };
+    assert.equal(validateIntrospectionResponse(value, config), value.sub);
+    assert.equal(validateIntrospectionResponse(value, { ...config, scope }), value.sub);
+  }
+});
+
 test("duplicate token and introspection JSON members are rejected and disposed", async () => {
   const cases = [
     ['{"access_token":"first","access_token":"second","token_type":"Bearer"}'],
