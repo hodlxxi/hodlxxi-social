@@ -126,3 +126,13 @@ with commit:
 
 That branch is not part of current `main` and is not production state. It must
 be reviewed independently before reuse, modification, merge, or deployment.
+
+## Later Phase 3 source work is not an operational observation
+
+The [messaging completion plan](MESSAGING_COMPLETION_PLAN.md) records a dormant
+accepted-mobile routing prerequisite and exact envelope-to-routing projection.
+This source change adds no active route, ciphertext store, inbox or Phase 4 UI.
+It does not update the dated observations above: no service, database, runtime
+configuration, candidate deployment directory, staging or production state was
+inspected through live application calls or changed during this increment.
+Source availability must not be reported as deployed messaging readiness.

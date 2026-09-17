@@ -95,3 +95,42 @@ no Nostr extension. Verify send, receive, local decryption, restart continuity,
 rotation/revocation and failed authorization. Claim messaging completion only
 after that vertical slice succeeds. Source review, staging activation and
 production promotion remain separate decisions.
+
+## Phase 3 source prerequisite: accepted mobile routing evidence
+
+The next source increment is partial. UBID's canonical
+`docs/SOCIAL_MESSAGING_MOBILE_ROUTING_V1.md` defines its default-off accepted-mobile
+proof verifier and read-only adapter over the existing committed acceptance
+owner. Social adds `src/server/message-routing-request-v1.mjs`, an inert,
+explicitly gated projection from the exact V1.28F.1 wire into UBID's already
+reviewed `hodlxxi.social_messaging_recipient_routing_request.v1`. Neither is
+imported into runtime composition or the authenticated browser.
+
+The projection first performs the unchanged bounded canonical envelope parse,
+then computes the existing domain-separated envelope digest. It returns only
+`envelopeDigest`, `messageId`, `recipientDeviceHandles`,
+`recipientPackageSnapshotId`, `schema`, and `version`, in compact sorted-key ASCII
+JSON, limited to 2,048 bytes. It additionally enforces UBID's existing canonical
+base64url handle encoding without changing any handle. It accepts no caller
+subject, recipient identity, digest override, alias, key or routing decision.
+`enabled` defaults to false and only literal `true` permits projection.
+Failures use only `message routing unavailable`. This is a request serializer,
+not authentication, transport, a storage receipt or a success response.
+
+The identical `tests/fixtures/social_messaging_phase3_routing_v1.json` in each
+repository freezes the real UBID package producer's public result, synthetic
+ciphertext envelope, digest and request. Independent consumer tests preserve
+repository isolation and prove byte-for-byte compatibility. Existing V1.28E
+and V1.28F.1 bytes and Phase 2 authentication behavior are unchanged.
+
+Phase 3 still requires transactionally composed Nostr/mobile proof selection,
+exact sender-device/session and recipient-self admission, capability-bound
+package issuance with durable confidential routing-snapshot retention, UBID's
+routing-registry/decision-ledger migration and adapter, a minimized outward
+routing contract, and Social's own ciphertext persistence/submission/inbox.
+That work must define atomicity and lost-response recovery across the owners,
+replay conflicts, bounded pagination/cursors, retention/quotas, opaque sender
+attribution, sender-device copies/history, and future rotation/revocation
+retrieval checks. All runtime/client/route wiring and a complete offline
+transport/inbox rehearsal remain pending. These dependencies must be completed
+before Phase 4 browser encryption/reception/decryption UI work begins.

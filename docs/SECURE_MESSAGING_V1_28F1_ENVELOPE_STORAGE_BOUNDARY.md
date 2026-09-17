@@ -131,3 +131,14 @@ are deferred.
 The next prerequisite is a separate UBID recipient-self routing gate. That
 gate must be reviewed before authorization, transport, durable storage, or
 inbox composition is designed or activated.
+
+## Dormant Phase 3 routing-request projection
+
+`src/server/message-routing-request-v1.mjs` now consumes this exact canonical
+wire and digest without modifying the envelope. It emits UBID's existing
+bounded canonical routing request only with explicit `enabled: true` (default
+false). UBID's accepted-mobile evidence reader/verifier can feed the existing
+routing gate under separate false-by-default source flags. Shared synthetic
+vectors prove package/handle/request compatibility. Persistent routing,
+recipient-self authorization, ciphertext storage and inbox composition are
+still deferred; see the [completion plan](MESSAGING_COMPLETION_PLAN.md).
