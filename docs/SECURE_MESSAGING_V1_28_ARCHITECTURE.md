@@ -50,6 +50,68 @@ The following roles remain distinct:
 - UBID authentication/signing identity;
 - optional external Nostr signing identity;
 - Social device encryption keys.
+- Social messaging-device authentication keys.
+
+## Separate Ed25519 exact-device authentication role
+
+The operator-authorized policy permits one additional, separate browser-local
+role: one dedicated Ed25519 WebCrypto keypair per messaging device. Its private
+CryptoKey is `extractable=false`, persists only through the approved
+device-local browser storage boundary, and is never exported, transmitted, or
+held by Social or UBID. The server receives only its public binding.
+
+This Ed25519 key is used only for domain-separated exact messaging-device
+authentication and proof of possession. It is never used for encryption, the
+participant/Nostr identity key, ordinary Nostr event signing, Bitcoin, funds,
+covenant or wallet authority, or general-purpose signing. It is separate from
+the X25519 encryption key below; X25519 remains non-extractable, browser-local,
+encryption-only, and forbidden for authentication, identity, or general
+signing.
+The policy requires Ed25519 and raw 32-byte public keys; the future reviewed
+proof profile must define the accepted signature encoding and all other proof
+wire details.
+
+There is one current active Ed25519 authentication-key association per exact
+messaging device. Controlled rotation may create a successor during an atomic
+transition; after rotation only the successor is current. The Ed25519 private
+CryptoKey and its record/schema/lifecycle must remain separate from the X25519
+encryption-key record/schema/lifecycle. Neither key may be derived from, aliased
+to, or substituted for the other. This policy requires that separation but does
+not select a live database/store, store name, schema, record shape, or lifecycle
+implementation for the Ed25519 key.
+
+The exact role requires a new versioned, domain-separated `Enrollment V2`
+commitment covering the accepted messaging-device binding (including its
+X25519 public binding), the exact Ed25519 public key, and the exact versioned
+Ed25519 proof-profile identifier subsequently approved by the reviewed source
+implementation and covered by its fixed vectors. This policy does not select or
+freeze that identifier, a serializer, a preimage, a signature encoding, or wire
+bytes. The future implementation patch must select and freeze those details
+only after its review and fixed-vector coverage.
+
+The exact association must receive one explicit approval from the authorized
+external signer whose participant public key exactly matches both the
+authenticated session subject and the Enrollment V2 subject. Social must locally
+verify the returned approval event and exact subject match, then release the
+signer/provider after that explicit approval. Full entitlement is necessary but
+insufficient. No different Full participant, sponsor, recipient, operator,
+administrator, or OAuth session may approve the association. The phone must then
+prove possession of the corresponding private key over the same commitment and
+a fresh server-originated challenge. OAuth, QR scan, browser session, or device
+possession alone is insufficient. An existing Phase 2 device cannot receive an
+unsigned post-acceptance attachment; it must explicitly re-enroll or re-pair.
+Rotation or revocation invalidates the old association and outstanding
+challenges. Any use outside this exact role requires a new explicit operator
+policy decision.
+
+Runtime admission remains disabled by default. It cannot be enabled until
+strict Ed25519 public-key/signature validation rejects malformed,
+non-canonical, identity, low-order, and torsion cases; an atomic single-use
+challenge owner exists; and final admission rechecks the current session,
+Full entitlement, association, expiry, rotation, and revocation. Native
+WebCrypto or OpenSSL signature verification alone is not the full server
+validation boundary. Chrome 137+ is required unless a later separately
+reviewed compatibility decision expands support.
 
 A Social encryption key must not be derived from, reused as, or equated with a
 Bitcoin key, XPUB, OAuth secret, server signing key, Nostr identity key, or
@@ -257,8 +319,22 @@ structured-clone retention. Each browser checks them at runtime; unsupported
 X25519, CryptoKey persistence, or strict transaction durability fails closed.
 There is no extractable-private-key fallback or crypto dependency.
 
-The dedicated IndexedDB database `hodlxxi-social-messaging-device-v1`, version 1,
-has one `device` store and one `current` record. Its closed fields are `schema`,
+### Operator-observed Ed25519 preflight evidence
+
+In a manual operator preflight, Chrome 152 created a separate Ed25519 key with
+`extractable=false`; PKCS8 and JWK private-key export attempts were rejected;
+32-byte public keys and 64-byte signatures worked; and the key was persisted
+through a strict IndexedDB transaction. After fully quitting and reopening as
+Chrome 153, the same public-key digest remained
+`e58d7fe652ebdcc6a5ffaa8416dd15cdb529148096105935faed81fb68ebe602`. The
+persisted private key remained non-extractable and usable. The isolated
+preflight database was deleted, and no application database was touched. This
+is operator-observed manual evidence, not automated CI and not runtime
+activation.
+
+The dedicated X25519 encryption-key IndexedDB database
+`hodlxxi-social-messaging-device-v1`, version 1, has one `device` store and one
+`current` record. Its closed fields are `schema`,
 `version`, `subject`, `deviceId`, `privateKey` (the CryptoKey), `publicKey`,
 `requestId`, `state`, `acceptedBinding`, `authorization`,
 `pendingAuthorization`, `pendingProposal`, and `rotation`. The schema is
@@ -267,9 +343,12 @@ retains the non-extractable key; application JSON serialization, private-key
 export, localStorage, and sessionStorage are never used for this record. Only
 browser memory and this local store receive the private CryptoKey. It is never
 uploaded, logged, rendered, or included in a returned UI projection. This is
-the sole narrow persistence exception documented in AGENTS.md; participant
-signing keys and server-side private-key custody remain prohibited. This key
-is independent of Bitcoin, XPUB, UBID, OAuth, Nostr, and recipient capabilities.
+the X25519 encryption-key persistence exception documented in AGENTS.md; the
+separately permitted Ed25519 authentication-key record/schema/lifecycle must
+remain distinct, and this policy does not select a live store implementation for
+it. Participant signing keys and server-side private-key custody remain
+prohibited. This key is independent of Bitcoin, XPUB, UBID, OAuth, Nostr, and
+recipient capabilities.
 
 Before setup, the controller re-reads `/auth/session`, requires the current
 Messages access context to be Full, and reconciles the existing local record
