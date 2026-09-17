@@ -164,6 +164,37 @@ test("authoritative UBID register vector validates and NIP-07 signs exactly once
   assert.deepEqual(calls, ["getPublicKey", ["signEvent", unsignedEvent]]);
 });
 
+test("NIP-07 class prototype methods verify with one call each and the provider as this", async () => {
+  const calls = [];
+  class BaseProvider {
+    async getPublicKey() {
+      assert.equal(this, provider);
+      calls.push("getPublicKey");
+      return subject;
+    }
+  }
+  class Provider extends BaseProvider {
+    async signEvent(value) {
+      assert.equal(this, provider);
+      calls.push(["signEvent", structuredClone(value)]);
+      return signedEvent;
+    }
+  }
+  const provider = new Provider();
+  assert.equal(Object.hasOwn(provider, "getPublicKey"), false);
+  assert.equal(Object.hasOwn(provider, "signEvent"), false);
+  const signer = createNip07MessagingDeviceSigner({
+    resolveProvider: () => provider,
+    setTimer: () => 1,
+    clearTimer() {}
+  });
+  const result = await signMessagingDeviceAuthorizationIntent(
+    { subject, intent: intent() }, { signer, ...vectorCrypto }
+  );
+  assert.deepEqual(result.signedEvent, signedEvent);
+  assert.deepEqual(calls, ["getPublicKey", ["signEvent", unsignedEvent]]);
+});
+
 test("authoritative UBID rotate revoke and adoption carrier vectors verify byte-for-byte", async () => {
   const bindingId = "6d64122a05d41e5823f2e9ff95bbc220035cfae53f0364410851f86d2b62a56d";
   const rotateBindingId = "cc4efc97cef56180a86b1d9235b754fa717b45d4b9593ebdb04be4226c357b10";
@@ -797,6 +828,102 @@ test("expired cancelled subject-changed and tampered retry material never submit
     { subject, proposal },
     vectorCrypto
   ), /authorization unavailable/);
+});
+
+test("NIP-07 prototype subject mismatch and uppercase keys fail before signEvent inspection", async () => {
+  for (const returnedKey of ["b".repeat(64), subject.toUpperCase()]) {
+    const calls = [];
+    let signInspections = 0;
+    class Provider {
+      async getPublicKey() { calls.push("getPublicKey"); return returnedKey; }
+      async signEvent() { calls.push("signEvent"); return signedEvent; }
+    }
+    const provider = new Proxy(new Provider(), {
+      getOwnPropertyDescriptor(target, name) {
+        if (name === "signEvent") signInspections += 1;
+        return Object.getOwnPropertyDescriptor(target, name);
+      }
+    });
+    const signer = createNip07MessagingDeviceSigner({
+      resolveProvider: () => provider,
+      setTimer: () => 1,
+      clearTimer() {}
+    });
+    await assert.rejects(
+      signer.signEventForSubject({ subject, unsignedEvent }),
+      (error) => error.message === "messaging device authorization unavailable"
+    );
+    assert.deepEqual(calls, ["getPublicKey"]);
+    assert.equal(signInspections, 0);
+  }
+});
+
+test("NIP-07 rejects own and inherited accessors or non-function shadows without invoking getters", async () => {
+  for (const name of ["getPublicKey", "signEvent"]) {
+    for (const location of ["own", "prototype"]) {
+      for (const descriptorType of ["accessor", "non-function"]) {
+        const calls = [];
+        let getterCalls = 0;
+        const methods = {
+          async getPublicKey() { calls.push("getPublicKey"); return subject; },
+          async signEvent() { calls.push("signEvent"); return signedEvent; }
+        };
+        const prototype = Object.create(methods);
+        const provider = Object.create(prototype);
+        Object.defineProperty(location === "own" ? provider : prototype, name,
+          descriptorType === "accessor" ? {
+            get() { getterCalls += 1; return methods[name]; }
+          } : { value: undefined });
+        const signer = createNip07MessagingDeviceSigner({
+          resolveProvider: () => provider,
+          setTimer: () => 1,
+          clearTimer() {}
+        });
+        await assert.rejects(
+          signer.signEventForSubject({ subject, unsignedEvent }),
+          (error) => error.message === "messaging device authorization unavailable",
+          `${name} ${location} ${descriptorType}`
+        );
+        assert.equal(getterCalls, 0);
+        assert.deepEqual(calls, name === "getPublicKey" ? [] : ["getPublicKey"]);
+      }
+    }
+  }
+});
+
+test("NIP-07 prototype and descriptor inspection failures remain generic", async () => {
+  for (const trap of ["getOwnPropertyDescriptor", "getPrototypeOf"]) {
+    let inspections = 0;
+    const prototype = new Proxy({}, {
+      [trap]() { inspections += 1; throw new Error("extension detail"); }
+    });
+    const signer = createNip07MessagingDeviceSigner({
+      resolveProvider: () => Object.create(prototype)
+    });
+    await assert.rejects(
+      signer.signEventForSubject({ subject, unsignedEvent }),
+      (error) => error.message === "messaging device authorization unavailable"
+    );
+    assert.equal(inspections, 1);
+  }
+});
+
+test("NIP-07 bounds inspection of a cyclic proxy prototype chain", async () => {
+  let inspections = 0;
+  const provider = new Proxy({}, {
+    getOwnPropertyDescriptor() {
+      inspections += 1;
+      if (inspections > 8) throw new Error("prototype traversal exceeded its bound");
+      return undefined;
+    },
+    getPrototypeOf() { return provider; }
+  });
+  const signer = createNip07MessagingDeviceSigner({ resolveProvider: () => provider });
+  await assert.rejects(
+    signer.signEventForSubject({ subject, unsignedEvent }),
+    (error) => error.message === "messaging device authorization unavailable"
+  );
+  assert.equal(inspections, 8);
 });
 
 test("NIP-07 rejection is generic and subject mismatch happens before signEvent lookup", async () => {

@@ -45,6 +45,7 @@ const MAX_INTENT_BYTES = 32 * 1024;
 const MAX_RESULT_BYTES = 16 * 1024;
 const DEFINITIVE_UNAVAILABLE_BODY = '{"state":"unavailable"}';
 const DEFAULT_TIMEOUT_MS = 15_000;
+const MAX_NIP07_METHOD_DEPTH = 8;
 
 const failureKinds = new WeakMap();
 const unavailable = (kind = "malformed") => {
@@ -755,6 +756,25 @@ export async function authorizeMessagingDeviceBinding(
   );
 }
 
+const resolveNip07DataMethod = (provider, name) => {
+  try {
+    let current = provider;
+    for (let depth = 0; current !== null && depth < MAX_NIP07_METHOD_DEPTH; depth += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, name);
+      if (descriptor !== undefined) {
+        if (!Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "function") {
+          unavailable();
+        }
+        return descriptor.value;
+      }
+      current = Object.getPrototypeOf(current);
+    }
+  } catch {
+    unavailable();
+  }
+  unavailable();
+};
+
 export function createNip07MessagingDeviceSigner({
   resolveProvider,
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -795,13 +815,11 @@ export function createNip07MessagingDeviceSigner({
       let provider;
       try {
         provider = resolveProvider();
-        if (!ownPlain(provider)) unavailable();
-        const getPublicKey = Object.getOwnPropertyDescriptor(provider, "getPublicKey")?.value;
-        if (typeof getPublicKey !== "function") unavailable();
+        if (provider === null || typeof provider !== "object") unavailable();
+        const getPublicKey = resolveNip07DataMethod(provider, "getPublicKey");
         const publicKey = await call(provider, getPublicKey, []);
         if (!HEX64.test(publicKey) || publicKey !== subject) unavailable();
-        const signEvent = Object.getOwnPropertyDescriptor(provider, "signEvent")?.value;
-        if (typeof signEvent !== "function") unavailable();
+        const signEvent = resolveNip07DataMethod(provider, "signEvent");
         return await call(provider, signEvent, [unsignedEvent]);
       } catch {
         unavailable();
