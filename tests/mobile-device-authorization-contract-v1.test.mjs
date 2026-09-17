@@ -197,6 +197,237 @@ test("only explicit desktop approval acquires NIP-07 and calls signEvent exactly
   assert.equal(h.calls.filter((v) => v === "sign").length, 1);
 });
 
+const signerUnavailable = { name: "TypeError", message: "messaging device authorization unavailable" };
+
+test("desktop approval awaits claim before class prototype methods, with one call each and the provider as this", async () => {
+  const h = await approvalHarness();
+  const event = await eventFor(first, METHODS.qr);
+  class BaseProvider {
+    async getPublicKey() {
+      assert.equal(this, provider);
+      h.calls.push("key");
+      return subject;
+    }
+  }
+  class Provider extends BaseProvider {
+    async signEvent(unsigned) {
+      assert.equal(this, provider);
+      h.calls.push("sign");
+      assert.deepEqual(unsigned, (await mobileUnsignedEvent(h.action.authorization, options(first, METHODS.qr))).unsignedEvent);
+      return event;
+    }
+  }
+  const provider = new Provider();
+  assert.notEqual(Object.getPrototypeOf(provider), Object.prototype);
+  assert.equal(Object.hasOwn(provider, "getPublicKey"), false);
+  assert.equal(Object.hasOwn(provider, "signEvent"), false);
+  let releaseClaim, signalClaim;
+  const claimPending = new Promise((resolve) => { releaseClaim = resolve; });
+  const claimStarted = new Promise((resolve) => { signalClaim = resolve; });
+  const controller = createDesktopPhoneApproval({ ...h.config,
+    claimApproval: async (claim) => {
+      assert.deepEqual(claim, { revision: "cc".repeat(32), pairingId: vectors.pairingContext.pairingId,
+        transcriptDigest: first[METHODS.qr].digest });
+      const claimed = await h.config.claimApproval(claim);
+      signalClaim();
+      await claimPending;
+      return claimed;
+    },
+    resolveProvider: () => { h.calls.push("resolve"); return provider; }
+  });
+  assert.deepEqual(h.calls, []);
+  const approval = controller.approve(h.action);
+  await claimStarted;
+  assert.deepEqual(h.calls, ["claim"]);
+  releaseClaim();
+  const retry = await approval;
+  assert.deepEqual(h.calls, ["claim", "resolve", "key", "sign", "persist"]);
+  assert.deepEqual(h.retries, [retry]);
+  assert.deepEqual(await parseMobileEventRetry(h.action.authorization, retry, options(first, METHODS.qr)), event);
+  await assert.rejects(controller.approve(h.action));
+  assert.deepEqual(h.calls, ["claim", "resolve", "key", "sign", "persist"]);
+});
+
+test("desktop approval rejects prototype subject mismatch before signEvent inspection", async () => {
+  for (const returnedKey of ["ff".repeat(32), subject.toUpperCase()]) {
+    const h = await approvalHarness();
+    let signInspections = 0;
+    class Provider {
+      async getPublicKey() { h.calls.push("key"); return returnedKey; }
+      async signEvent() { h.calls.push("sign"); }
+    }
+    const provider = new Proxy(new Provider(), {
+      getOwnPropertyDescriptor(target, name) {
+        if (name === "signEvent") signInspections += 1;
+        return Object.getOwnPropertyDescriptor(target, name);
+      }
+    });
+    const controller = createDesktopPhoneApproval({ ...h.config,
+      resolveProvider: () => { h.calls.push("resolve"); return provider; }
+    });
+    await assert.rejects(controller.approve(h.action), signerUnavailable);
+    assert.deepEqual(h.calls, ["claim", "resolve", "key"]);
+    assert.equal(signInspections, 0);
+    assert.deepEqual(h.retries, []);
+  }
+});
+
+test("desktop approval rejects own and inherited accessors and non-function shadows without invoking them", async () => {
+  for (const name of ["getPublicKey", "signEvent"]) {
+    for (const location of ["own", "prototype"]) {
+      for (const descriptorType of ["getter", "setter", "non-function"]) {
+        const h = await approvalHarness();
+        let accessorCalls = 0;
+        const methods = {
+          async getPublicKey() { h.calls.push("key"); return subject; },
+          async signEvent() { h.calls.push("sign"); }
+        };
+        const prototype = Object.create(methods);
+        const provider = Object.create(prototype);
+        const descriptor = descriptorType === "getter" ? {
+          get() { accessorCalls += 1; return Object.getOwnPropertyDescriptor(methods, name).value; }
+        } : descriptorType === "setter" ? {
+          set(value) { accessorCalls += 1; }
+        } : { value: undefined };
+        Object.defineProperty(location === "own" ? provider : prototype, name, descriptor);
+        const controller = createDesktopPhoneApproval({ ...h.config,
+          resolveProvider: () => { h.calls.push("resolve"); return provider; }
+        });
+        await assert.rejects(controller.approve(h.action), signerUnavailable, `${name} ${location} ${descriptorType}`);
+        assert.equal(accessorCalls, 0);
+        assert.deepEqual(h.calls, ["claim", "resolve", ...(name === "signEvent" ? ["key"] : [])]);
+        assert.deepEqual(h.retries, []);
+      }
+    }
+  }
+});
+
+test("desktop approval keeps provider and prototype inspection failures generic", async () => {
+  for (const name of ["getPublicKey", "signEvent"]) {
+    for (const trap of ["getOwnPropertyDescriptor", "getPrototypeOf"]) {
+      for (const location of ["own", "prototype"]) {
+        const h = await approvalHarness();
+        let inspections = 0;
+        const target = name === "signEvent" ? {
+          async getPublicKey() { h.calls.push("key"); return subject; }
+        } : {};
+        const inspected = new Proxy(target, {
+          [trap](object, key) {
+            if (trap === "getOwnPropertyDescriptor" && key !== name) return Object.getOwnPropertyDescriptor(object, key);
+            inspections += 1;
+            throw new Error("private extension inspection detail");
+          }
+        });
+        const provider = location === "own" ? inspected : Object.create(inspected);
+        const controller = createDesktopPhoneApproval({ ...h.config,
+          resolveProvider: () => { h.calls.push("resolve"); return provider; }
+        });
+        await assert.rejects(controller.approve(h.action), signerUnavailable, `${name} ${trap} ${location}`);
+        assert.equal(inspections, 1);
+        assert.deepEqual(h.calls, ["claim", "resolve", ...(name === "signEvent" ? ["key"] : [])]);
+        assert.deepEqual(h.retries, []);
+      }
+    }
+  }
+});
+
+test("desktop approval accepts methods at the eighth level and rejects methods beyond the bound", async () => {
+  for (const name of ["getPublicKey", "signEvent"]) for (const depth of [7, 8]) {
+    const h = await approvalHarness();
+    const event = await eventFor(first, METHODS.qr);
+    const methods = {
+      async getPublicKey() { assert.equal(this, provider); h.calls.push("key"); return subject; },
+      async signEvent() { assert.equal(this, provider); h.calls.push("sign"); return event; }
+    };
+    let provider = Object.create(null, { [name]: Object.getOwnPropertyDescriptor(methods, name) });
+    for (let level = 0; level < depth; level += 1) provider = Object.create(provider);
+    const other = name === "getPublicKey" ? "signEvent" : "getPublicKey";
+    Object.defineProperty(provider, other, Object.getOwnPropertyDescriptor(methods, other));
+    const controller = createDesktopPhoneApproval({ ...h.config,
+      resolveProvider: () => { h.calls.push("resolve"); return provider; }
+    });
+    if (depth === 7) {
+      const retry = await controller.approve(h.action);
+      assert.deepEqual(h.calls, ["claim", "resolve", "key", "sign", "persist"]);
+      assert.deepEqual(h.retries, [retry]);
+    } else {
+      await assert.rejects(controller.approve(h.action), signerUnavailable);
+      assert.deepEqual(h.calls, ["claim", "resolve", ...(name === "signEvent" ? ["key"] : [])]);
+      assert.deepEqual(h.retries, []);
+    }
+  }
+});
+
+test("desktop approval bounds cyclic prototype inspection and never reads provider properties", async () => {
+  for (const name of ["getPublicKey", "signEvent"]) {
+    const h = await approvalHarness();
+    let inspections = 0, propertyReads = 0;
+    const provider = new Proxy({}, {
+      get() { propertyReads += 1; throw new Error("unexpected property access"); },
+      getOwnPropertyDescriptor(target, key) {
+        if (key !== name) return { configurable: true, value: async () => { h.calls.push("key"); return subject; } };
+        inspections += 1;
+        if (inspections > 8) throw new Error("prototype traversal exceeded its bound");
+        return undefined;
+      },
+      getPrototypeOf() { return provider; }
+    });
+    const controller = createDesktopPhoneApproval({ ...h.config,
+      resolveProvider: () => { h.calls.push("resolve"); return provider; }
+    });
+    await assert.rejects(controller.approve(h.action), signerUnavailable);
+    assert.equal(inspections, 8);
+    assert.equal(propertyReads, 0);
+    assert.deepEqual(h.calls, ["claim", "resolve", ...(name === "signEvent" ? ["key"] : [])]);
+    assert.deepEqual(h.retries, []);
+  }
+});
+
+test("desktop approval rejects null and non-object providers", async () => {
+  const callableProvider = Object.assign(() => {}, {
+    getPublicKey() { assert.fail("function provider must not be called"); },
+    signEvent() { assert.fail("function provider must not sign"); }
+  });
+  for (const provider of [null, undefined, false, 42, subject, callableProvider]) {
+    const h = await approvalHarness({ resolveProvider: () => provider });
+    await assert.rejects(h.controller.approve(h.action), signerUnavailable);
+    assert.deepEqual(h.calls, ["claim"]);
+    assert.deepEqual(h.retries, []);
+  }
+});
+
+test("desktop approval rechecks context and expiry after prototype getPublicKey before resolving signEvent", async () => {
+  for (const mutation of ["subject", "revision", "pairingId", "transcriptDigest", "cancel", "expiry"]) {
+    const h = await approvalHarness();
+    const parsed = await parseMobileAuthorization(h.action.authorization, options(first, METHODS.qr));
+    let currentTime = first.now, signInspections = 0;
+    class Provider {
+      async getPublicKey() {
+        h.calls.push("key");
+        await Promise.resolve();
+        if (mutation === "cancel") controller.cancel();
+        else if (mutation === "expiry") currentTime = parsed.semantic.expiresAt;
+        else h.replace({ [mutation]: "ff".repeat(32) });
+        return subject;
+      }
+      async signEvent() { h.calls.push("sign"); }
+    }
+    const provider = new Proxy(new Provider(), {
+      getOwnPropertyDescriptor(target, name) {
+        if (name === "signEvent") signInspections += 1;
+        return Object.getOwnPropertyDescriptor(target, name);
+      }
+    });
+    const controller = createDesktopPhoneApproval({ ...h.config, now: () => currentTime,
+      resolveProvider: () => { h.calls.push("resolve"); return provider; }
+    });
+    await assert.rejects(controller.approve(h.action), signerUnavailable, mutation);
+    assert.deepEqual(h.calls, ["claim", "resolve", "key"]);
+    assert.equal(signInspections, 0);
+    assert.deepEqual(h.retries, []);
+  }
+});
+
 test("mismatched human transcript and disabled mode never acquire signer", async () => {
   for (const changes of [{ comparisonCode: "0000-0000-0000" }, { proposal: vectors.entries[1].proposal }]) {
     const h = await approvalHarness();

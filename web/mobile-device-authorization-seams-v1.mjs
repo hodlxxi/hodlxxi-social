@@ -14,6 +14,24 @@ import {
 const deny = () => { throw new TypeError("mobile device authorization unavailable"); };
 const hex = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
 const toHex = (v) => [...v].map((b) => b.toString(16).padStart(2, "0")).join("");
+const MAX_NIP07_METHOD_DEPTH = 8;
+
+const resolveNip07DataMethod = (provider, name) => {
+  try {
+    let current = provider;
+    for (let depth = 0; current !== null && depth < MAX_NIP07_METHOD_DEPTH; depth += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, name);
+      if (descriptor !== undefined) {
+        if (!Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "function") deny();
+        return descriptor.value;
+      }
+      current = Object.getPrototypeOf(current);
+    }
+  } catch {
+    deny();
+  }
+  deny();
+};
 
 // A claimed subject is only a local public-key hint before LEGACY verification.
 // No login or device authority follows from allocating this pending record.
@@ -88,12 +106,12 @@ export function createDesktopPhoneApproval({
       // Must be an atomic compare-and-swap in the caller's shared public state.
       if (await claimApproval({ revision, pairingId: initial.pairingId, transcriptDigest: parsed.digest }) !== true) deny();
       check();
+      let provider;
       const signer = createNip07MessagingDeviceSigner({ resolveProvider: () => {
         check();
-        let provider = resolveProvider();
-        if (!provider || Object.getPrototypeOf(provider) !== Object.prototype) deny();
-        const getPublicKey = Object.getOwnPropertyDescriptor(provider, "getPublicKey")?.value;
-        if (typeof getPublicKey !== "function") deny();
+        provider = resolveProvider();
+        if (provider === null || typeof provider !== "object") deny();
+        const getPublicKey = resolveNip07DataMethod(provider, "getPublicKey");
         // Recheck across the wallet prompt before reading signEvent.
         return {
           async getPublicKey() {
@@ -105,14 +123,15 @@ export function createDesktopPhoneApproval({
           async signEvent(event) {
             check();
             if (now() >= parsed.semantic.expiresAt) { provider = undefined; deny(); }
-            const signEvent = Object.getOwnPropertyDescriptor(provider, "signEvent")?.value;
-            if (typeof signEvent !== "function") { provider = undefined; deny(); }
+            const signEvent = resolveNip07DataMethod(provider, "signEvent");
             try { return await signEvent.call(provider, event); }
             finally { provider = undefined; }
           }
         };
       } });
-      const event = await signer.signEventForSubject({ subject, unsignedEvent: expected.unsignedEvent });
+      let event;
+      try { event = await signer.signEventForSubject({ subject, unsignedEvent: expected.unsignedEvent }); }
+      finally { provider = undefined; }
       check();
       const verified = await verifyMobileEvent(authorization, event, { ...options, now: now() });
       check();
