@@ -134,3 +134,9 @@ attribution, sender-device copies/history, and future rotation/revocation
 retrieval checks. All runtime/client/route wiring and a complete offline
 transport/inbox rehearsal remain pending. These dependencies must be completed
 before Phase 4 browser encryption/reception/decryption UI work begins.
+
+The [exact device-admission contract and pending decision](EXACT_MESSAGING_DEVICE_ADMISSION_V1.md)
+now defines default-off request/challenge candidates, verifier ports and the
+recipient-self boundary. It is contract-only: no approved request possession
+proof profile preexists, and its admission function always fails closed.
+Cryptographic/key-policy approval and implementation remain prerequisites.
