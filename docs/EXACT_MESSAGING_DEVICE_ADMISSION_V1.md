@@ -1,18 +1,93 @@
-# Exact messaging-device admission: contract and pending decision
+# Exact messaging-device admission: contract and runtime pending
 
-Status: **contract only, proposed for review**. There is no approved device
-request proof profile. No request can be admitted by this increment, even with
-`enabled: true`. No route, session issuer, key, challenge issuer/store, replay
-adapter, routing registry, ciphertext store, inbox or UI is added. Candidate
-serialization is separately default-off and is not proof verification.
+Status: **policy amendment approved; runtime contract only and default-off**.
+The operator has approved a narrow separate Ed25519 exact-device
+authentication-key role, but no runtime proof profile or admission
+implementation is enabled. No request can be admitted by this increment, even
+with `enabled: true`. No route, session issuer, key, challenge issuer/store,
+replay adapter, routing registry, ciphertext store, inbox or UI is added.
+Candidate serialization is separately default-off and is not proof
+verification.
 
 This is the next prerequisite in [the completion plan](MESSAGING_COMPLETION_PLAN.md).
-The [key-role policy](SECURE_MESSAGING_V1_28_ARCHITECTURE.md) and AGENTS.md permit
-only the dedicated non-extractable X25519 encryption CryptoKey. They explicitly
-do not permit using it for authentication or general signing. The existing
-architecture calls for future possession proof without specifying a construction.
-Historical binding acceptance, QR scan, successful session issuance and local
-`ready` state cannot fill that gap.
+The [key-role policy](SECURE_MESSAGING_V1_28_ARCHITECTURE.md) and AGENTS.md
+preserve the dedicated non-extractable X25519 CryptoKey as encryption-only and
+forbid using it for authentication or general signing. They separately permit
+the narrow Ed25519 role below; the existing architecture calls for possession
+proof without activating a construction. Historical binding acceptance, QR
+scan, successful session issuance, browser session, device possession and
+local `ready` state cannot fill that gap.
+
+## Operator-authorized Ed25519 policy boundary
+
+The permitted role is exactly one separate, browser-generated Ed25519 WebCrypto
+keypair per messaging device. Its private CryptoKey must be
+`extractable=false`, remain browser-local, persist only through the approved
+device-local browser storage boundary, and never be exported, serialized,
+transmitted, or held by Social or UBID. The key is used only for
+domain-separated exact messaging-device authentication and proof of possession;
+it is never used for encryption, participant/Nostr identity, ordinary Nostr
+event signing, Bitcoin, funds, covenant or wallet authority, or general-purpose
+signing. The existing X25519 key remains a separate non-extractable,
+browser-local, encryption-only key and cannot authenticate, identify, or sign.
+The policy requires Ed25519 and raw 32-byte public keys; the future reviewed
+proof profile must define the accepted signature encoding and all other proof
+wire details.
+
+There is one current active Ed25519 authentication-key association per exact
+messaging device. Controlled rotation may create a successor during an atomic
+transition; after rotation only the successor is current. The Ed25519 private
+CryptoKey and its record/schema/lifecycle must remain separate from the X25519
+encryption-key record/schema/lifecycle. Neither key may be derived from, aliased
+to, or substituted for the other. This policy requires that separation but does
+not select a live database/store, store name, schema, record shape, or lifecycle
+implementation for the Ed25519 key.
+
+Enrollment V2 is a new versioned, domain-separated commitment covering the
+exact accepted messaging-device binding, its X25519 public binding, the exact
+Ed25519 authentication public key, and the exact versioned Ed25519 proof-profile
+identifier subsequently approved by the reviewed source implementation and
+covered by its fixed vectors. This policy does not select or freeze that
+identifier, a serializer, a preimage, a signature encoding, or wire bytes. The
+future implementation patch must select and freeze those details only after its
+review and fixed-vector coverage.
+
+The exact association must receive one explicit approval from the authorized
+external signer whose participant public key exactly matches both the
+authenticated session subject and the Enrollment V2 subject. Social must locally
+verify the returned approval event and exact subject match, then release the
+signer/provider after that explicit approval. Full entitlement is necessary but
+insufficient. No different Full participant, sponsor, recipient, operator,
+administrator, or OAuth session may approve the association. The phone must
+prove possession of the corresponding private key over the same Enrollment V2
+commitment and a fresh server-originated challenge. OAuth session, QR scan,
+browser session, or device possession alone is insufficient. An existing Phase 2
+device cannot receive an unsigned post-acceptance key attachment; it must
+explicitly re-enroll or re-pair. Rotation and revocation invalidate the old
+association and outstanding challenges.
+
+Runtime admission is disabled/default-off until all of the following exist:
+
+1. Strict Ed25519 public-key and signature validation rejects malformed,
+   non-canonical, identity, low-order, and torsion cases.
+2. An atomic single-use challenge owner exists.
+3. Final admission rechecks the current session, Full entitlement, exact
+   association, expiry, rotation, and revocation.
+
+Native WebCrypto/OpenSSL signature verification alone is not the full server
+validation boundary. Chrome 137+ is required unless a later separately
+reviewed compatibility decision expands support. Any use outside exact
+messaging-device proof requires a new explicit operator policy decision.
+
+The following is operator-observed manual preflight evidence, not automated CI
+and not runtime activation: Chrome 152 created a separate Ed25519 key with
+`extractable=false`; PKCS8 and JWK private-key export attempts were rejected;
+32-byte public keys and 64-byte signatures worked; and the key was persisted
+through a strict IndexedDB transaction. After fully quitting and reopening as
+Chrome 153, the same public-key digest remained
+`e58d7fe652ebdcc6a5ffaa8416dd15cdb529148096105935faed81fb68ebe602`. The
+persisted private key remained non-extractable and usable. The isolated
+preflight database was deleted, and no application database was touched.
 
 ## Existing primitive map
 
@@ -43,11 +118,11 @@ The relevant UBID normative documents are `SOCIAL_MOBILE_DEVICE_AUTHORIZATION_V1
 `SOCIAL_MESSAGING_RECIPIENT_ROUTING_V1.md` and `SOCIAL_MESSAGING_MOBILE_ROUTING_V1.md`
 under its `docs/`. The last two explicitly leave request possession unresolved.
 
-## Decision deferred
+## Policy decision and remaining alternatives
 
 | Choice | What it proves / cost | Policy status |
 | --- | --- | --- |
-| Separate non-extractable messaging authentication CryptoKey | Signs a domain-separated exact request challenge; preserves encryption/authentication separation and allows phone use without participant signer access. Requires new public-key authorization, explicit association with the exact encryption binding, device-local structured-clone permission, rotation/revocation and browser compatibility review. | **Recommended for review**, not approved or implemented. Algorithm, signature encoding and signed proof envelope remain unset. |
+| Separate non-extractable messaging authentication CryptoKey | Signs a domain-separated exact request challenge; preserves encryption/authentication separation and allows phone use without participant signer access. Requires Enrollment V2 public-key authorization, explicit association with the exact encryption binding, device-local structured-clone permission, rotation/revocation and browser compatibility review. | **Policy permitted by this amendment; not implemented or runtime-enabled.** Algorithm, signature encoding and signed proof envelope remain unset. |
 | Reviewed encryption-key challenge/response, potentially using the existing HPKE suite | Could demonstrate decryption/key-agreement possession for the exact encryption key. Requires a new authentication protocol, domain separation, challenge-oracle and cross-protocol analysis; existing HPKE message wrapping does not authorize it. | Requires an explicit change to the encryption-only key policy; not implemented. |
 | Device-bound platform credential | Could provide request signatures with platform key protection. Must establish device-specific, non-synced ownership, browser support, exact enrollment and loss/rotation behavior; a generic synced credential does not prove this device. | Separate policy/protocol decision, not implemented. |
 
@@ -56,13 +131,15 @@ of the exact messaging device, and cannot require phone NIP-07/NIP-46. Bearer
 secrets, saved QR/exchange verifiers, caller-provided device IDs and server-held
 device private keys are not options. No key material is generated here.
 
-Approval must explicitly select a proof profile and authorize its local key
-policy, enrollment and binding association. With the recommended option, both
-public keys must be approved in one exact association, with proof of possession
-of the new authentication key at enrollment. This must be a versioned extension,
-not a reinterpretation of existing signed binding bytes or IDs. Every change
-to either key invalidates the association and outstanding challenges. Existing
-devices require explicit enrollment; OAuth cannot silently attach an auth key.
+Approval must explicitly authorize the local key policy, Enrollment V2 and
+binding association. The future reviewed source implementation separately
+selects the exact versioned proof profile and its fixed vectors. With the
+permitted option, both public keys must be approved in one exact association,
+with proof of possession of the new authentication key at enrollment. This must
+be a versioned extension, not a reinterpretation of existing signed binding
+bytes or IDs. Every change to either key invalidates the association and
+outstanding challenges. Existing devices require explicit enrollment; OAuth
+cannot silently attach an auth key.
 This authenticates the approved device association; it does not independently
 prove X25519 private-key possession on every request. Review must accept that
 distinction or require an additional separately reviewed enrollment proof.
@@ -153,8 +230,9 @@ challengeDigest = "hodlxxi-social-device-challenge-v1-sha256:" +
 ```
 
 This digest is a content identity, not a credential or a selected signature
-preimage. The future approved proof profile must commit all exact challenge
-bytes and its own algorithm/key/domain identity. There is no default profile,
+  preimage. The future reviewed proof profile, once selected by the source
+  implementation, must commit all exact challenge bytes and its own
+  algorithm/key/domain identity. There is no default profile,
 signature parser, permissive verifier or algorithm fallback.
 `tests/fixtures/social_messaging_device_admission_v1.json` freezes both complete
 request/challenge wires, lengths and digests using independent Python standard
@@ -176,7 +254,8 @@ Their required semantics are:
    never relabel proof namespaces. The approved authentication-key association
    must match that same complete binding. Public keys remain confidential here.
 2. `readIssuedChallenge(challengeId)` requires exactly one immutable original
-   reservation owned by that session, binding and approved profile. Caller JSON
+   reservation owned by that session, binding and the exact profile selected by
+   the future reviewed implementation. Caller JSON
    cannot replace it. Challenge expiry must also be bounded by session, Full,
    binding, accepted evidence and approved key-association deadlines.
 3. `verifyInTransaction(exactChallengeWire, profileSpecificProof, lockedAuthority)`
