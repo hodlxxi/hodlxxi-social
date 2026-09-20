@@ -133,9 +133,12 @@ test("frontend exposes interactive surfaces and required non-claims", async () =
   assert.doesNotMatch(html, /password|localStorage|cookie/i);
 });
 
-test("package has only the reviewed V1.28E crypto and build dependencies", async () => {
+test("package has only the reviewed HPKE, device-proof, and build dependencies", async () => {
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.deepEqual(pkg.dependencies, { "@hpke/core": "1.9.0" });
+  assert.deepEqual(pkg.dependencies, {
+    "@hpke/core": "1.9.0",
+    "@noble/ed25519": "2.3.0"
+  });
   assert.deepEqual(pkg.devDependencies, { esbuild: "0.28.2" });
 });
 

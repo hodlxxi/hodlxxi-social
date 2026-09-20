@@ -1,12 +1,14 @@
 // CONTRACT ONLY. Candidate bytes are not authentication or an admission grant.
-// No proof algorithm is approved. Even explicit enablement cannot admit a request.
+// A proof profile is frozen, but atomic authority is absent. Even explicit
+// enablement cannot admit a request.
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
 import { parseCanonicalMessageEnvelopeWireV1 } from "./message-envelope-v128f1.mjs";
 
 export const DEVICE_ADMISSION_ENABLED = false;
-export const APPROVED_DEVICE_PROOF_PROFILE = null;
+export const APPROVED_DEVICE_PROOF_PROFILE =
+  "hodlxxi.social_messaging_device_proof.ed25519_webcrypto.v1";
 export const MAX_DEVICE_CHALLENGE_LIFETIME_MS = 60_000;
 export const DEVICE_REQUEST_SCHEMA = "hodlxxi.social_messaging_device_request_candidate.v1";
 export const DEVICE_CHALLENGE_SCHEMA = "hodlxxi.social_messaging_device_challenge_candidate.v1";
@@ -39,12 +41,35 @@ function parse(wire, fields, maximum) {
   return value;
 }
 
+// Frozen HTTPS-origin grammar shared with UBID; never normalize caller bytes.
+// DNS is ASCII LDH without IDN labels or a numeric/hexadecimal final label.
+export function isCanonicalDeviceAudienceV1(value) {
+  if (typeof value !== "string" || value.length > 255 || /[^\x21-\x7e]/.test(value)) return false;
+  const match = /^https:\/\/(\[[0-9a-f:]+\]|[a-z0-9.-]+)(?::([0-9]+))?$/.exec(value);
+  if (!match) return false;
+  const [, host, port] = match;
+  if (port !== undefined &&
+      (!/^[1-9][0-9]{0,4}$/.test(port) || Number(port) > 65535 || port === "443")) return false;
+  if (host.startsWith("[")) {
+    // Only hex/colon IPv6 reaches URL parsing: no zone, IPv4 tail or IDNA.
+    // Its serializer uses lowercase, no leading zeros, and the first longest
+    // zero run (at least two groups), exactly like ipaddress.IPv6Address.
+    try { return new URL(value).hostname === host; } catch { return false; }
+  }
+  const labels = host.split(".");
+  if (labels.length === 4 && labels.every((label) => /^[0-9]+$/.test(label))) {
+    return labels.every((label) => /^(0|[1-9][0-9]{0,2})$/.test(label) && Number(label) <= 255);
+  }
+  if (/^(?:[0-9]+|0x[0-9a-f]*)$/.test(labels.at(-1))) return false;
+  return labels.every((label) =>
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label) && !label.startsWith("xn--")
+  );
+}
+
 function context(value) {
   for (const field of ["bindingId", "deviceId", "sessionBinding", "subject"]) if (!hex(value[field])) fail();
   if (!Number.isInteger(value.bindingVersion) || value.bindingVersion < 1 || value.bindingVersion > 1024 ||
-      typeof value.audience !== "string" || value.audience.length > 255) fail();
-  const url = new URL(value.audience);
-  if (url.protocol !== "https:" || url.origin !== value.audience || url.username || url.password) fail();
+      !isCanonicalDeviceAudienceV1(value.audience)) fail();
 }
 
 function handle(value) {

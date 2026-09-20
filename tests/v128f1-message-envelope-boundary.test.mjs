@@ -630,18 +630,18 @@ test("V1.28F.1 remains absent from server, BFF, config, and browser composition"
   assert.doesNotMatch(authProduct, /message-envelope-v128f1|src\/server/);
 });
 
-test("package manifests remain byte-identical to the V1.28E base", async () => {
+test("package manifests match the approved dormant device-proof dependency pin", async () => {
   const [manifest, lock] = await Promise.all([
     readFile(new URL("../package.json", import.meta.url)),
     readFile(new URL("../package-lock.json", import.meta.url))
   ]);
   assert.equal(
     createHash("sha256").update(manifest).digest("hex"),
-    "fbaf65be231ed7d2ee8fffac91611140f873b3ff8c06ad594b71c765af3dac39"
+    "9b8e791687e0c7537a4c1500c79073aceeefabaff328a683fb3fca46ecfa9a79"
   );
   assert.equal(
     createHash("sha256").update(lock).digest("hex"),
-    "bb10f1750919c068406bb04da45e4d786ce3d6f7d5326dadc759b2bb74597b39"
+    "0088004ca3ede1d58b35dbea1e6418a3cb6e4733278df637922d60298da17a82"
   );
 });
 

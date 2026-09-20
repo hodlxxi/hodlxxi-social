@@ -67,9 +67,12 @@ covenant or wallet authority, or general-purpose signing. It is separate from
 the X25519 encryption key below; X25519 remains non-extractable, browser-local,
 encryption-only, and forbidden for authentication, identity, or general
 signing.
-The policy requires Ed25519 and raw 32-byte public keys; the future reviewed
-proof profile must define the accepted signature encoding and all other proof
-wire details.
+The reviewed dormant implementation freezes
+`hodlxxi.social_messaging_device_proof.ed25519_webcrypto.v1`. It represents the
+32-byte raw public key as exactly 64 lowercase hexadecimal ASCII characters and
+the 64-byte raw signature as exactly 128 lowercase hexadecimal ASCII characters.
+See [Exact messaging-device admission](EXACT_MESSAGING_DEVICE_ADMISSION_V1.md)
+for the exact preimage, strict verifier and fixed vectors.
 
 There is one current active Ed25519 authentication-key association per exact
 messaging device. Controlled rotation may create a successor during an atomic
@@ -83,11 +86,10 @@ implementation for the Ed25519 key.
 The exact role requires a new versioned, domain-separated `Enrollment V2`
 commitment covering the accepted messaging-device binding (including its
 X25519 public binding), the exact Ed25519 public key, and the exact versioned
-Ed25519 proof-profile identifier subsequently approved by the reviewed source
-implementation and covered by its fixed vectors. This policy does not select or
-freeze that identifier, a serializer, a preimage, a signature encoding, or wire
-bytes. The future implementation patch must select and freeze those details
-only after its review and fixed-vector coverage.
+Ed25519 proof-profile identifier frozen by the reviewed source implementation
+and covered by its fixed vectors. Enrollment V2 now has exact dormant bytes,
+approval-event and phone proof-of-possession contracts. No live association
+store or lifecycle adapter is selected.
 
 The exact association must receive one explicit approval from the authorized
 external signer whose participant public key exactly matches both the
@@ -104,14 +106,25 @@ Rotation or revocation invalidates the old association and outstanding
 challenges. Any use outside this exact role requires a new explicit operator
 policy decision.
 
-Runtime admission remains disabled by default. It cannot be enabled until
-strict Ed25519 public-key/signature validation rejects malformed,
-non-canonical, identity, low-order, and torsion cases; an atomic single-use
-challenge owner exists; and final admission rechecks the current session,
+Runtime admission remains disabled by default. Strict Social-side Ed25519
+validation now rejects malformed, non-canonical, identity, low-order, torsion
+and invalid-scalar cases. Admission still cannot be enabled until an atomic
+single-use challenge owner exists and final admission rechecks the current session,
 Full entitlement, association, expiry, rotation, and revocation. Native
 WebCrypto or OpenSSL signature verification alone is not the full server
 validation boundary. Chrome 137+ is required unless a later separately
 reviewed compatibility decision expands support.
+
+The final authority model is `ATOMIC_OWNER_PENDING`. Social is the current
+location of the strict Ed25519 primitive only. UBID owns existing durable
+binding, mobile-authorization, session and Current-Full state, but the reviewed
+documents do not yet assign one component to verify this exact proof, consume
+its exact immutable challenge and recheck all current state in one authoritative
+transaction. Activation stays blocked until one atomic owner performs those
+steps directly or consumes a separately reviewed cryptographically
+authenticated, audience/expiry/replay/transaction-bound Social attestation with
+frozen bytes and failures. No such attestation is designed here, and an
+unauthenticated Social boolean or string can never authorize admission.
 
 A Social encryption key must not be derived from, reused as, or equated with a
 Bitcoin key, XPUB, OAuth secret, server signing key, Nostr identity key, or

@@ -168,7 +168,10 @@ test("candidate construction cannot invoke caller coercion or serialization hook
 
 test("admission remains impossible for every proof/authority claim, including explicit enablement and replay", () => {
   assert.equal(DEVICE_ADMISSION_ENABLED, false);
-  assert.equal(APPROVED_DEVICE_PROOF_PROFILE, null);
+  assert.equal(
+    APPROVED_DEVICE_PROOF_PROFILE,
+    "hodlxxi.social_messaging_device_proof.ed25519_webcrypto.v1"
+  );
   const verifier = { verifyInTransaction() { assert.fail("unapproved verifier invoked"); } };
   for (const v of vectors) {
     for (const evidence of [undefined, { session: "current-full-session" }, { qrScan: true },
