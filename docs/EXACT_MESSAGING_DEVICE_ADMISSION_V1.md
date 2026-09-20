@@ -1,20 +1,23 @@
-# Exact messaging-device admission: contract and runtime pending
+# Exact messaging-device proof profile: implemented dormant; admission pending
 
-Status: **policy amendment approved; runtime contract only and default-off**.
+Status: **proof profile and Enrollment V2 implemented as pure, default-off
+contracts; runtime admission remains unavailable**.
 The operator has approved a narrow separate Ed25519 exact-device
-authentication-key role, but no runtime proof profile or admission
-implementation is enabled. No request can be admitted by this increment, even
+authentication-key role. This source freezes and strictly verifies the proof
+profile, but no runtime admission implementation is enabled. No request can be
+admitted by this increment, even
 with `enabled: true`. No route, session issuer, key, challenge issuer/store,
 replay adapter, routing registry, ciphertext store, inbox or UI is added.
-Candidate serialization is separately default-off and is not proof
-verification.
+Candidate serialization and strict proof verification remain unimported by
+runtime composition. A cryptographically valid result is not replay-protected
+admission.
 
 This is the next prerequisite in [the completion plan](MESSAGING_COMPLETION_PLAN.md).
 The [key-role policy](SECURE_MESSAGING_V1_28_ARCHITECTURE.md) and AGENTS.md
 preserve the dedicated non-extractable X25519 CryptoKey as encryption-only and
 forbid using it for authentication or general signing. They separately permit
-the narrow Ed25519 role below; the existing architecture calls for possession
-proof without activating a construction. Historical binding acceptance, QR
+the narrow Ed25519 role below; the pure construction is now frozen but remains
+unwired. Historical binding acceptance, QR
 scan, successful session issuance, browser session, device possession and
 local `ready` state cannot fill that gap.
 
@@ -30,9 +33,12 @@ it is never used for encryption, participant/Nostr identity, ordinary Nostr
 event signing, Bitcoin, funds, covenant or wallet authority, or general-purpose
 signing. The existing X25519 key remains a separate non-extractable,
 browser-local, encryption-only key and cannot authenticate, identify, or sign.
-The policy requires Ed25519 and raw 32-byte public keys; the future reviewed
-proof profile must define the accepted signature encoding and all other proof
-wire details.
+The frozen profile identifier is
+`hodlxxi.social_messaging_device_proof.ed25519_webcrypto.v1`. Public keys are
+exactly 32 raw bytes encoded as 64 lowercase hexadecimal ASCII characters.
+Signatures are exactly 64 raw bytes encoded as 128 lowercase hexadecimal ASCII
+characters. Uppercase, prefixes, padding, whitespace and alternate encodings
+are rejected.
 
 There is one current active Ed25519 authentication-key association per exact
 messaging device. Controlled rotation may create a successor during an atomic
@@ -46,11 +52,9 @@ implementation for the Ed25519 key.
 Enrollment V2 is a new versioned, domain-separated commitment covering the
 exact accepted messaging-device binding, its X25519 public binding, the exact
 Ed25519 authentication public key, and the exact versioned Ed25519 proof-profile
-identifier subsequently approved by the reviewed source implementation and
-covered by its fixed vectors. This policy does not select or freeze that
-identifier, a serializer, a preimage, a signature encoding, or wire bytes. The
-future implementation patch must select and freeze those details only after its
-review and fixed-vector coverage.
+identifier frozen above and covered by fixed vectors. This increment selects
+and freezes the serializer, preimages, encodings and wire bytes below without
+adding storage or lifecycle activation.
 
 The exact association must receive one explicit approval from the authorized
 external signer whose participant public key exactly matches both the
@@ -69,10 +73,30 @@ association and outstanding challenges.
 Runtime admission is disabled/default-off until all of the following exist:
 
 1. Strict Ed25519 public-key and signature validation rejects malformed,
-   non-canonical, identity, low-order, and torsion cases.
+   non-canonical, identity, low-order, and torsion cases. **Implemented in pure
+   Social source.**
 2. An atomic single-use challenge owner exists.
 3. Final admission rechecks the current session, Full entitlement, exact
    association, expiry, rotation, and revocation.
+
+`FINAL_AUTHORITY_MODEL=ATOMIC_OWNER_PENDING`. The current documents do not
+select either repository as the future atomic final-admission owner, immutable
+challenge owner, or Ed25519 association-lifecycle owner. Existing UBID services
+own accepted X25519 binding evidence, durable mobile authorization, canonical
+session state and transaction-bound Current-Full evidence, but no reviewed
+composition places this exact proof verification and those state rechecks in
+one authoritative transaction.
+
+Runtime activation is blocked until one atomic authority either (a) verifies
+the exact proof, consumes the exact immutable challenge and performs every
+current session, Current-Full, accepted-binding, key-association,
+rotation/revocation and operation recheck in the same authoritative
+transaction, or (b) consumes a separately reviewed cryptographically
+authenticated, audience-bound, expiring, replay-bound and transaction-bound
+Social attestation whose exact bytes and failure semantics are frozen. This
+increment does not design or implement option (b). An unauthenticated boolean,
+string, historical result or ordinary service assertion from Social is never
+proof authority.
 
 Native WebCrypto/OpenSSL signature verification alone is not the full server
 validation boundary. Chrome 137+ is required unless a later separately
@@ -105,6 +129,7 @@ authority. Social neither imports UBID nor grants Current-Full.
 | Social `web/messaging-device-authorization-v1.mjs`, `mobile-device-authorization-contract-v1.mjs`, `mobile-device-authorization-seams-v1.mjs` | Participant-approved exact binding, original LEGACY/QR contexts, explicit desktop signature and local verification; no per-request device proof. |
 | Social `src/server/opaque-recipient-capability-{issuer,resolver}.mjs`, `ubid-messaging-recipient-client.mjs` | Session-bound selected recipient and minimized crypto package; capability is not send authority. |
 | Social `src/server/message-envelope-v128f1.mjs`, `message-routing-request-v1.mjs` | Exact envelope wire/digest and default-off six-field routing projection; neither authenticates. |
+| Social `src/server/messaging-device-proof-profile-v1.mjs` | Current strict Ed25519 primitive implementation, frozen proof/Enrollment V2 bytes, local approval-event verification and phone proof-of-possession; dormant and not an admission owner. |
 | UBID `app/services/social_messaging_device_contract.py`, `social_messaging_device_storage.py` | Canonical binding-record ID, version, predecessor, current lifecycle and public X25519 binding. |
 | UBID `app/services/social_messaging_device_binding_authorization.py`, `social_messaging_device_binding_authorization_storage.py` | Participant Nostr approval/adoption, exact evidence and transaction-owned lifecycle/replay, independent Current-Full. Approval is not possession. |
 | UBID `app/services/social_messaging_mobile_authorization.py`, `social_messaging_mobile_authorization_storage.py` | Original LEGACY/QR proof verification and accepted mobile ownership; scan and historical acceptance cannot authorize a new request. |
@@ -112,6 +137,7 @@ authority. Social neither imports UBID nor grants Current-Full.
 | UBID `app/services/social_messaging_mobile_routing.py`, `social_messaging_mobile_routing_storage.py` | Exact committed accepted evidence, distinct mobile proof namespace; expressly no sender admission. |
 | UBID `app/services/social_messaging_recipient_routing.py`, `recipient_device_resolver.py` | Pairwise handles, exact package/request bytes, both participants' Full checks; confidential routing repository remains a port. |
 | UBID `app/services/current_entitlement_evidence_storage.py`, `current_full_entitlement_proof.py` | Transaction-bound Current-Full verification and canonical typed evidence. |
+| UBID `app/services/social_messaging_device_proof_profile.py` | Byte-identical shape/serialization consumer only; explicitly does not evaluate Ed25519 or claim final authority. |
 
 The relevant UBID normative documents are `SOCIAL_MOBILE_DEVICE_AUTHORIZATION_V1.md`,
 `SOCIAL_MESSAGING_DEVICE_BINDING_AUTHORIZATION_V1.md`, `SOCIAL_SESSION_ISSUANCE_V1.md`,
@@ -122,7 +148,7 @@ under its `docs/`. The last two explicitly leave request possession unresolved.
 
 | Choice | What it proves / cost | Policy status |
 | --- | --- | --- |
-| Separate non-extractable messaging authentication CryptoKey | Signs a domain-separated exact request challenge; preserves encryption/authentication separation and allows phone use without participant signer access. Requires Enrollment V2 public-key authorization, explicit association with the exact encryption binding, device-local structured-clone permission, rotation/revocation and browser compatibility review. | **Policy permitted by this amendment; not implemented or runtime-enabled.** Algorithm, signature encoding and signed proof envelope remain unset. |
+| Separate non-extractable messaging authentication CryptoKey | Signs a domain-separated exact request challenge; preserves encryption/authentication separation and allows phone use without participant signer access. Requires Enrollment V2 public-key authorization, explicit association with the exact encryption binding, device-local structured-clone permission, rotation/revocation and browser compatibility review. | **Profile and Enrollment V2 pure contracts implemented dormant; runtime, storage and admission remain disabled.** |
 | Reviewed encryption-key challenge/response, potentially using the existing HPKE suite | Could demonstrate decryption/key-agreement possession for the exact encryption key. Requires a new authentication protocol, domain separation, challenge-oracle and cross-protocol analysis; existing HPKE message wrapping does not authorize it. | Requires an explicit change to the encryption-only key policy; not implemented. |
 | Device-bound platform credential | Could provide request signatures with platform key protection. Must establish device-specific, non-synced ownership, browser support, exact enrollment and loss/rotation behavior; a generic synced credential does not prove this device. | Separate policy/protocol decision, not implemented. |
 
@@ -132,9 +158,8 @@ secrets, saved QR/exchange verifiers, caller-provided device IDs and server-held
 device private keys are not options. No key material is generated here.
 
 Approval must explicitly authorize the local key policy, Enrollment V2 and
-binding association. The future reviewed source implementation separately
-selects the exact versioned proof profile and its fixed vectors. With the
-permitted option, both public keys must be approved in one exact association,
+binding association. The source implementation and fixed vectors select the
+exact profile above. Both public keys must be approved in one exact association,
 with proof of possession of the new authentication key at enrollment. This must
 be a versioned extension, not a reinterpretation of existing signed binding
 bytes or IDs. Every change to either key invalidates the association and
@@ -229,16 +254,149 @@ challengeDigest = "hodlxxi-social-device-challenge-v1-sha256:" +
   hex(SHA256(ASCII("HODLXXI_SOCIAL_DEVICE_CHALLENGE_DIGEST_V1") || NUL || challengeWire))
 ```
 
-This digest is a content identity, not a credential or a selected signature
-  preimage. The future reviewed proof profile, once selected by the source
-  implementation, must commit all exact challenge bytes and its own
-  algorithm/key/domain identity. There is no default profile,
-signature parser, permissive verifier or algorithm fallback.
+This digest is a content identity, not a credential or the signature preimage.
 `tests/fixtures/social_messaging_device_admission_v1.json` freezes both complete
 request/challenge wires, lengths and digests using independent Python standard
 library canonicalization. They are contract vectors, not valid device proofs.
 
-## Required verifier interfaces and atomic owner
+## Frozen canonical audience grammar
+
+Request/challenge and Enrollment V2 audiences use the same grammar, identified
+by `hodlxxi.canonical_https_origin.ascii_ldh_no_idn.v1` in the byte-identical
+shared proof fixture's `audienceCorpus`. An audience is 1..255 ASCII bytes,
+exactly `https://HOST` or `https://HOST:PORT`. Validation never normalizes input.
+
+- DNS hosts are dot-separated labels of 1..63 lowercase ASCII letters, digits
+  or hyphens; each label starts and ends with a letter or digit. Empty labels,
+  trailing dots and underscores are forbidden. A final label consisting only
+  of digits, or matching `0x[0-9a-f]*`, is forbidden unless the whole host is a
+  canonical IPv4 address. This excludes alternative numeric URL-host forms.
+  This narrow V1 grammar excludes IDNs, including every `xn--` label; it does
+  not perform IDNA or punycode conversion.
+- IPv4 is exactly four decimal octets in 0..255, with no leading zeros except
+  the octet `0`. Abbreviated, integer, hexadecimal and octal forms are forbidden.
+- IPv6 is bracketed, lowercase hexadecimal: no leading group zeros, and the
+  longest run of at least two zero groups is compressed with `::`, choosing
+  the first run on ties. A single zero group is never compressed. Zone IDs
+  and dotted IPv4 tails are forbidden; mapped addresses use canonical hex.
+- An optional port is decimal 1..65535, without leading zeros; explicit `443`
+  is forbidden. No credentials, path, query, fragment, trailing slash,
+  whitespace, percent encoding or Unicode is accepted. JSON-escaped Unicode
+  is rejected after decoding as well as in constructors; canonical wire rules
+  also reject alternate JSON escapes.
+
+Social shares one audience validator between admission candidates and
+Enrollment V2. UBID validates the host grammar explicitly and compares IPv4
+and IPv6 against standard-library `ipaddress` canonical spelling. Every shared
+corpus member is exercised through enrollment constructors/parsers and the
+real request/challenge proof paths in both repositories. The fixture SHA-256
+assertions pin the corpus alongside the unchanged signed vectors. These shape
+checks do not authenticate an origin or grant final admission.
+
+## Frozen proof wire, preimage and strict verification
+
+The proof wire is compact lexically key-sorted printable-ASCII JSON with no
+trailing newline and exactly:
+
+```text
+algorithm = Ed25519
+challengeId = exact stored challenge ID, lowercase hex64
+profile = hodlxxi.social_messaging_device_proof.ed25519_webcrypto.v1
+publicKey = exact approved Ed25519 key, lowercase hex64
+schema = hodlxxi.social_messaging_device_proof.v1
+signature = lowercase hex128
+version = integer 1
+```
+
+The exact bytes signed are the ASCII bytes of compact lexically key-sorted JSON:
+
+```text
+challenge = exact immutable server-stored challenge STRING
+domain = HODLXXI_SOCIAL_MESSAGING_DEVICE_PROOF_ED25519_WEBCRYPTO_V1
+profile = hodlxxi.social_messaging_device_proof.ed25519_webcrypto.v1
+publicKey = exact approved Ed25519 key
+schema = hodlxxi.social_messaging_device_proof_preimage.v1
+version = integer 1
+```
+
+Because the exact challenge embeds the exact request string, the signature binds
+schema/version, operation, subject, session generation, accepted mobile/X25519
+binding ID and version, device ID, method, path, body digest, recipient handle
+where applicable, challenge ID, issue/expiry interval and audience. The proof
+cannot carry challenge bytes; verification receives the immutable original from
+the future challenge owner and compares the reconstructed actual request before
+cryptography.
+
+The current strict Ed25519 primitive implementation is in Social. It pins
+`@noble/ed25519` 2.3.0, MIT, zero runtime dependencies, integrity
+`sha512-M7dvXL2B92/M7dw9+gzuydL8qn/jiqNHaoR3Q+cb1q1GHV7uwE17WCyFMG+Y+TZb5izcaXk5TdJRrDUxHXL78A==`.
+The verifier strictly decodes both public point A and signature point R with
+ZIP-215 disabled, requires canonical byte-for-byte re-encoding, rejects identity
+and small-order points, requires both points to be torsion-free, requires the
+little-endian S scalar to be below the Ed25519 subgroup order, and then calls
+Noble verification with `{zip215:false}`. Node supplies SHA-512 only; native
+WebCrypto/OpenSSL Ed25519 verification is not used. The independent fixture pins
+RFC 8032, the C2SP low-order/noncanonical/mixed-torsion corpus, the native
+identity degeneracy and invalid S cases.
+
+Successful pure verification returns separate states: canonical structure is
+`valid`, strict cryptography is `valid`, current association is `not_evaluated`,
+atomic challenge consumption is `not_implemented`, and final admission is
+`denied`. UBID can reconstruct and validate the same canonical bytes, but reports
+cryptography as `not_evaluated_by_ubid`; it is not a second cryptographic
+authority.
+
+## Frozen Enrollment V2 bytes
+
+Enrollment V2 is compact lexically key-sorted printable-ASCII JSON, at most
+4,096 bytes, with exactly:
+
+```text
+audience, deviceId, domain, ed25519PublicKey, enrollmentChallengeId,
+expiresAt, issuedAt, profile, schema, subject, version, x25519BindingId,
+x25519BindingVersion, x25519PublicKeyCommitment
+
+domain = HODLXXI_SOCIAL_MESSAGING_DEVICE_ENROLLMENT_V2
+schema = hodlxxi.social_messaging_device_enrollment.v2
+version = integer 2
+profile = hodlxxi.social_messaging_device_proof.ed25519_webcrypto.v1
+```
+
+The challenge is server-originated lowercase hex64. Timestamps are nonnegative
+safe-integer epoch milliseconds with `issuedAt <= now < expiresAt` and a maximum
+60,000-ms lifetime. The X25519 commitment is:
+
+```text
+"hodlxxi-social-messaging-x25519-public-key-v1-sha256:" +
+hex(SHA256(ASCII("HODLXXI_SOCIAL_MESSAGING_X25519_PUBLIC_KEY_COMMITMENT_V1")
+|| NUL || lowercase-hex64-X25519-public-key))
+```
+
+The enrollment digest uses the same construction over the exact enrollment wire
+with domain `HODLXXI_SOCIAL_MESSAGING_DEVICE_ENROLLMENT_DIGEST_V2` and prefix
+`hodlxxi-social-messaging-device-enrollment-v2-sha256:`.
+
+Exactly one never-published kind-27236 external-signer event must have
+`pubkey=session subject=enrollment subject`, `content=exact enrollment wire`,
+`created_at=floor(issuedAt/1000)`, and ordered tags for purpose
+`hodlxxi-social-messaging-device-enrollment-v2`, enrollment digest, challenge ID
+and device ID. Social locally verifies its NIP-01 ID and BIP340 signature. The
+existing one-shot signer boundary compares the provider key before `signEvent`
+and releases the provider afterward. A different Full participant, OAuth-only
+session, QR scan, operator or unsigned attachment cannot replace this event.
+
+The phone proof wire contains exactly `algorithm`, `enrollmentChallengeId`,
+`enrollmentDigest`, `profile`, `publicKey`, `schema`, `signature`, `version`, with
+schema `hodlxxi.social_messaging_device_enrollment_proof.v2` and version 2. It
+signs compact sorted JSON containing the exact enrollment wire, exact key and
+profile under domain `HODLXXI_SOCIAL_MESSAGING_DEVICE_ENROLLMENT_PROOF_V2` and
+schema `hodlxxi.social_messaging_device_enrollment_proof_preimage.v2`. It uses
+the same strict Social verifier. Existing devices must re-enroll or re-pair.
+Rotation/revocation must atomically invalidate the predecessor association and
+all outstanding challenges; this increment defines but does not store that
+lifecycle.
+
+## Required verifier interfaces and unresolved atomic owner
 
 JSDoc interfaces `DeviceProofVerifierV1` and `DeviceAdmissionAuthorityV1` describe
 deferred ports. No injected implementation is accepted by the admission stub.
@@ -254,8 +412,8 @@ Their required semantics are:
    never relabel proof namespaces. The approved authentication-key association
    must match that same complete binding. Public keys remain confidential here.
 2. `readIssuedChallenge(challengeId)` requires exactly one immutable original
-   reservation owned by that session, binding and the exact profile selected by
-   the future reviewed implementation. Caller JSON
+   reservation owned by that session, binding and the exact frozen profile.
+   Caller JSON
    cannot replace it. Challenge expiry must also be bounded by session, Full,
    binding, accepted evidence and approved key-association deadlines.
 3. `verifyInTransaction(exactChallengeWire, profileSpecificProof, lockedAuthority)`
@@ -264,7 +422,7 @@ Their required semantics are:
    `bindingVersion`. Every field must match the reserved transcript and approved
    association, using the authority's public key, never a supplied replacement.
    A boolean, historical proof, digest, session, service credential or key
-   equality is insufficient. The proof encoding remains undefined until approval.
+   equality is insufficient. The proof encoding is the frozen V1 wire above.
 4. `resolveRecipientSelf(handle, lockedAuthority)` is required only for self-read
    and returns one exact confidential registry mapping as specified below.
 5. `consumeAndApply(exactOperation)` rechecks time and current session/Full/
@@ -273,10 +431,13 @@ Their required semantics are:
    the **same** transaction. Failures roll back without an outward grant. All
    calls must share this owner; detached verifiers and caller snapshots fail.
 
-The future UBID transaction must reuse the existing Current-Full subject, User,
-device, public-key and lifecycle lock domains. Its complete lock order and
-interaction with session/registry writers require review and race tests before
-implementation. No independent Social cached Full decision may replace this.
+The future atomic transaction must reuse the existing UBID Current-Full subject,
+User, device, public-key and lifecycle lock domains or consume them through an
+equally authoritative reviewed composition. That requirement does not select
+UBID or Social as final owner. Its complete lock order and interaction with
+session/registry writers require review and race tests before implementation.
+No independent Social cached Full decision may replace this, and no ordinary
+cross-service success assertion may transport cryptographic authority.
 An admission that linearized before revocation may finish; there is no claim of
 instantaneous cancellation of already returned ciphertext. Every subsequent
 request rechecks current authority; restored Full cannot resurrect a consumed
@@ -327,13 +488,13 @@ never calls authority or cryptography, including with apparently valid evidence.
 
 ## Work still required
 
-Approve the proof profile/key policy and enrollment association; implement and
-test browser proof, UBID verifier, session-generation binding, atomic challenge/
-replay owner and lifecycle races. Then implement confidential routing-registry
+Implement the browser signing/persistence integration, session-generation
+binding, atomic challenge/replay owner, authoritative association storage and
+lifecycle races. Then implement confidential routing-registry
 retention and recipient-self ownership, capability-bound package issuance,
 minimized operation results and cross-owner lost-response/idempotency semantics.
 Only then add Social ciphertext persistence, bounded inbox/cursors, quotas,
 retention and sender-copy/history policy, default-off ingress/runtime wiring,
 and complete offline lifecycle rehearsal. Phase 4 encryption/reception UI and
-any activation remain separate. These candidate tests do not claim admission,
+any activation remain separate. These pure-profile tests do not claim admission,
 delivery, decryption or full messaging completion.

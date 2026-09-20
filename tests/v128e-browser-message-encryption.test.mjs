@@ -636,13 +636,23 @@ test("dependency and local delivery provenance remain exact and the UI stays ine
   ]);
   const manifest = JSON.parse(manifestSource);
   const lock = JSON.parse(lockSource);
-  assert.deepEqual(manifest.dependencies, { "@hpke/core": "1.9.0" });
+  assert.deepEqual(manifest.dependencies, {
+    "@hpke/core": "1.9.0",
+    "@noble/ed25519": "2.3.0"
+  });
   assert.deepEqual(manifest.devDependencies, { esbuild: "0.28.2" });
   assert.equal(lock.packages["node_modules/@hpke/core"].version, "1.9.0");
   assert.equal(
     lock.packages["node_modules/@hpke/core"].integrity,
     "sha512-pFxWl1nNJeQCSUFs7+GAblHvXBCjn9EPN65vdKlYQil2aURaRxfGMO6vBKGqm1YHTKwiAxJQNEI70PbSowMP9Q=="
   );
+  assert.equal(lock.packages["node_modules/@noble/ed25519"].version, "2.3.0");
+  assert.equal(
+    lock.packages["node_modules/@noble/ed25519"].integrity,
+    "sha512-M7dvXL2B92/M7dw9+gzuydL8qn/jiqNHaoR3Q+cb1q1GHV7uwE17WCyFMG+Y+TZb5izcaXk5TdJRrDUxHXL78A=="
+  );
+  assert.equal(lock.packages["node_modules/@noble/ed25519"].license, "MIT");
+  assert.equal(lock.packages["node_modules/@noble/ed25519"].dependencies, undefined);
   assert.equal(lock.packages["node_modules/@hpke/common"].version, "1.10.1");
   assert.equal(lock.packages["node_modules/esbuild"].version, "0.28.2");
   assert.match(buildSource, /platform: "browser"/);
