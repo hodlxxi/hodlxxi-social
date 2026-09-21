@@ -1,7 +1,8 @@
-# Exact messaging-device proof profile: implemented dormant; admission pending
+# Exact messaging-device proof and verification statement: dormant; admission pending
 
-Status: **proof profile and Enrollment V2 implemented as pure, default-off
-contracts; runtime admission remains unavailable**.
+Status: **proof profile, Enrollment V2, and the strict Social verification-
+statement producer are implemented as pure, default-off contracts; runtime
+admission remains unavailable**.
 The operator has approved a narrow separate Ed25519 exact-device
 authentication-key role. This source freezes and strictly verifies the proof
 profile, but no runtime admission implementation is enabled. No request can be
@@ -79,24 +80,22 @@ Runtime admission is disabled/default-off until all of the following exist:
 3. Final admission rechecks the current session, Full entitlement, exact
    association, expiry, rotation, and revocation.
 
-`FINAL_AUTHORITY_MODEL=ATOMIC_OWNER_PENDING`. The current documents do not
-select either repository as the future atomic final-admission owner, immutable
-challenge owner, or Ed25519 association-lifecycle owner. Existing UBID services
-own accepted X25519 binding evidence, durable mobile authorization, canonical
-session state and transaction-bound Current-Full evidence, but no reviewed
-composition places this exact proof verification and those state rechecks in
-one authoritative transaction.
+The reviewed cross-repository authority model now selects UBID as the future
+owner of challenge storage, single-use consumption, Ed25519 association
+lifecycle, rotation/revocation invalidation, exact operation effects, and final
+admission. Social remains the strict cryptographic verifier. The dormant Social
+producer can emit the frozen purpose-bound RS256 verification statement only
+after the real verifier succeeds. UBID's consumer-side byte contract is frozen,
+but its authenticated RSA verification and final transactional composition are
+future work. No final admission path exists in this increment.
 
-Runtime activation is blocked until one atomic authority either (a) verifies
-the exact proof, consumes the exact immutable challenge and performs every
-current session, Current-Full, accepted-binding, key-association,
-rotation/revocation and operation recheck in the same authoritative
-transaction, or (b) consumes a separately reviewed cryptographically
-authenticated, audience-bound, expiring, replay-bound and transaction-bound
-Social attestation whose exact bytes and failure semantics are frozen. This
-increment does not design or implement option (b). An unauthenticated boolean,
-string, historical result or ordinary service assertion from Social is never
-proof authority.
+Runtime activation remains blocked until UBID independently authenticates the
+statement under a dedicated trust registration and, in one authoritative
+transaction, consumes the exact immutable challenge and performs every current
+session, Current-Full, accepted-binding, key-association, rotation/revocation,
+deadline, request, and operation recheck. An unsigned boolean, caller assertion,
+historical result, browser claim, or ordinary service assertion from Social is
+never proof authority.
 
 Native WebCrypto/OpenSSL signature verification alone is not the full server
 validation boundary. Chrome 137+ is required unless a later separately
@@ -130,6 +129,7 @@ authority. Social neither imports UBID nor grants Current-Full.
 | Social `src/server/opaque-recipient-capability-{issuer,resolver}.mjs`, `ubid-messaging-recipient-client.mjs` | Session-bound selected recipient and minimized crypto package; capability is not send authority. |
 | Social `src/server/message-envelope-v128f1.mjs`, `message-routing-request-v1.mjs` | Exact envelope wire/digest and default-off six-field routing projection; neither authenticates. |
 | Social `src/server/messaging-device-proof-profile-v1.mjs` | Current strict Ed25519 primitive implementation, frozen proof/Enrollment V2 bytes, local approval-event verification and phone proof-of-possession; dormant and not an admission owner. |
+| Social `src/server/messaging-device-verification-statement-v1.mjs` | Pure default-off producer for the frozen purpose-bound RS256 statement. It invokes the real Social verifier, owns no key or I/O, consumes no challenge, evaluates no current authority, and cannot grant admission. |
 | UBID `app/services/social_messaging_device_contract.py`, `social_messaging_device_storage.py` | Canonical binding-record ID, version, predecessor, current lifecycle and public X25519 binding. |
 | UBID `app/services/social_messaging_device_binding_authorization.py`, `social_messaging_device_binding_authorization_storage.py` | Participant Nostr approval/adoption, exact evidence and transaction-owned lifecycle/replay, independent Current-Full. Approval is not possession. |
 | UBID `app/services/social_messaging_mobile_authorization.py`, `social_messaging_mobile_authorization_storage.py` | Original LEGACY/QR proof verification and accepted mobile ownership; scan and historical acceptance cannot authorize a new request. |
@@ -396,7 +396,88 @@ Rotation/revocation must atomically invalidate the predecessor association and
 all outstanding challenges; this increment defines but does not store that
 lifecycle.
 
-## Required verifier interfaces and unresolved atomic owner
+## Strict Social verification-statement producer
+
+`src/server/messaging-device-verification-statement-v1.mjs` consumes UBID's
+exact canonical verification context and input strings. The copied public
+cross-repository fixture is
+`tests/fixtures/social_device_admission_v1.json`, byte length 96,928 and SHA-256
+`09722ca9ab230a7bbc73b2228dfed5e80cdd2c2bb44a32e8571bdcf246ca4324`.
+It is byte-identical to the fixture at UBID staging merge commit
+`8e56b82643d4f6243140f046e8e6fab545185437`.
+
+Both outer documents are closed, printable-ASCII, compact recursively
+key-sorted JSON. Exact round trips reject duplicate, missing, unknown,
+alternate-escaped, non-ASCII, unsafe-number, accessor, proxy, inherited, and
+coercible representations. Embedded context, challenge, proof, approval event,
+actual request, and routing request remain exact strings; digests cover their
+original accepted bytes without normalization or reserialization. The context
+and input digest domains and prefixes are exactly the UBID V1 contract.
+
+For `enrollment-v2`, the producer calls the existing
+`verifyEnrollmentV2Authorization` path. This performs real NIP-01 event-ID and
+BIP340 signature verification, exact authenticated/enrollment subject matching,
+exact Enrollment V2 audience/device/X25519/Ed25519/profile/challenge binding,
+freshness, and strict Ed25519 phone proof of possession. For
+`device-request-v1`, it calls the existing
+`verifyMessagingDeviceProofV1` path, preserving the pinned Noble 2.3.0 strict
+non-ZIP-215 point and scalar checks and the exact operation/session/device/
+binding/audience/challenge/method/path/body commitment. No verifier or hash
+implementation is injectable.
+
+After and only after that verification succeeds, the producer creates this
+exact closed protected header:
+
+```json
+{"alg":"RS256","kid":"<exact signer-bound identifier>","typ":"hodlxxi-social-device-verification+jws"}
+```
+
+The closed payload uses schema
+`hodlxxi.social_device_verification_statement.v1`, version 1, and exactly
+`attemptId`, `aud`, `challengeId`, `challengeKind`, `clientId`,
+`contextDigest`, `expiresAt`, `inputDigest`, `iss`, `issuedAt`, `jti`,
+`purpose`, `result`, `schema`, `servicePrincipal`, and `version`. Purpose is
+fixed as `social_device_cryptographic_verification_v1`; result is fixed by the
+challenge kind. Lifetime is a positive integer no greater than 10,000 ms,
+expiry is exclusive with no skew, and the statement cannot outlive the
+underlying proof challenge.
+
+V1 derives its non-authority token identifier without ambient randomness:
+
+```text
+jti = hex(SHA256(
+  ASCII("HODLXXI_SOCIAL_DEVICE_VERIFICATION_STATEMENT_JTI_V1")
+  || NUL
+  || ASCII(canonical closed payload with jti omitted)
+))
+```
+
+The signer is an opaque module-created infrastructure port bound to the exact
+RS256 algorithm, protected-header key identifier, issuer, audience, client ID,
+service principal, and purpose. Its signing operation is retained privately by
+the module; the returned port exposes no callable method. The producer invokes
+that operation only with its internally constructed compact-JWS signing input.
+There is no generic signing export, key loader, public-key trust registry,
+filesystem/environment read, network/database/socket/HTTP adapter, browser or
+BFF integration, route, or runtime import.
+
+The public producer is
+`produceMessagingDeviceVerificationStatementV1(input, options)`. `input` is
+closed over `contextWire`, `inputWire`, the five expected identity/purpose
+values, `now`, `statementLifetimeMs`, and the opaque signer. The separate
+construction gate requires the literal own-data option
+`verificationStatementsEnabled: true`; its default is false. When disabled,
+the producer fails before invoking the signer. No environment variable or
+runtime factory can change that state in this increment.
+
+A valid statement means only that Social cryptographic verification succeeded
+for the two exact frozen byte strings at the stated time and purpose. It does
+not mean current Full, current session or binding authority, challenge
+consumption, device admission, message acceptance, routing authorization,
+ciphertext persistence, or inbox access. Those remain exclusively future UBID
+transactional decisions, and final admission remains denied.
+
+## Required verifier interfaces and selected atomic owner
 
 JSDoc interfaces `DeviceProofVerifierV1` and `DeviceAdmissionAuthorityV1` describe
 deferred ports. No injected implementation is accepted by the admission stub.
@@ -431,13 +512,13 @@ Their required semantics are:
    the **same** transaction. Failures roll back without an outward grant. All
    calls must share this owner; detached verifiers and caller snapshots fail.
 
-The future atomic transaction must reuse the existing UBID Current-Full subject,
+The future UBID atomic transaction must reuse the existing UBID Current-Full subject,
 User, device, public-key and lifecycle lock domains or consume them through an
-equally authoritative reviewed composition. That requirement does not select
-UBID or Social as final owner. Its complete lock order and interaction with
-session/registry writers require review and race tests before implementation.
-No independent Social cached Full decision may replace this, and no ordinary
-cross-service success assertion may transport cryptographic authority.
+equally authoritative reviewed composition. Its complete lock order and
+interaction with session/registry writers require review and race tests before
+implementation. No independent Social cached Full decision may replace this,
+and only the exact authenticated purpose-bound verification statement above may
+transport Social's narrow cryptographic result.
 An admission that linearized before revocation may finish; there is no claim of
 instantaneous cancellation of already returned ciphertext. Every subsequent
 request rechecks current authority; restored Full cannot resurrect a consumed
@@ -489,8 +570,9 @@ never calls authority or cryptography, including with apparently valid evidence.
 ## Work still required
 
 Implement the browser signing/persistence integration, session-generation
-binding, atomic challenge/replay owner, authoritative association storage and
-lifecycle races. Then implement confidential routing-registry
+binding, UBID atomic challenge/replay owner, authoritative association storage,
+authenticated statement consumer/trust registration, and lifecycle races.
+Then implement confidential routing-registry
 retention and recipient-self ownership, capability-bound package issuance,
 minimized operation results and cross-owner lost-response/idempotency semantics.
 Only then add Social ciphertext persistence, bounded inbox/cursors, quotas,
