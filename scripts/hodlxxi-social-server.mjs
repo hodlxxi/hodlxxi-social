@@ -28,6 +28,54 @@ import {
   createUbidMessagingRecipientClient
 } from "../src/server/ubid-messaging-recipient-client.mjs";
 
+const OAUTH_DIAGNOSTIC_ENDPOINTS = new Set(["token", "introspection"]);
+const OAUTH_DIAGNOSTIC_STAGES = new Set([
+  "dispatch", "status", "content_type", "body", "declared_size", "body_reader",
+  "body_read", "received_size", "body_release", "decode", "json_members",
+  "json_parse", "response_validation"
+]);
+
+const ownDataValue = (value, name) => {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  } catch { return undefined; }
+};
+
+export function createStagingOAuthDiagnosticReporter(env, stderr) {
+  let enabled = false;
+  try {
+    enabled = env?.SOCIAL_DEPLOYMENT_ENVIRONMENT === "staging" &&
+      env?.SOCIAL_OAUTH_POST_FORM_DIAGNOSTICS_ENABLED === "true";
+  } catch {}
+  if (!enabled || typeof stderr !== "function") return undefined;
+  return (candidate) => {
+    if (candidate === null || typeof candidate !== "object") return;
+    const endpoint = ownDataValue(candidate, "endpoint");
+    const stage = ownDataValue(candidate, "stage");
+    const elapsedMs = ownDataValue(candidate, "elapsedMs");
+    const receivedBytes = ownDataValue(candidate, "receivedBytes");
+    const timedOut = ownDataValue(candidate, "timedOut");
+    const aborted = ownDataValue(candidate, "aborted");
+    if (!OAUTH_DIAGNOSTIC_ENDPOINTS.has(endpoint) || !OAUTH_DIAGNOSTIC_STAGES.has(stage) ||
+        !Number.isSafeInteger(elapsedMs) || elapsedMs < 0 || elapsedMs > 60000 ||
+        !Number.isSafeInteger(receivedBytes) || receivedBytes < 0 || receivedBytes > 16385 ||
+        typeof timedOut !== "boolean" || typeof aborted !== "boolean") return;
+    const record = { endpoint, stage, elapsedMs, receivedBytes, timedOut, aborted };
+    const status = ownDataValue(candidate, "status");
+    if (status !== undefined) {
+      if (!Number.isSafeInteger(status) || status < 0 || status > 599) return;
+      record.status = status;
+    }
+    const declaredBytes = ownDataValue(candidate, "declaredBytes");
+    if (declaredBytes !== undefined) {
+      if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0 || declaredBytes > 16385) return;
+      record.declaredBytes = declaredBytes;
+    }
+    stderr(JSON.stringify(record));
+  };
+}
+
 export async function createFullDirectoryIntegration(
   fullDirectory,
   {
@@ -495,7 +543,8 @@ export async function runServer({ env = process.env, stdout = console.log, stder
   const sessions = (config.mobile.enabled ? createSessionStore : createBoundedStore)({
     ttlSeconds: config.sessionTtlSeconds, capacity: config.maxSessions
   });
-  const oauthClient = createHodlxxiOAuthClient(config);
+  const diagnosticReporter = createStagingOAuthDiagnosticReporter(env, stderr);
+  const oauthClient = createHodlxxiOAuthClient(config, diagnosticReporter === undefined ? {} : { diagnosticReporter });
   const authorityReader = createSocialAuthorityReader(config);
   let fullDirectoryClient;
   if (config.fullDirectory.enabled) {
