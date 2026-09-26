@@ -1,13 +1,14 @@
 # Exact messaging-device proof and verification statement: dormant; admission pending
 
-Status: **proof profile, Enrollment V2, and the strict Social verification-
-statement producer are implemented as pure, default-off contracts; runtime
+Status: **proof profile, Enrollment V2, the strict Social verification-
+statement producer, and a separate browser-local authentication-key
+prerequisite are implemented as dormant, default-off contracts; runtime
 admission remains unavailable**.
 The operator has approved a narrow separate Ed25519 exact-device
 authentication-key role. This source freezes and strictly verifies the proof
 profile, but no runtime admission implementation is enabled. No request can be
 admitted by this increment, even
-with `enabled: true`. No route, session issuer, key, challenge issuer/store,
+with `enabled: true`. No route, session issuer, server-held key, challenge issuer/store,
 replay adapter, routing registry, ciphertext store, inbox or UI is added.
 Candidate serialization and strict proof verification remain unimported by
 runtime composition. A cryptographically valid result is not replay-protected
@@ -17,8 +18,8 @@ This is the next prerequisite in [the completion plan](MESSAGING_COMPLETION_PLAN
 The [key-role policy](SECURE_MESSAGING_V1_28_ARCHITECTURE.md) and AGENTS.md
 preserve the dedicated non-extractable X25519 CryptoKey as encryption-only and
 forbid using it for authentication or general signing. They separately permit
-the narrow Ed25519 role below; the pure construction is now frozen but remains
-unwired. Historical binding acceptance, QR
+the narrow Ed25519 role below; the proof construction and dormant browser key
+boundary are now frozen but remain unwired. Historical binding acceptance, QR
 scan, successful session issuance, browser session, device possession and
 local `ready` state cannot fill that gap.
 
@@ -46,16 +47,19 @@ messaging device. Controlled rotation may create a successor during an atomic
 transition; after rotation only the successor is current. The Ed25519 private
 CryptoKey and its record/schema/lifecycle must remain separate from the X25519
 encryption-key record/schema/lifecycle. Neither key may be derived from, aliased
-to, or substituted for the other. This policy requires that separation but does
-not select a live database/store, store name, schema, record shape, or lifecycle
-implementation for the Ed25519 key.
+to, or substituted for the other. The dormant browser prerequisite selects a
+dedicated device-local database, store, schema and immutable record shape for
+the Ed25519 key, separate from the X25519 database and store. It does not select
+or activate a live association, server-side association storage, rotation
+lifecycle, runtime integration or admission path.
 
 Enrollment V2 is a new versioned, domain-separated commitment covering the
 exact accepted messaging-device binding, its X25519 public binding, the exact
 Ed25519 authentication public key, and the exact versioned Ed25519 proof-profile
 identifier frozen above and covered by fixed vectors. This increment selects
-and freezes the serializer, preimages, encodings and wire bytes below without
-adding storage or lifecycle activation.
+and freezes the serializer, preimages, encodings and wire bytes below and adds
+only the dormant device-local key prerequisite. Association lifecycle and
+runtime activation remain absent.
 
 The exact association must receive one explicit approval from the authorized
 external signer whose participant public key exactly matches both the
@@ -112,6 +116,39 @@ Chrome 153, the same public-key digest remained
 persisted private key remained non-extractable and usable. The isolated
 preflight database was deleted, and no application database was touched.
 
+## Dormant browser-local Enrollment V2 prerequisite
+
+`web/messaging-device-ed25519-key-v1.mjs` is an explicitly instantiated module
+that is not imported by any runtime entrypoint. Its runtime-enabled constant is
+false. It opens database
+`hodlxxi-social-messaging-device-ed25519-key-v1`, version 1, with object store
+`authentication-key`; both are distinct from the X25519 database and `device`
+store. The one `current` record contains the exact subject, device ID, accepted
+X25519 binding ID/version and public-key commitment, the raw lowercase-hex
+Ed25519 public key, and the non-extractable private `CryptoKey`. It is persisted
+only by IndexedDB structured clone under a strict-durability transaction. There
+is no private-key JSON serialization, localStorage, sessionStorage, network,
+logging, private-key export, deletion, update, migration or rotation path.
+
+Preparation requires the current browser context to remain the same Full
+subject and requires a current local `ready` X25519 record with its exact
+unexpired accepted binding. IndexedDB `add` supplies atomic first-writer-wins
+creation across tabs. A losing concurrent creator can use only the already
+stored record after every identity and binding field matches; another subject,
+device or binding cannot overwrite the slot. The module rechecks the subject
+after every asynchronous boundary. Public preparation output never contains
+the private `CryptoKey`. Merely storing or possessing the key does not create,
+approve or prove a current UBID association.
+
+The sole signing operation accepts one exact canonical Enrollment V2 wire. It
+checks enrollment subject, device, X25519 binding ID/version and commitment,
+and Ed25519 public key against the current context and separate local records,
+checks freshness, and signs only the frozen Enrollment V2 phone-proof preimage.
+After signing it rereads and compares the current context, X25519 binding and
+Ed25519 record before returning the exact proof wire. There is no arbitrary
+signing operation and no device-request signing operation. Request proof still
+requires a future authoritative current association and runtime composition.
+
 ## Existing primitive map
 
 Paths below are repository-relative; UBID paths identify external read-only
@@ -125,6 +162,7 @@ authority. Social neither imports UBID nor grants Current-Full.
 | Social `src/server/social-authority-reader.mjs` | Independent external Full/Limited projection; device registration cannot grant Full. |
 | Social `src/server/ubid-messaging-device-client.mjs` | Confidential viewer-authenticated binding snapshots, intents and accepted results; no possession verifier. |
 | Social `web/messaging-device-v128c1.mjs` | Non-extractable X25519 `deriveBits` key, IndexedDB structured clone and exact public-binding reconciliation; key never authenticates. |
+| Social `web/messaging-device-ed25519-key-v1.mjs` | Separate dormant non-extractable Ed25519 `sign` key, distinct IndexedDB structured clone, atomic exact-device creation and Enrollment V2-only phone proof; no association, request signing, runtime import or admission. |
 | Social `web/messaging-device-authorization-v1.mjs`, `mobile-device-authorization-contract-v1.mjs`, `mobile-device-authorization-seams-v1.mjs` | Participant-approved exact binding, original LEGACY/QR contexts, explicit desktop signature and local verification; no per-request device proof. |
 | Social `src/server/opaque-recipient-capability-{issuer,resolver}.mjs`, `ubid-messaging-recipient-client.mjs` | Session-bound selected recipient and minimized crypto package; capability is not send authority. |
 | Social `src/server/message-envelope-v128f1.mjs`, `message-routing-request-v1.mjs` | Exact envelope wire/digest and default-off six-field routing projection; neither authenticates. |
@@ -148,14 +186,16 @@ under its `docs/`. The last two explicitly leave request possession unresolved.
 
 | Choice | What it proves / cost | Policy status |
 | --- | --- | --- |
-| Separate non-extractable messaging authentication CryptoKey | Signs a domain-separated exact request challenge; preserves encryption/authentication separation and allows phone use without participant signer access. Requires Enrollment V2 public-key authorization, explicit association with the exact encryption binding, device-local structured-clone permission, rotation/revocation and browser compatibility review. | **Profile and Enrollment V2 pure contracts implemented dormant; runtime, storage and admission remain disabled.** |
+| Separate non-extractable messaging authentication CryptoKey | Signs a domain-separated exact request challenge; preserves encryption/authentication separation and allows phone use without participant signer access. Requires Enrollment V2 public-key authorization, explicit association with the exact encryption binding, device-local structured-clone permission, rotation/revocation and browser compatibility review. | **Profile, Enrollment V2 and browser-local key prerequisite implemented dormant; association lifecycle, runtime and admission remain disabled.** |
 | Reviewed encryption-key challenge/response, potentially using the existing HPKE suite | Could demonstrate decryption/key-agreement possession for the exact encryption key. Requires a new authentication protocol, domain separation, challenge-oracle and cross-protocol analysis; existing HPKE message wrapping does not authorize it. | Requires an explicit change to the encryption-only key policy; not implemented. |
 | Device-bound platform credential | Could provide request signatures with platform key protection. Must establish device-specific, non-synced ownership, browser support, exact enrollment and loss/rotation behavior; a generic synced credential does not prove this device. | Separate policy/protocol decision, not implemented. |
 
 Participant signatures on every request prove participant control, not possession
 of the exact messaging device, and cannot require phone NIP-07/NIP-46. Bearer
 secrets, saved QR/exchange verifiers, caller-provided device IDs and server-held
-device private keys are not options. No key material is generated here.
+device private keys are not options. The pure server contracts generate no key
+material; only explicit use of the dormant browser prerequisite generates and
+structured-clones the separate local key.
 
 Approval must explicitly authorize the local key policy, Enrollment V2 and
 binding association. The source implementation and fixed vectors select the
@@ -569,14 +609,15 @@ never calls authority or cryptography, including with apparently valid evidence.
 
 ## Work still required
 
-Implement the browser signing/persistence integration, session-generation
-binding, UBID atomic challenge/replay owner, authoritative association storage,
-authenticated statement consumer/trust registration, and lifecycle races.
+Implement reviewed runtime integration for the dormant browser prerequisite,
+supported-browser automation, session-generation binding, the UBID atomic
+challenge/replay owner, authoritative association storage, authenticated
+statement consumer/trust registration, rotation/revocation and lifecycle races.
 Then implement confidential routing-registry
 retention and recipient-self ownership, capability-bound package issuance,
 minimized operation results and cross-owner lost-response/idempotency semantics.
 Only then add Social ciphertext persistence, bounded inbox/cursors, quotas,
 retention and sender-copy/history policy, default-off ingress/runtime wiring,
 and complete offline lifecycle rehearsal. Phase 4 encryption/reception UI and
-any activation remain separate. These pure-profile tests do not claim admission,
+any activation remain separate. These prerequisite tests do not claim admission,
 delivery, decryption or full messaging completion.
