@@ -80,6 +80,14 @@ unwrapped K_message to Social or UBID.
 
 ## Phase 4: browser encryption, reception and local decryption
 
+The source-only `web/message-decryption-v1.mjs` now opens an exact V1.28E
+envelope using one non-extractable local X25519 private CryptoKey. Its sender
+header, HPKE info and authenticated data share the existing byte constructors;
+an offline test uses the actual sender and server canonical serializer and
+checks independent phone/tablet keys. This primitive has no browser entrypoint,
+inbox, authorization, network, device-key lookup or deployment. It cannot turn
+the current disabled composer into a working messaging product.
+
 Wire the reviewed browser encryption implementation and local device-key
 decryption into the authenticated Messages UI. Require authoritative binding
 reconciliation before use and preserve clear pending/error states. A new device

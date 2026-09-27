@@ -240,7 +240,9 @@ async function normalizeRecipientPackage(value, now, cryptoImpl) {
   });
 }
 
-function canonicalHeader({
+// Shared by the sender and the local recipient. Callers validate the envelope
+// before constructing these authenticated bytes.
+export function messageEnvelopeHeaderBytesV1({
   messageId,
   recipientPackageSnapshotId,
   recipientDeviceHandles
@@ -264,11 +266,11 @@ function concatenate(left, separator, right) {
   return result;
 }
 
-const wrapInfo = (messageId) => textEncoder.encode(
+export const messageKeyWrapInfoV1 = (messageId) => textEncoder.encode(
   `${KEY_WRAP_DOMAIN}\u0000${messageId}`
 );
 
-const wrapAad = (header, deviceHandle) =>
+export const messageKeyWrapAadV1 = (header, deviceHandle) =>
   concatenate(header, 0, textEncoder.encode(deviceHandle));
 
 function base64url(bytes, btoaImpl) {
@@ -342,7 +344,7 @@ function createEncryptor({
       const recipientDeviceHandles = recipientPackage.devices.map(
         (device) => device.deviceHandle
       );
-      const header = canonicalHeader({
+      const header = messageEnvelopeHeaderBytesV1({
         messageId,
         recipientPackageSnapshotId: recipientPackage.snapshotId,
         recipientDeviceHandles
@@ -370,7 +372,7 @@ function createEncryptor({
         unavailable();
       }
 
-      const info = wrapInfo(messageId);
+      const info = messageKeyWrapInfoV1(messageId);
       const keyWraps = [];
       for (const device of recipientPackage.devices) {
         // A fresh suite plus its single-shot seal creates one independent Base
@@ -387,7 +389,7 @@ function createEncryptor({
             info
           },
           messageKey,
-          wrapAad(header, device.deviceHandle)
+          messageKeyWrapAadV1(header, device.deviceHandle)
         );
         const enc = new Uint8Array(wrapped?.enc);
         const ciphertext = new Uint8Array(wrapped?.ct);
