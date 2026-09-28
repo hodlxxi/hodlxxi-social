@@ -1,9 +1,9 @@
 # Exact messaging-device proof and verification statement: dormant; admission pending
 
 Status: **proof profile, Enrollment V2, the strict Social verification-
-statement producer, and a separate browser-local authentication-key
-prerequisite are implemented as dormant, default-off contracts; runtime
-admission remains unavailable**.
+statement producer, the accepted-binding browser key prerequisite, and the
+separate provisional V2 preacceptance compatibility slice are implemented as
+dormant, default-off contracts; runtime admission remains unavailable**.
 The operator has approved a narrow separate Ed25519 exact-device
 authentication-key role. This source freezes and strictly verifies the proof
 profile, but no runtime admission implementation is enabled. No request can be
@@ -149,6 +149,23 @@ Ed25519 record before returning the exact proof wire. There is no arbitrary
 signing operation and no device-request signing operation. Request proof still
 requires a future authoritative current association and runtime composition.
 
+## Dormant provisional preacceptance V2 compatibility slice
+
+The additive [V2 preacceptance contract](SOCIAL_PREACCEPTANCE_ED25519_HANDOFF_V2.md)
+creates its separate non-extractable Ed25519 key before desktop approval and
+binds it to the exact pending X25519 register proposal. Its only state is
+`prepared-provisional`; it neither reinterprets this document's accepted-binding
+V1 store nor implements promotion, readiness, acceptance or association
+authority. A strict-durability signing claim prevents ambiguous retries from
+reopening NIP-07, and an exact public signed-attempt artifact is persisted before
+return. The private approval event is locally verified and never published.
+
+The matching pure server verifier reparses the exact merged preaccepted-
+enrollment V2 wire, verifies BIP340 and the existing strict non-ZIP-215 Ed25519
+phone proof, and returns only module-private branded cryptographic evidence.
+It emits no V2 verification statement and grants no authority. All V1 bytes and
+semantics in this document remain unchanged.
+
 ## Existing primitive map
 
 Paths below are repository-relative; UBID paths identify external read-only
@@ -163,10 +180,12 @@ authority. Social neither imports UBID nor grants Current-Full.
 | Social `src/server/ubid-messaging-device-client.mjs` | Confidential viewer-authenticated binding snapshots, intents and accepted results; no possession verifier. |
 | Social `web/messaging-device-v128c1.mjs` | Non-extractable X25519 `deriveBits` key, IndexedDB structured clone and exact public-binding reconciliation; key never authenticates. |
 | Social `web/messaging-device-ed25519-key-v1.mjs` | Separate dormant non-extractable Ed25519 `sign` key, distinct IndexedDB structured clone, atomic exact-device creation and Enrollment V2-only phone proof; no association, request signing, runtime import or admission. |
+| Social `web/messaging-device-ed25519-key-v2.mjs`, `mobile-device-authorization-{contract,seams}-v2.mjs` | Logically separate pending-proposal V2 key lifecycle in its own store within the shared browser-device database, with exact two-store X25519/create-or-claim atomicity, exact merged preacceptance bytes, one explicit private desktop approval and immutable retry evidence; prepared-provisional only, with no publish, dispatch, promotion or runtime import. |
 | Social `web/messaging-device-authorization-v1.mjs`, `mobile-device-authorization-contract-v1.mjs`, `mobile-device-authorization-seams-v1.mjs` | Participant-approved exact binding, original LEGACY/QR contexts, explicit desktop signature and local verification; no per-request device proof. |
 | Social `src/server/opaque-recipient-capability-{issuer,resolver}.mjs`, `ubid-messaging-recipient-client.mjs` | Session-bound selected recipient and minimized crypto package; capability is not send authority. |
 | Social `src/server/message-envelope-v128f1.mjs`, `message-routing-request-v1.mjs` | Exact envelope wire/digest and default-off six-field routing projection; neither authenticates. |
 | Social `src/server/messaging-device-proof-profile-v1.mjs` | Current strict Ed25519 primitive implementation, frozen proof/Enrollment V2 bytes, local approval-event verification and phone proof-of-possession; dormant and not an admission owner. |
+| Social `src/server/messaging-device-preaccepted-enrollment-v2.mjs` | Additive strict parser/verifier for exact V2 preacceptance plus Enrollment V2, returning only branded cryptographic evidence; no JWS, authority, challenge consumption, persistence or runtime import. |
 | Social `src/server/messaging-device-verification-statement-v1.mjs` | Pure default-off producer for the frozen purpose-bound RS256 statement. It invokes the real Social verifier, owns no key or I/O, consumes no challenge, evaluates no current authority, and cannot grant admission. |
 | UBID `app/services/social_messaging_device_contract.py`, `social_messaging_device_storage.py` | Canonical binding-record ID, version, predecessor, current lifecycle and public X25519 binding. |
 | UBID `app/services/social_messaging_device_binding_authorization.py`, `social_messaging_device_binding_authorization_storage.py` | Participant Nostr approval/adoption, exact evidence and transaction-owned lifecycle/replay, independent Current-Full. Approval is not possession. |

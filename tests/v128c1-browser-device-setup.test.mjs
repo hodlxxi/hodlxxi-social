@@ -1694,9 +1694,14 @@ function idbHarness({ holdWrites = false, abortWrites = false, durability = "str
   let value;
   const writes = [], events = [];
   const db = {
+    version: 1,
+    objectStoreNames: ["device"],
     close() { events.push("close"); },
     transaction(name, mode, options) {
-      assert.equal(name, "device");
+      assert.deepEqual(
+        Array.isArray(name) ? name : [name],
+        ["device"]
+      );
       if (mode === "readwrite") assert.deepEqual(options, { durability: "strict" });
       let aborted = false;
       const tx = {
@@ -1726,7 +1731,10 @@ function idbHarness({ holdWrites = false, abortWrites = false, durability = "str
             return request;
           };
           return {
+            autoIncrement: false,
             get: () => operation(() => value === undefined ? undefined : structuredClone(value)),
+            indexNames: [],
+            keyPath: null,
             add: (record, key) => {
               assert.equal(key, "current");
               return operation(() => {
@@ -1746,7 +1754,8 @@ function idbHarness({ holdWrites = false, abortWrites = false, durability = "str
   };
   return {
     factory: { open(name, version) {
-      assert.equal(name, "hodlxxi-social-messaging-device-v1"); assert.equal(version, 1);
+      assert.equal(name, "hodlxxi-social-messaging-device-v1");
+      assert.equal(version, undefined);
       const request = { result: db }; queueMicrotask(() => request.onsuccess()); return request;
     } },
     writes, events, stored: () => value
