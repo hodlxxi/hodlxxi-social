@@ -346,8 +346,13 @@ is operator-observed manual evidence, not automated CI and not runtime
 activation.
 
 The dedicated X25519 encryption-key IndexedDB database
-`hodlxxi-social-messaging-device-v1`, version 1, has one `device` store and one
-`current` record. Its closed fields are `schema`,
+`hodlxxi-social-messaging-device-v1` is created by X25519-only use at version 1
+with one `device` store and one `current` record. The X25519-only opener does
+not request an upgrade: it leaves fresh/existing X-only use at version 1, and
+after the dormant V2 owner has upgraded the database it accepts only the exact
+supported version-2 topology while continuing to use only `device`. Version 2
+adds the separate `provisional-authentication-key-v2` Ed25519 store without
+reading or rewriting `device/current`. Its closed X25519 fields are `schema`,
 `version`, `subject`, `deviceId`, `privateKey` (the CryptoKey), `publicKey`,
 `requestId`, `state`, `acceptedBinding`, `authorization`,
 `pendingAuthorization`, `pendingProposal`, and `rotation`. The schema is
@@ -362,6 +367,15 @@ remain distinct, and this policy does not select a live store implementation for
 it. Participant signing keys and server-side private-key custody remain
 prohibited. This key is independent of Bitcoin, XPUB, UBID, OAuth, Nostr, and
 recipient capabilities.
+
+A cached old X25519 module that explicitly opens version 1 after the dormant V2
+upgrade fails closed with IndexedDB `VersionError` and requires reload.
+Controlled cache/deployment sequencing and a real Chromium populated
+version-1-to-version-2 rehearsal are mandatory before activation. Synthetic
+IndexedDB tests do not prove native non-extractable CryptoKey or versionchange
+behavior. Laptop and phone IndexedDB instances are distinct; the two-store
+transaction is atomic only within one browser/device and supplies no
+cross-device continuation, transport, delivery or runtime activation.
 
 Before setup, the controller re-reads `/auth/session`, requires the current
 Messages access context to be Full, and reconciles the existing local record

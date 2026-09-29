@@ -69,6 +69,23 @@ mobile routes default-off until these dependencies are complete. Preserve
 register/adopt/rotate/revoke behavior and optional desktop NIP-07. No silent
 OAuth-only fallback and no mandatory phone extension are permitted.
 
+## Dormant V2 preacceptance source prerequisite
+
+The [Social preacceptance Ed25519 handoff V2 contract](SOCIAL_PREACCEPTANCE_ED25519_HANDOFF_V2.md)
+adds only a source-level compatibility slice for the reviewed `register +
+initial` path. It prepares one separate non-extractable Ed25519 key against the
+exact pending X25519 proposal, reproduces the merged preacceptance bytes,
+persists one-signature retry evidence, and strictly verifies the resulting
+BIP340 plus Ed25519 transcript. It remains outside runtime, BFF, browser-entry
+and UI imports and confers no acceptance, association, Full, session, ready or
+request authority.
+
+The next protocol prerequisite is an additive UBID-owned V2 verification-
+statement byte contract and authenticated consumer, followed by the matching
+dormant Social producer. Durable V2 acceptance, challenge issuance and the
+atomic association owner must be separate reviewed increments. Continuation,
+ordinary request proof and runtime activation remain deferred.
+
 ## Phase 3: ciphertext transport and inbox completion
 
 Connect accepted Current-Full device authorization to recipient capabilities,

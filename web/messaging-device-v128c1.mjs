@@ -29,6 +29,12 @@ const AUTHORIZATION_STATES = [
   "pending-register", "authorization-required", "pending-adopt", "ready",
   "pending-rotate", "pending-revoke", "revoked", "unavailable"
 ];
+export const MESSAGING_DEVICE_DATABASE_NAME =
+  "hodlxxi-social-messaging-device-v1";
+export const MESSAGING_DEVICE_DEVICE_STORE_NAME = "device";
+export const MESSAGING_DEVICE_PROVISIONAL_AUTHENTICATION_STORE_V2 =
+  "provisional-authentication-key-v2";
+export const MESSAGING_DEVICE_SHARED_DATABASE_VERSION_V2 = 2;
 export const MESSAGING_DEVICE_TIMESTAMP_UNIT = "unix-milliseconds";
 const unavailable = () => { throw new Error("messaging device unavailable"); };
 const hex = (value) => typeof value === "string" && HEX64.test(value);
@@ -184,6 +190,39 @@ function localRecord(value, subject, CryptoKeyImpl) {
   if (!["pending-register", "pending-adopt", "pending-rotate", "pending-revoke"].includes(record.state) &&
       (record.pendingProposal !== null || record.pendingAuthorization !== null)) unavailable();
   return record;
+}
+
+// This projection is deliberately synchronous and scalar-only so a caller can
+// validate the authoritative X25519 row inside the same live IndexedDB
+// transaction as a separate provisional-authentication-key write. It never
+// returns the stored record or either private CryptoKey.
+export function projectExactPendingMessagingDeviceRegister(
+  value,
+  subject,
+  CryptoKeyImpl
+) {
+  const record = localRecord(value, subject, CryptoKeyImpl);
+  if (
+    record.state !== "pending-register" ||
+    record.acceptedBinding !== null || record.authorization !== null ||
+    record.pendingAuthorization !== null || record.rotation !== null ||
+    typeof record.pendingProposal !== "string"
+  ) unavailable();
+  const expectedProposal = canonicalMessagingDeviceAuthorizationProposal({
+    deviceId: record.deviceId,
+    expectedBindingId: null,
+    operation: "register",
+    publicKey: record.publicKey,
+    requestId: record.requestId
+  });
+  if (record.pendingProposal !== expectedProposal) unavailable();
+  return Object.freeze({
+    deviceId: record.deviceId,
+    pendingProposal: expectedProposal,
+    publicKey: record.publicKey,
+    requestId: record.requestId,
+    subject: record.subject
+  });
 }
 
 function snapshotDocument(value, now) {
@@ -409,20 +448,79 @@ const isExactPendingRenewal = (previous, next) => {
 
 // A single slot cannot silently become a second account's device. add() is
 // atomic across tabs; native IndexedDB structured clone retains CryptoKeys.
+function exactMessagingDeviceStoreMetadata(store) {
+  if (
+    store?.keyPath !== null || store.autoIncrement !== false ||
+    Array.from(store.indexNames).length !== 0
+  ) unavailable();
+  return store;
+}
+
 export function createMessagingDeviceStore(indexedDBImpl) {
   const open = () => new Promise((resolve, reject) => {
-    const factory = indexedDBImpl === undefined ? globalThis.indexedDB : indexedDBImpl;
-    if (typeof factory?.open !== "function") { reject(new Error("device store unavailable")); return; }
-    const request = factory.open("hodlxxi-social-messaging-device-v1", 1);
-    let blocked = false;
-    request.onupgradeneeded = () => request.result.createObjectStore("device");
-    request.onerror = () => reject(new Error("device store unavailable"));
-    request.onblocked = () => { blocked = true; reject(new Error("device store unavailable")); };
-    request.onsuccess = () => {
-      if (blocked) { request.result.close(); return; }
-      request.result.onversionchange = () => request.result.close();
-      resolve(request.result);
-    };
+    try {
+      const factory = indexedDBImpl === undefined
+        ? globalThis.indexedDB : indexedDBImpl;
+      if (typeof factory?.open !== "function") unavailable();
+      // Omitting a requested version is intentional. A fresh X25519-only
+      // database is version 1; using V1 never triggers the dormant V2 upgrade.
+      const request = factory.open(MESSAGING_DEVICE_DATABASE_NAME);
+      let blocked = false;
+      request.onupgradeneeded = (event) => {
+        if (blocked) {
+          try { request.transaction?.abort(); } catch {}
+          return;
+        }
+        try {
+          if (
+            event?.oldVersion !== 0 || request.result.version !== 1 ||
+            request.result.objectStoreNames.length !== 0
+          ) unavailable();
+          exactMessagingDeviceStoreMetadata(
+            request.result.createObjectStore(
+              MESSAGING_DEVICE_DEVICE_STORE_NAME
+            )
+          );
+        } catch {
+          try { request.transaction?.abort(); } catch {}
+        }
+      };
+      request.onerror = () => reject(new Error("device store unavailable"));
+      request.onblocked = () => {
+        blocked = true;
+        reject(new Error("device store unavailable"));
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        try {
+          if (blocked) { db.close(); return; }
+          const names = Array.from(db.objectStoreNames);
+          const expected = db.version === 1
+            ? [MESSAGING_DEVICE_DEVICE_STORE_NAME]
+            : db.version === MESSAGING_DEVICE_SHARED_DATABASE_VERSION_V2
+              ? [
+                  MESSAGING_DEVICE_DEVICE_STORE_NAME,
+                  MESSAGING_DEVICE_PROVISIONAL_AUTHENTICATION_STORE_V2
+                ]
+              : null;
+          if (
+            expected === null || names.length !== expected.length ||
+            expected.some((name) => !names.includes(name))
+          ) unavailable();
+          const metadata = db.transaction(expected, "readonly");
+          for (const name of expected) {
+            exactMessagingDeviceStoreMetadata(metadata.objectStore(name));
+          }
+          db.onversionchange = () => db.close();
+          resolve(db);
+        } catch {
+          try { db.close(); } catch {}
+          reject(new Error("device store unavailable"));
+        }
+      };
+    } catch {
+      reject(new Error("device store unavailable"));
+    }
   });
   const transaction = async (mode, action) => {
     const db = await open();
@@ -431,13 +529,21 @@ export function createMessagingDeviceStore(indexedDBImpl) {
         let tx;
         try {
           tx = mode === "readwrite"
-            ? db.transaction("device", mode, { durability: "strict" })
-            : db.transaction("device", mode);
+            ? db.transaction(
+                MESSAGING_DEVICE_DEVICE_STORE_NAME,
+                mode,
+                { durability: "strict" }
+              )
+            : db.transaction(MESSAGING_DEVICE_DEVICE_STORE_NAME, mode);
           if (mode === "readwrite" && tx.durability !== "strict") { tx.abort(); unavailable(); }
           let result;
           tx.oncomplete = () => resolve(result);
           tx.onabort = tx.onerror = () => reject(new Error("device store unavailable"));
-          action(tx.objectStore("device"), (value) => { result = value; }, tx);
+          action(
+            tx.objectStore(MESSAGING_DEVICE_DEVICE_STORE_NAME),
+            (value) => { result = value; },
+            tx
+          );
         } catch {
           try { tx?.abort(); } catch {}
           reject(new Error("device store unavailable"));
