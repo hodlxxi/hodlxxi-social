@@ -4,6 +4,8 @@ const plain = (value) => value !== null && typeof value === "object" && !Array.i
 const bounded = (value, maximum) => typeof value === "string" && value.length > 0 && value.length <= maximum && !/[\u0000-\u001f\u007f]/.test(value);
 const failure = () => { throw new Error("oauth_request_failed"); };
 const MAX_OAUTH_RESPONSE_BYTES = 16384;
+const MAX_DIAGNOSTIC_BYTES = MAX_OAUTH_RESPONSE_BYTES + 1;
+const MAX_DIAGNOSTIC_ELAPSED_MS = 60000;
 const JSON_CONTENT_TYPE = /^application\/json(?:[\t ]*;[\t ]*[!#$%&'*+\-.^_`|~0-9A-Za-z]+[\t ]*=[\t ]*(?:[!#$%&'*+\-.^_`|~0-9A-Za-z]+|"(?:[\t\x20\x21\x23-\x5b\x5d-\x7e]|\\[\t\x20-\x7e])*"))*[\t ]*$/i;
 const rejectDuplicateJsonMembers = (source) => {
   let offset = 0;
@@ -67,51 +69,124 @@ const createRejectedResponseDisposer = (controller) => {
   };
 };
 
-async function readBoundedBody(response) {
+const diagnosticClock = (nowImpl) => {
+  try {
+    const value = nowImpl();
+    return Number.isFinite(value) ? value : null;
+  } catch { return null; }
+};
+
+const diagnosticElapsed = (startedAt, nowImpl) => {
+  const finishedAt = diagnosticClock(nowImpl);
+  if (startedAt === null || finishedAt === null) return 0;
+  return Math.max(0, Math.min(MAX_DIAGNOSTIC_ELAPSED_MS, Math.trunc(finishedAt - startedAt)));
+};
+
+const diagnosticByteCount = (value) => Math.min(value, MAX_DIAGNOSTIC_BYTES);
+
+const reportFailure = (reporter, observation, startedAt, nowImpl, timedOut, aborted) => {
+  if (typeof reporter !== "function") return;
+  const record = {
+    endpoint: observation.endpoint,
+    stage: observation.stage,
+    elapsedMs: diagnosticElapsed(startedAt, nowImpl),
+    receivedBytes: observation.receivedBytes,
+    timedOut,
+    aborted
+  };
+  if (observation.status !== undefined) record.status = observation.status;
+  if (observation.declaredBytes !== undefined) record.declaredBytes = observation.declaredBytes;
+  try {
+    const reporting = reporter(Object.freeze(record));
+    Promise.resolve(reporting).catch(() => {});
+  } catch {}
+};
+
+async function readBoundedBody(response, observation) {
+  observation.stage = "body";
   if (!response.body || typeof response.body.getReader !== "function") failure();
+  observation.stage = "declared_size";
   const declared = response.headers?.get?.("content-length");
+  if (typeof declared === "string" && /^[0-9]+$/.test(declared)) {
+    const numeric = Number(declared);
+    observation.declaredBytes = Number.isFinite(numeric) ? diagnosticByteCount(numeric) : MAX_DIAGNOSTIC_BYTES;
+  }
   if (declared !== null && declared !== undefined && (typeof declared !== "string" || !/^[0-9]+$/.test(declared) || Number(declared) > MAX_OAUTH_RESPONSE_BYTES)) failure();
+  observation.stage = "body_reader";
   const reader = response.body.getReader();
   const chunks = [];
   let length = 0;
   try {
     while (true) {
+      observation.stage = "body_read";
       const { done, value } = await reader.read();
       if (done) break;
       if (!(value instanceof Uint8Array)) failure();
       length += value.byteLength;
-      if (length > MAX_OAUTH_RESPONSE_BYTES) failure();
+      observation.receivedBytes = diagnosticByteCount(length);
+      if (length > MAX_OAUTH_RESPONSE_BYTES) {
+        observation.stage = "received_size";
+        failure();
+      }
       chunks.push(value);
     }
-  } finally { reader.releaseLock(); }
+  } finally {
+    const precedingStage = observation.stage;
+    try { reader.releaseLock(); } catch { observation.stage = "body_release"; failure(); }
+    observation.stage = precedingStage;
+  }
   const bytes = new Uint8Array(length);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  observation.stage = "decode";
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { failure(); }
 }
 
-async function postForm(url, fields, accept, { fetchImpl, timeoutMs, setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout }) {
+async function postForm(endpoint, url, fields, accept, { fetchImpl, timeoutMs, setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout, diagnosticReporter, nowImpl = Date.now }) {
   const controller = new AbortController();
-  const timer = setTimeoutImpl(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeoutImpl(() => { timedOut = true; controller.abort(); }, timeoutMs);
   const dispose = createRejectedResponseDisposer(controller);
+  const observation = { endpoint, stage: "dispatch", receivedBytes: 0 };
+  const startedAt = typeof diagnosticReporter === "function" ? diagnosticClock(nowImpl) : null;
   let response;
   let result;
   let accepted = false;
+  let timedOutAtFailure = false;
+  let abortedAtFailure = false;
   try {
     response = await fetchImpl(url, { method: "POST", redirect: "manual", credentials: "omit", signal: controller.signal,
       headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields).toString() });
-    if (!response || response.status !== 200) failure();
+    observation.stage = "status";
+    const status = response?.status;
+    if (Number.isSafeInteger(status) && status >= 0 && status <= 599) observation.status = status;
+    if (!response || status !== 200) failure();
+    observation.stage = "content_type";
     const contentType = response.headers?.get?.("content-type");
     if (typeof contentType !== "string" || !JSON_CONTENT_TYPE.test(contentType)) failure();
-    const raw = await readBoundedBody(response);
-    let value; try { rejectDuplicateJsonMembers(raw); value = JSON.parse(raw); } catch { failure(); }
+    const raw = await readBoundedBody(response, observation);
+    let value;
+    try {
+      observation.stage = "json_members";
+      rejectDuplicateJsonMembers(raw);
+      observation.stage = "json_parse";
+      value = JSON.parse(raw);
+    } catch { failure(); }
+    observation.stage = "response_validation";
     result = accept(value);
     accepted = true;
-  } catch { dispose(response); } finally {
+  } catch {
+    timedOutAtFailure = timedOut;
+    abortedAtFailure = controller.signal.aborted;
+    dispose(response);
+  } finally {
     if (!accepted) dispose(response);
     try { clearTimeoutImpl(timer); } catch {}
   }
-  if (!accepted) failure();
+  if (!accepted) {
+    reportFailure(diagnosticReporter, observation, startedAt, nowImpl, timedOutAtFailure, abortedAtFailure);
+    failure();
+  }
   return result;
 }
 
@@ -147,15 +222,22 @@ export function validateIntrospectionResponse(value, { clientId, scope }) {
 export function createHodlxxiOAuthClient(config, dependencies = {}) {
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new TypeError("invalid transport");
-  const transport = { fetchImpl, timeoutMs: config.outboundTimeoutMs, setTimeoutImpl: dependencies.setTimeoutImpl, clearTimeoutImpl: dependencies.clearTimeoutImpl };
+  const transport = {
+    fetchImpl,
+    timeoutMs: config.outboundTimeoutMs,
+    setTimeoutImpl: dependencies.setTimeoutImpl,
+    clearTimeoutImpl: dependencies.clearTimeoutImpl,
+    diagnosticReporter: dependencies.diagnosticReporter,
+    nowImpl: dependencies.nowImpl
+  };
   return Object.freeze({
     async authenticate({ code, verifier }) {
       if (!bounded(code, 2048) || !bounded(verifier, 128)) failure();
-      const token = await postForm(`${config.authorityOrigin}/oauth/token`, {
+      const token = await postForm("token", `${config.authorityOrigin}/oauth/token`, {
         grant_type: "authorization_code", code, redirect_uri: config.callbackUri, client_id: config.clientId,
         client_secret: config.clientSecret, code_verifier: verifier
       }, validateTokenResponse, transport);
-      const subject = await postForm(`${config.authorityOrigin}/oauth/introspect`, {
+      const subject = await postForm("introspection", `${config.authorityOrigin}/oauth/introspect`, {
         token, client_id: config.clientId, client_secret: config.clientSecret
       }, (value) => validateIntrospectionResponse(value, config), transport);
       return Object.freeze({

@@ -493,3 +493,123 @@ test("public failures disclose no secret, token, body, status, header, URL, or c
   assert.equal(rejected.state.cancelCalls, 1);
   for (const marker of markers) assert.equal(String(error).includes(marker), false);
 });
+
+test("diagnostics identify fixed response-validation stages without disclosing sentinels", async (t) => {
+  const secret = "diagnostic-secret-sentinel-private";
+  const cases = [
+    { name: "status", expected: "status", response: () => responseFor(trackedBody(secret).body, { status: 502, statusText: secret }) },
+    { name: "content type", expected: "content_type", response: () => responseFor(trackedBody(secret).body, { contentType: `text/${secret}` }) },
+    { name: "body", expected: "body", response: () => responseFor(null) },
+    { name: "declared size", expected: "declared_size", response: () => responseFor(trackedBody(secret).body, { contentLength: "16385" }) },
+    { name: "body reader", expected: "body_reader", response: () => responseFor({ getReader() { throw new Error(secret); }, cancel() {} }) },
+    { name: "body read", expected: "body_read", response: () => responseFor(trackedBody("ignored", { readError: new Error(secret) }).body) },
+    { name: "received size", expected: "received_size", response: () => responseFor(trackedBody([new Uint8Array(8192), new Uint8Array(8193)]).body) },
+    { name: "body release", expected: "body_release", response: () => responseFor({ getReader() { return { async read() { return { done: true }; }, releaseLock() { throw new Error(secret); } }; }, cancel() {} }) },
+    { name: "decode", expected: "decode", response: () => responseFor(trackedBody(new Uint8Array([0xc3, 0x28])).body) },
+    { name: "duplicate members", expected: "json_members", response: () => responseFor(trackedBody(`{"${secret}":1,"${secret}":2}`).body) },
+    { name: "JSON parse", expected: "json_parse", response: () => responseFor(trackedBody("tru").body) },
+    { name: "response validation", expected: "response_validation", response: () => responseFor(trackedBody(`{"access_token":"${secret}","token_type":"bearer"}`).body) }
+  ];
+  const allowed = new Set(["endpoint", "stage", "status", "elapsedMs", "declaredBytes", "receivedBytes", "timedOut", "aborted"]);
+  for (const candidate of cases) await t.test(candidate.name, async () => {
+    const diagnostics = [];
+    const times = [100, 107];
+    const client = clientWith(async () => candidate.response(), {
+      diagnosticReporter: (record) => diagnostics.push(record),
+      nowImpl: () => times.shift()
+    });
+    await expectOAuthFailure(client.authenticate({ code: secret, verifier: "v".repeat(43) }));
+    assert.equal(diagnostics.length, 1);
+    const record = diagnostics[0];
+    assert.equal(Object.isFrozen(record), true);
+    assert.equal(record.endpoint, "token");
+    assert.equal(record.stage, candidate.expected);
+    assert.equal(record.elapsedMs, 7);
+    assert.equal(record.timedOut, false);
+    assert.equal(record.aborted, false);
+    assert.ok(Object.keys(record).every((name) => allowed.has(name)));
+    assert.doesNotMatch(JSON.stringify(record), new RegExp(secret));
+  });
+});
+
+test("diagnostic response byte counts preserve the exact limit and saturate over-limit values", async () => {
+  const tokenJson = JSON.stringify({ access_token: "token", token_type: "Bearer" });
+  const exact = tokenJson + " ".repeat(16384 - encoder.encode(tokenJson).byteLength);
+  const acceptedDiagnostics = [];
+  let calls = 0;
+  const accepted = clientWith(async () => {
+    calls += 1;
+    if (calls === 1) return streamingReply(exact, { "content-length": "16384" });
+    return reply({ active: true, sub: "a".repeat(64), client_id: "social", scope: "openid" });
+  }, { diagnosticReporter: (record) => acceptedDiagnostics.push(record) });
+  assert.deepEqual(await accepted.authenticate(credentials), { subject: "a".repeat(64), accessToken: "token" });
+  assert.deepEqual(acceptedDiagnostics, []);
+
+  const declaredDiagnostics = [];
+  await expectOAuthFailure(clientWith(async () => responseFor(trackedBody(tokenJson).body, {
+    contentLength: "999999999999999999999999"
+  }), { diagnosticReporter: (record) => declaredDiagnostics.push(record) }).authenticate(credentials));
+  assert.equal(declaredDiagnostics[0].stage, "declared_size");
+  assert.equal(declaredDiagnostics[0].declaredBytes, 16385);
+  assert.equal(declaredDiagnostics[0].receivedBytes, 0);
+
+  const streamedDiagnostics = [];
+  await expectOAuthFailure(clientWith(async () => responseFor(trackedBody([
+    new Uint8Array(16384), new Uint8Array(4096)
+  ]).body), { diagnosticReporter: (record) => streamedDiagnostics.push(record) }).authenticate(credentials));
+  assert.equal(streamedDiagnostics[0].stage, "received_size");
+  assert.equal(streamedDiagnostics[0].receivedBytes, 16385);
+  assert.equal(Object.hasOwn(streamedDiagnostics[0], "declaredBytes"), false);
+});
+
+test("transport timeout is distinguished from an ordinary introspection dispatch failure", async () => {
+  const timeoutSecret = "timeout-error-secret-private";
+  let fireTimeout;
+  let timeoutClears = 0;
+  const timeoutDiagnostics = [];
+  const timedOutClient = createHodlxxiOAuthClient(config, {
+    fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(Object.assign(new Error(timeoutSecret), {
+        code: timeoutSecret, state: timeoutSecret
+      })));
+      queueMicrotask(() => fireTimeout());
+    }),
+    setTimeoutImpl(callback) { fireTimeout = callback; return 1; },
+    clearTimeoutImpl() { timeoutClears += 1; },
+    diagnosticReporter: (record) => timeoutDiagnostics.push(record),
+    nowImpl: (() => { const times = [100, 1100]; return () => times.shift(); })()
+  });
+  const timeoutError = await expectOAuthFailure(timedOutClient.authenticate(credentials));
+  assert.equal(timeoutClears, 1);
+  assert.deepEqual(timeoutDiagnostics, [{
+    endpoint: "token", stage: "dispatch", elapsedMs: 1000, receivedBytes: 0,
+    timedOut: true, aborted: true
+  }]);
+  assert.doesNotMatch(String(timeoutError) + JSON.stringify(timeoutDiagnostics), new RegExp(timeoutSecret));
+
+  const dispatchSecret = "introspection-dispatch-secret-private";
+  const upstreamToken = "introspection-token-secret-private";
+  const diagnostics = [];
+  let dispatches = 0;
+  const client = clientWith(async () => {
+    dispatches += 1;
+    if (dispatches === 1) return reply({ access_token: upstreamToken, token_type: "Bearer" });
+    throw Object.assign(new Error(dispatchSecret), { code: dispatchSecret, state: dispatchSecret });
+  }, { diagnosticReporter: (record) => diagnostics.push(record), nowImpl: () => 5 });
+  const error = await expectOAuthFailure(client.authenticate({ code: dispatchSecret, verifier: "v".repeat(43) }));
+  assert.deepEqual(diagnostics, [{
+    endpoint: "introspection", stage: "dispatch", elapsedMs: 0, receivedBytes: 0,
+    timedOut: false, aborted: false
+  }]);
+  for (const sentinel of [dispatchSecret, upstreamToken, config.clientSecret, config.authorityOrigin]) {
+    assert.doesNotMatch(String(error) + JSON.stringify(diagnostics), new RegExp(sentinel));
+  }
+});
+
+test("diagnostic reporter failures never replace the sanitized OAuth failure", async () => {
+  const client = clientWith(async () => { throw new Error("transport-secret-private"); }, {
+    diagnosticReporter() { throw new Error("reporter-secret-private"); }
+  });
+  const error = await expectOAuthFailure(client.authenticate(credentials));
+  assert.equal(String(error), "Error: oauth_request_failed");
+});
