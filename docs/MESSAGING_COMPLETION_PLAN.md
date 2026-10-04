@@ -54,6 +54,30 @@ Their enabled flags default to false. Existing browser reconciliation, IndexedDB
 cross-tab protections, confidential BFF authentication, public internal-route
 denials, and exact accepted retry behavior remain in force.
 
+## Trusted-process security boundary
+
+Every HTTP, network, browser and mobile value is untrusted, including JSON and
+canonical wire bytes; public keys, signatures, proof fields, identifiers and
+timestamps; signer outputs, exceptions, delays and malformed responses; and
+stored or public evidence later supplied to a consumer. The remote-input
+guarantee requires those values to pass the applicable closed-shape,
+canonical-byte, cryptographic, deadline and brand checks.
+
+The trusted computing base is the Node.js process and executable, Node/OpenSSL
+built-ins, repository source loaded from trusted deployment files, the exact
+installed dependencies selected by `package-lock.json`, and application code
+intentionally loaded into that process. Arbitrary JavaScript already executing
+in the trusted process and rewriting prototypes, Buffer statics, dependency
+internals or other process-wide state is process compromise and is outside this
+candidate's security guarantee.
+
+Captured operations, integrity observations and exact mutation regressions are
+non-exhaustive, non-normative defense in depth. They do not constitute a
+complete inventory of mutable JavaScript primordials and do not make arbitrary
+same-process monkey-patching a supported boundary. A future requirement to run
+mutually untrusted JavaScript requires a separately reviewed isolated-process
+architecture.
+
 ## Phase 2: complete mobile authorization and session continuity
 
 Integrate immutable challenge issuance/consumption with the real LEGACY login
@@ -76,15 +100,25 @@ adds only a source-level compatibility slice for the reviewed `register +
 initial` path. It prepares one separate non-extractable Ed25519 key against the
 exact pending X25519 proposal, reproduces the merged preacceptance bytes,
 persists one-signature retry evidence, and strictly verifies the resulting
-BIP340 plus Ed25519 transcript. It remains outside runtime, BFF, browser-entry
-and UI imports and confers no acceptance, association, Full, session, ready or
-request authority.
+BIP340 plus Ed25519 transcript. The dormant server verifier binds both proofs to
+captured exact caller-wire parsing and encoding, adds an independent exact-byte
+BIP340 confirmation, requires native-first and independent Noble confirmation
+of the same Ed25519 proof, copies digests without live backing-buffer conversion,
+and retains selected post-import mutation checks for iterator advancement,
+inherited JSON hooks and thenable assimilation as non-exhaustive defense in
+depth under the trusted-process boundary above.
+It also performs a hook-free local serialization of the signed lifecycle
+binding record and independently recomputes the binding ID plus all downstream
+authorization and acceptance identities before branding evidence.
+It remains outside runtime, BFF, browser-entry and UI imports and confers no
+acceptance, association, Full, session, ready or request authority.
 
-The next protocol prerequisite is an additive UBID-owned V2 verification-
-statement byte contract and authenticated consumer, followed by the matching
-dormant Social producer. Durable V2 acceptance, challenge issuance and the
-atomic association owner must be separate reviewed increments. Continuation,
-ordinary request proof and runtime activation remain deferred.
+The additive UBID-owned V2 verification-statement byte contract and authenticated
+consumer now have a matching dormant Social producer. Both sides reproduce the
+same fixed public bytes, but neither is runtime-wired or authority. Durable V2
+acceptance, challenge issuance and the atomic association owner must be separate
+reviewed increments. Continuation, ordinary request proof and runtime activation
+remain deferred.
 
 ## Phase 3: ciphertext transport and inbox completion
 

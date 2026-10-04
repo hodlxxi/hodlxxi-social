@@ -1,6 +1,10 @@
 // Dormant pure contracts. This module is not imported by runtime composition.
 // Social currently owns the strict Ed25519 primitive, not final admission.
-import { createHash } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  verify as nativeEd25519Verify
+} from "node:crypto";
 import { isProxy } from "node:util/types";
 import { CURVE, Point, etc, verify } from "@noble/ed25519";
 import {
@@ -9,6 +13,138 @@ import {
   isCanonicalDeviceAudienceV1
 } from "./messaging-device-admission-v1.mjs";
 import { verifyNostrEvent } from "../../web/nostr-event-verifier.mjs";
+
+const safeCreateHash = createHash;
+const safeCreatePublicKey = createPublicKey;
+const safeNativeEd25519Verify = nativeEd25519Verify;
+const safeIsProxy = isProxy;
+const safeApply = Reflect.apply;
+const safeGlobalThis = globalThis;
+const safeObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const safeObjectGetPrototypeOf = Object.getPrototypeOf;
+const safeObjectDefineProperty = Object.defineProperty;
+const objectPrototype = Object.prototype;
+const arrayIteratorPrototype = safeObjectGetPrototypeOf(
+  [][Symbol.iterator]()
+);
+const SafeArrayBuffer = ArrayBuffer;
+const SafeUint8Array = Uint8Array;
+const safeUint8ArrayPrototype = SafeUint8Array.prototype;
+const safeTypedArrayConstructor = safeObjectGetPrototypeOf(SafeUint8Array);
+const safeTypedArrayPrototype = safeObjectGetPrototypeOf(
+  safeUint8ArrayPrototype
+);
+const safeTypedArrayLength = safeObjectGetOwnPropertyDescriptor(
+  safeTypedArrayPrototype,
+  "length"
+).get;
+const safeStringCharCodeAt = String.prototype.charCodeAt;
+const safeTextEncoderEncode = TextEncoder.prototype.encode;
+const safeBigInt = BigInt;
+const safeEd25519Order = CURVE.n;
+const safeNobleVerify = verify;
+const safePointFromHex = Point.fromHex;
+const safePointAssertValidity = Point.prototype.assertValidity;
+const safePointToRawBytes = Point.prototype.toRawBytes;
+const safePointIsSmallOrder = Point.prototype.isSmallOrder;
+const safePointIsTorsionFree = Point.prototype.isTorsionFree;
+const encoder = new TextEncoder();
+const sha256HashPrototype = safeObjectGetPrototypeOf(safeCreateHash("sha256"));
+const safeSha256HashUpdate = sha256HashPrototype.update;
+const safeSha256HashDigest = sha256HashPrototype.digest;
+const sha512HashPrototype = safeObjectGetPrototypeOf(safeCreateHash("sha512"));
+const safeSha512HashUpdate = sha512HashPrototype.update;
+const safeSha512HashDigest = sha512HashPrototype.digest;
+const ed25519SpkiDerPrefix = new SafeUint8Array(12);
+ed25519SpkiDerPrefix[0] = 0x30;
+ed25519SpkiDerPrefix[1] = 0x2a;
+ed25519SpkiDerPrefix[2] = 0x30;
+ed25519SpkiDerPrefix[3] = 0x05;
+ed25519SpkiDerPrefix[4] = 0x06;
+ed25519SpkiDerPrefix[5] = 0x03;
+ed25519SpkiDerPrefix[6] = 0x2b;
+ed25519SpkiDerPrefix[7] = 0x65;
+ed25519SpkiDerPrefix[8] = 0x70;
+ed25519SpkiDerPrefix[9] = 0x03;
+ed25519SpkiDerPrefix[10] = 0x21;
+ed25519SpkiDerPrefix[11] = 0x00;
+
+function descriptor(target, key) {
+  return [target, key, safeObjectGetOwnPropertyDescriptor(target, key)];
+}
+
+// Security boundary: caller/network bytes and public evidence are untrusted;
+// the Node process/executable, Node/OpenSSL built-ins, trusted deployment
+// source, package-lock-selected dependencies, and intentionally loaded
+// application code are trusted. Arbitrary JavaScript rewriting process-wide
+// state is process compromise; stronger isolation is a future architecture.
+// Noble 2.3.0 performs synchronous verification through mutable primordials.
+// These selected descriptor checks are non-exhaustive, non-normative defense
+// in depth for known paths, not a complete inventory or monkey-patch boundary.
+// The module never freezes or changes the global objects themselves.
+const strictVerificationDescriptors = [
+  descriptor(safeGlobalThis, "Array"),
+  descriptor(safeGlobalThis, "ArrayBuffer"),
+  descriptor(safeGlobalThis, "Math"),
+  descriptor(safeGlobalThis, "Number"),
+  descriptor(safeGlobalThis, "Object"),
+  descriptor(safeGlobalThis, "Uint8Array"),
+  descriptor(Array, "from"),
+  descriptor(Array, Symbol.species),
+  descriptor(ArrayBuffer, "isView"),
+  descriptor(Math, "abs"),
+  descriptor(Object, "freeze"),
+  descriptor(Object, "defineProperty"),
+  descriptor(Array.prototype, "constructor"),
+  descriptor(Array.prototype, Symbol.iterator),
+  descriptor(arrayIteratorPrototype, "next"),
+  descriptor(Array.prototype, "then"),
+  descriptor(Array.prototype, "toJSON"),
+  descriptor(Array.prototype, "forEach"),
+  descriptor(Array.prototype, "join"),
+  descriptor(Array.prototype, "map"),
+  descriptor(Array.prototype, "push"),
+  descriptor(Array.prototype, "reduce"),
+  descriptor(BigInt.prototype, "toString"),
+  descriptor(Function.prototype, Symbol.hasInstance),
+  descriptor(Number.prototype, "toString"),
+  descriptor(objectPrototype, "then"),
+  descriptor(objectPrototype, "toJSON"),
+  descriptor(SafeArrayBuffer.prototype, "then"),
+  descriptor(SafeArrayBuffer.prototype, "toJSON"),
+  descriptor(String.prototype, "charCodeAt"),
+  descriptor(String.prototype, "padStart"),
+  descriptor(String.prototype, Symbol.iterator),
+  descriptor(SafeUint8Array, "from"),
+  descriptor(SafeUint8Array, "of"),
+  descriptor(SafeUint8Array, Symbol.species),
+  descriptor(safeUint8ArrayPrototype, "constructor"),
+  descriptor(safeUint8ArrayPrototype, Symbol.iterator),
+  descriptor(safeTypedArrayConstructor, "from"),
+  descriptor(safeTypedArrayConstructor, "of"),
+  descriptor(safeTypedArrayConstructor, Symbol.species),
+  descriptor(safeTypedArrayPrototype, "constructor"),
+  descriptor(safeTypedArrayPrototype, Symbol.iterator),
+  descriptor(safeTypedArrayPrototype, "length"),
+  descriptor(safeTypedArrayPrototype, "reverse"),
+  descriptor(safeTypedArrayPrototype, "set"),
+  descriptor(safeTypedArrayPrototype, "slice"),
+  descriptor(Point, "fromBytes"),
+  descriptor(Point, "fromHex"),
+  descriptor(Point.prototype, "add"),
+  descriptor(Point.prototype, "assertValidity"),
+  descriptor(Point.prototype, "clearCofactor"),
+  descriptor(Point.prototype, "double"),
+  descriptor(Point.prototype, "equals"),
+  descriptor(Point.prototype, "is0"),
+  descriptor(Point.prototype, "isSmallOrder"),
+  descriptor(Point.prototype, "isTorsionFree"),
+  descriptor(Point.prototype, "multiply"),
+  descriptor(Point.prototype, "negate"),
+  descriptor(Point.prototype, "toAffine"),
+  descriptor(Point.prototype, "toBytes"),
+  descriptor(Point.prototype, "toRawBytes")
+];
 
 export const DEVICE_PROOF_PROFILE =
   "hodlxxi.social_messaging_device_proof.ed25519_webcrypto.v1";
@@ -67,28 +203,82 @@ const EVENT_FIELDS = [
   "content", "created_at", "id", "kind", "pubkey", "sig", "tags"
 ];
 const enabled = Object.freeze({ enabled: true });
-const encoder = new TextEncoder();
 const deny = () => {
   throw new TypeError("messaging device proof unavailable");
 };
+function sameDescriptor(target, key, expected) {
+  const actual = safeObjectGetOwnPropertyDescriptor(target, key);
+  if (actual === undefined || expected === undefined) {
+    return actual === expected;
+  }
+  return actual.configurable === expected.configurable &&
+    actual.enumerable === expected.enumerable &&
+    actual.get === expected.get && actual.set === expected.set &&
+    actual.value === expected.value && actual.writable === expected.writable;
+}
+function strictVerificationPrimordialsIntact() {
+  for (let index = 0; index < strictVerificationDescriptors.length; index += 1) {
+    const entry = strictVerificationDescriptors[index];
+    if (!sameDescriptor(entry[0], entry[1], entry[2])) return false;
+  }
+  return true;
+}
+function encodeUtf8(value) {
+  return safeApply(safeTextEncoderEncode, encoder, [value]);
+}
+function sha256Digest(parts, outputEncoding) {
+  const hash = safeCreateHash("sha256");
+  for (let index = 0; index < parts.length; index += 1) {
+    safeApply(safeSha256HashUpdate, hash, [
+      parts[index][0],
+      parts[index][1]
+    ]);
+  }
+  return outputEncoding === undefined
+    ? safeApply(safeSha256HashDigest, hash, [])
+    : safeApply(safeSha256HashDigest, hash, [outputEncoding]);
+}
 const trustedNostrCrypto = Object.freeze({
   subtle: Object.freeze({
     async digest(algorithm, value) {
-      if (algorithm !== "SHA-256" || !(value instanceof Uint8Array)) {
+      if (
+        algorithm !== "SHA-256" || !(value instanceof Uint8Array) ||
+        !strictVerificationPrimordialsIntact()
+      ) {
         throw new TypeError("Nostr verification unavailable");
       }
-      const bytes = createHash("sha256").update(value).digest();
-      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const bytes = sha256Digest([[value, undefined]]);
+      const length = typedArrayLength(bytes);
+      const result = new SafeArrayBuffer(length);
+      const view = new SafeUint8Array(result);
+      for (let index = 0; index < length; index += 1) {
+        view[index] = bytes[index];
+      }
+      safeObjectDefineProperty(result, "then", {
+        configurable: false,
+        enumerable: false,
+        value: undefined,
+        writable: false
+      });
+      if (!strictVerificationPrimordialsIntact()) {
+        throw new TypeError("Nostr verification unavailable");
+      }
+      return result;
     }
   })
 });
 const canonical = (value) => JSON.stringify(
   Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]))
 );
-const digest = (domain, source) => createHash("sha256")
-  .update(domain + "\0", "ascii")
-  .update(source, "ascii")
-  .digest("hex");
+const digest = (domain, source) => {
+  if (!strictVerificationPrimordialsIntact()) deny();
+  const result = sha256Digest([
+    [domain + "\0", "ascii"],
+    [source, "ascii"]
+  ], "hex");
+  if (!strictVerificationPrimordialsIntact()) deny();
+  return result;
+};
 const isInteger = (value) => Number.isSafeInteger(value) && value >= 0;
 const isHex64 = (value) => typeof value === "string" && HEX64.test(value);
 const isHex128 = (value) => typeof value === "string" && HEX128.test(value);
@@ -96,7 +286,7 @@ const isHex128 = (value) => typeof value === "string" && HEX128.test(value);
 function ownData(value, required, optional = []) {
   if (
     value === null || typeof value !== "object" || Array.isArray(value) ||
-    isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype
+    safeIsProxy(value) || Object.getPrototypeOf(value) !== Object.prototype
   ) deny();
   const descriptors = Object.getOwnPropertyDescriptors(value);
   const allowed = [...required, ...optional];
@@ -118,7 +308,7 @@ function closedJson(source, fields, maximum) {
   if (
     typeof source !== "string" ||
     source.length === 0 ||
-    encoder.encode(source).byteLength > maximum ||
+    encodeUtf8(source).byteLength > maximum ||
     /[^\x20-\x7e]/.test(source)
   ) deny();
   let value;
@@ -145,38 +335,134 @@ function closedJson(source, fields, maximum) {
 }
 
 function hexBytes(value, expected) {
-  if (
-    typeof value !== "string" || value.length !== expected * 2 ||
-    !/^[0-9a-f]+$/.test(value)
-  ) deny();
-  return Uint8Array.from(
-    value.match(/../g),
-    (part) => Number.parseInt(part, 16)
-  );
-}
-
-function littleEndianInteger(value) {
-  let result = 0n;
-  for (let index = value.length - 1; index >= 0; index -= 1) {
-    result = (result << 8n) | BigInt(value[index]);
+  if (typeof value !== "string" || value.length !== expected * 2) deny();
+  const result = new SafeUint8Array(expected);
+  for (let index = 0; index < expected; index += 1) {
+    const highCode = safeApply(
+      safeStringCharCodeAt,
+      value,
+      [index * 2]
+    );
+    const lowCode = safeApply(
+      safeStringCharCodeAt,
+      value,
+      [index * 2 + 1]
+    );
+    const high = highCode >= 48 && highCode <= 57
+      ? highCode - 48
+      : highCode >= 97 && highCode <= 102 ? highCode - 87 : -1;
+    const low = lowCode >= 48 && lowCode <= 57
+      ? lowCode - 48
+      : lowCode >= 97 && lowCode <= 102 ? lowCode - 87 : -1;
+    if (high < 0 || low < 0) deny();
+    result[index] = high * 16 + low;
   }
   return result;
 }
 
-function strictPoint(value) {
-  const point = Point.fromHex(value, false).assertValidity();
-  if (
-    point.toHex() !== value || point.isSmallOrder() ||
-    !point.isTorsionFree()
-  ) deny();
-  return point;
+const HEX_DIGITS = "0123456789abcdef";
+function canonicalHexBytes(value, length) {
+  let result = "";
+  for (let index = 0; index < length; index += 1) {
+    const byte = value[index];
+    result += HEX_DIGITS[(byte >>> 4) & 15] + HEX_DIGITS[byte & 15];
+  }
+  return result;
 }
 
-const sha512Sync = (...messages) => {
-  const hash = createHash("sha512");
-  for (const message of messages) hash.update(message);
-  return new Uint8Array(hash.digest());
-};
+function exactUint8Array(value) {
+  return value !== null && typeof value === "object" &&
+    !safeIsProxy(value) &&
+    safeObjectGetPrototypeOf(value) === safeUint8ArrayPrototype;
+}
+
+function typedArrayLength(value) {
+  return safeApply(safeTypedArrayLength, value, []);
+}
+
+function copyBytes(value, start, length) {
+  const result = new SafeUint8Array(length);
+  for (let index = 0; index < length; index += 1) {
+    result[index] = value[start + index];
+  }
+  return result;
+}
+
+function equalBytes(left, right, length) {
+  if (
+    !exactUint8Array(left) || !exactUint8Array(right) ||
+    typedArrayLength(left) !== length || typedArrayLength(right) !== length
+  ) return false;
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function littleEndianInteger(value, start, length) {
+  let result = 0n;
+  for (let index = start + length - 1; index >= start; index -= 1) {
+    result = (result << 8n) | safeBigInt(value[index]);
+  }
+  return result;
+}
+
+function nativeExactEd25519Verification(message, publicKey, signature) {
+  const publicKeyDer = new SafeUint8Array(44);
+  for (let index = 0; index < 12; index += 1) {
+    publicKeyDer[index] = ed25519SpkiDerPrefix[index];
+  }
+  for (let index = 0; index < 32; index += 1) {
+    publicKeyDer[12 + index] = publicKey[index];
+  }
+  const keyObject = safeCreatePublicKey({
+    key: publicKeyDer,
+    format: "der",
+    type: "spki"
+  });
+  return safeNativeEd25519Verify(
+    null,
+    message,
+    keyObject,
+    signature
+  ) === true;
+}
+
+function strictPoint(value, expectedBytes) {
+  const point = safeApply(safePointFromHex, Point, [value, false]);
+  safeApply(safePointAssertValidity, point, []);
+  const canonicalBytes = safeApply(safePointToRawBytes, point, []);
+  if (
+    !equalBytes(canonicalBytes, expectedBytes, 32) ||
+    safeApply(safePointIsSmallOrder, point, []) ||
+    !safeApply(safePointIsTorsionFree, point, [])
+  ) deny();
+}
+
+let expectedSha512Input = null;
+let expectedSha512Calls = 0;
+
+function sha512Sync() {
+  const hash = safeCreateHash("sha512");
+  if (expectedSha512Input !== null) {
+    if (
+      arguments.length !== 1 || expectedSha512Calls !== 0 ||
+      !equalBytes(
+        arguments[0],
+        expectedSha512Input,
+        typedArrayLength(expectedSha512Input)
+      )
+    ) deny();
+    expectedSha512Calls = 1;
+    safeApply(safeSha512HashUpdate, hash, [expectedSha512Input]);
+  } else {
+    for (let index = 0; index < arguments.length; index += 1) {
+      safeApply(safeSha512HashUpdate, hash, [arguments[index]]);
+    }
+  }
+  const digestBytes = safeApply(safeSha512HashDigest, hash, []);
+  return copyBytes(digestBytes, 0, 64);
+}
 
 // Noble 2.3.0 requires a synchronous SHA-512 implementation on Node 18.
 // Install the repository-owned implementation once and make the exact verifier
@@ -198,15 +484,61 @@ export function strictVerifyMessagingDeviceEd25519V1(
   signature
 ) {
   try {
-    if (!(message instanceof Uint8Array) || !isHex64(publicKey) || !isHex128(signature)) {
+    if (!exactUint8Array(message)) {
       return false;
     }
     const publicKeyBytes = hexBytes(publicKey, 32);
     const signatureBytes = hexBytes(signature, 64);
-    strictPoint(publicKey);
-    strictPoint(signature.slice(0, 64));
-    if (littleEndianInteger(signatureBytes.slice(32)) >= CURVE.n) return false;
-    return verify(signatureBytes, message, publicKeyBytes, { zip215: false }) === true;
+    const messageLength = typedArrayLength(message);
+    const messageBytes = copyBytes(message, 0, messageLength);
+    if (!nativeExactEd25519Verification(
+      messageBytes,
+      publicKeyBytes,
+      signatureBytes
+    )) return false;
+    if (!strictVerificationPrimordialsIntact()) return false;
+    const signaturePointBytes = copyBytes(signatureBytes, 0, 32);
+    // Noble receives immutable primitives derived from the exact module-owned
+    // copies accepted by native verification. No caller-owned byte view or
+    // iterator crosses this boundary.
+    const nobleMessage = canonicalHexBytes(messageBytes, messageLength);
+    const noblePublicKey = canonicalHexBytes(publicKeyBytes, 32);
+    const nobleSignature = canonicalHexBytes(signatureBytes, 64);
+    const hashInput = new SafeUint8Array(64 + messageLength);
+    for (let index = 0; index < 32; index += 1) {
+      hashInput[index] = signaturePointBytes[index];
+      hashInput[32 + index] = publicKeyBytes[index];
+    }
+    for (let index = 0; index < messageLength; index += 1) {
+      hashInput[64 + index] = messageBytes[index];
+    }
+    strictPoint(noblePublicKey, publicKeyBytes);
+    strictPoint(
+      canonicalHexBytes(signaturePointBytes, 32),
+      signaturePointBytes
+    );
+    if (littleEndianInteger(signatureBytes, 32, 32) >= safeEd25519Order) {
+      return false;
+    }
+    if (expectedSha512Input !== null) return false;
+    expectedSha512Input = hashInput;
+    expectedSha512Calls = 0;
+    let verified;
+    let hashCalls;
+    try {
+      verified = safeNobleVerify(
+        nobleSignature,
+        nobleMessage,
+        noblePublicKey,
+        { zip215: false }
+      ) === true;
+      hashCalls = expectedSha512Calls;
+    } finally {
+      expectedSha512Input = null;
+      expectedSha512Calls = 0;
+    }
+    return verified && hashCalls === 1 &&
+      strictVerificationPrimordialsIntact();
   } catch {
     return false;
   }
@@ -292,7 +624,7 @@ export function verifyMessagingDeviceProofV1(input = {}) {
       expectedPublicKey
     );
     if (!strictVerifyMessagingDeviceEd25519V1(
-      encoder.encode(preimage),
+      encodeUtf8(preimage),
       expectedPublicKey,
       proof.signature
     )) deny();
@@ -463,7 +795,7 @@ export function createEnrollmentApprovalUnsignedEventV2(source) {
 function exactVerifiedEvent(value) {
   if (
     value === null || typeof value !== "object" || Array.isArray(value) ||
-    isProxy(value) ||
+    safeIsProxy(value) ||
     ![Object.prototype, null].includes(Object.getPrototypeOf(value))
   ) deny();
   const descriptors = Object.getOwnPropertyDescriptors(value);
@@ -480,7 +812,7 @@ function exactVerifiedEvent(value) {
 }
 
 function exactOneEvent(value) {
-  if (!Array.isArray(value) || isProxy(value) || value.length !== 1) deny();
+  if (!Array.isArray(value) || safeIsProxy(value) || value.length !== 1) deny();
   const keys = Reflect.ownKeys(value);
   const item = Object.getOwnPropertyDescriptor(value, "0");
   const length = Object.getOwnPropertyDescriptor(value, "length");
@@ -493,6 +825,7 @@ function exactOneEvent(value) {
 
 export async function verifyEnrollmentV2Authorization(input = {}) {
   try {
+    if (!strictVerificationPrimordialsIntact()) deny();
     const {
       enrollmentWire,
       approvalEvents,
@@ -513,6 +846,7 @@ export async function verifyEnrollmentV2Authorization(input = {}) {
     const verified = exactVerifiedEvent(
       await verifyNostrEvent(suppliedEvent, { cryptoImpl: trustedNostrCrypto })
     );
+    if (!strictVerificationPrimordialsIntact()) deny();
     const unsigned = createEnrollmentApprovalUnsignedEventV2(enrollmentWire);
     if (
       verified.pubkey !== authenticatedSessionSubject ||
@@ -529,11 +863,11 @@ export async function verifyEnrollmentV2Authorization(input = {}) {
     ) deny();
     const preimage = createEnrollmentProofSigningPreimageV2(enrollmentWire);
     if (!strictVerifyMessagingDeviceEd25519V1(
-      encoder.encode(preimage),
+      encodeUtf8(preimage),
       value.ed25519PublicKey,
       phoneProof.signature
     )) deny();
-    return Object.freeze({
+    const result = {
       atomicChallengeConsumption: "not_implemented",
       canonicalStructureValidity: "valid",
       currentDeviceKeyAssociationValidity: "not_evaluated",
@@ -543,6 +877,14 @@ export async function verifyEnrollmentV2Authorization(input = {}) {
       proofProfile: DEVICE_PROOF_PROFILE,
       strictEd25519CryptographicValidity: "valid",
       subject: value.subject
+    };
+    safeObjectDefineProperty(result, "then", {
+      configurable: false,
+      enumerable: false,
+      value: undefined,
+      writable: false
     });
+    if (!strictVerificationPrimordialsIntact()) deny();
+    return Object.freeze(result);
   } catch { deny(); }
 }
