@@ -1,9 +1,10 @@
 # Exact messaging-device proof and verification statement: dormant; admission pending
 
-Status: **proof profile, Enrollment V2, the strict Social verification-
-statement producer, the accepted-binding browser key prerequisite, and the
-separate provisional V2 preacceptance compatibility slice are implemented as
-dormant, default-off contracts; runtime admission remains unavailable**.
+Status: **proof profile, Enrollment V2, the strict Social V1 and preaccepted-
+enrollment V2 verification-statement producers, the accepted-binding browser
+key prerequisite, and the separate provisional V2 preacceptance compatibility
+slice are implemented as dormant, default-off contracts; runtime admission
+remains unavailable**.
 The operator has approved a narrow separate Ed25519 exact-device
 authentication-key role. This source freezes and strictly verifies the proof
 profile, but no runtime admission implementation is enabled. No request can be
@@ -89,9 +90,10 @@ owner of challenge storage, single-use consumption, Ed25519 association
 lifecycle, rotation/revocation invalidation, exact operation effects, and final
 admission. Social remains the strict cryptographic verifier. The dormant Social
 producer can emit the frozen purpose-bound RS256 verification statement only
-after the real verifier succeeds. UBID's consumer-side byte contract is frozen,
-but its authenticated RSA verification and final transactional composition are
-future work. No final admission path exists in this increment.
+after the real verifier succeeds. UBID's consumer-side byte contract and pure
+authenticated RSA verification are frozen; runtime trust configuration and
+final transactional composition remain future work. No final admission path
+exists in this increment.
 
 Runtime activation remains blocked until UBID independently authenticates the
 statement under a dedicated trust registration and, in one authoritative
@@ -105,6 +107,31 @@ Native WebCrypto/OpenSSL signature verification alone is not the full server
 validation boundary. Chrome 137+ is required unless a later separately
 reviewed compatibility decision expands support. Any use outside exact
 messaging-device proof requires a new explicit operator policy decision.
+
+## Trusted-process security boundary
+
+The remote-input security guarantee treats every HTTP, network, browser and
+mobile value as untrusted. JSON and canonical wire bytes; public keys,
+signatures, proof fields, identifiers and timestamps; signer outputs,
+exceptions, delays and malformed responses; and stored or public evidence later
+presented to a consumer all remain untrusted and must pass the closed-shape,
+canonical-byte, cryptographic, deadline and brand checks described here.
+
+The trusted computing base is the Node.js process and executable, Node/OpenSSL
+built-ins, repository source loaded from trusted deployment files, the exact
+installed dependencies selected by `package-lock.json`, and application code
+intentionally loaded into that process. Arbitrary JavaScript already executing
+inside that trusted process and rewriting `Array.prototype`,
+`RegExp.prototype`, Buffer statics, dependency internals or other process-wide
+state is process compromise. This candidate does not claim security after that
+compromise.
+
+Captured operations and selected mutation/integrity checks remain useful
+defense in depth for the exact paths they cover. They are non-exhaustive and
+non-normative: they are not a complete inventory of mutable JavaScript
+primordials, and their regression tests do not expand the supported security
+boundary. If resilience to mutually untrusted JavaScript is ever required, a
+separately reviewed isolated-process architecture is the future option.
 
 The following is operator-observed manual preflight evidence, not automated CI
 and not runtime activation: Chrome 152 created a separate Ed25519 key with
@@ -161,10 +188,27 @@ reopening NIP-07, and an exact public signed-attempt artifact is persisted befor
 return. The private approval event is locally verified and never published.
 
 The matching pure server verifier reparses the exact merged preaccepted-
-enrollment V2 wire, verifies BIP340 and the existing strict non-ZIP-215 Ed25519
-phone proof, and returns only module-private branded cryptographic evidence.
-It emits no V2 verification statement and grants no authority. All V1 bytes and
-semantics in this document remain unchanged.
+enrollment V2 wire through captured parser/descriptor/serializer operations,
+verifies the exact caller event with both the existing contract BIP340 path and
+a separate module-owned exact-byte BIP340 confirmation, and verifies the phone
+proof through native-first plus mandatory non-ZIP-215 Noble Ed25519 gates. A
+selected set of captured operations and post-import integrity observations
+covers known paths in the older transitive parser and BIP340 graph, including
+array-iterator `next`, inherited `toJSON` and inherited thenable lookup
+surfaces. These checks and their exact mutation regressions are non-exhaustive
+defense in depth under the trusted-process boundary above, not a claim that the
+candidate survives arbitrary same-process monkey-patching. Security-sensitive
+hash parts are consumed only by indexed reads.
+Native digests are copied to owned `ArrayBuffer` values by indexed writes, with
+an own non-callable `then` boundary and no live Buffer backing-store getter or
+`ArrayBuffer.prototype.slice` step. Independently of the older parser, the
+verifier hook-free serializes the signed lifecycle binding record, recomputes
+its binding ID and every downstream authorization/acceptance identity, and
+requires exact agreement before returning module-private branded cryptographic
+evidence.
+That verifier itself emits no statement and grants no authority. The separate
+default-off producer can consume only that exact brand to serialize the frozen
+UBID V2 statement. All V1 bytes and semantics remain unchanged.
 
 ## Existing primitive map
 
@@ -186,6 +230,7 @@ authority. Social neither imports UBID nor grants Current-Full.
 | Social `src/server/message-envelope-v128f1.mjs`, `message-routing-request-v1.mjs` | Exact envelope wire/digest and default-off six-field routing projection; neither authenticates. |
 | Social `src/server/messaging-device-proof-profile-v1.mjs` | Current strict Ed25519 primitive implementation, frozen proof/Enrollment V2 bytes, local approval-event verification and phone proof-of-possession; dormant and not an admission owner. |
 | Social `src/server/messaging-device-preaccepted-enrollment-v2.mjs` | Additive strict parser/verifier for exact V2 preacceptance plus Enrollment V2, returning only branded cryptographic evidence; no JWS, authority, challenge consumption, persistence or runtime import. |
+| Social `src/server/messaging-device-preaccepted-verification-statement-v2.mjs` | Pure default-off producer for UBID's exact V2 RS256 statement. It accepts only the real verifier's branded projection, derives all transcript-bound payload identities, cross-checks closed trust/config metadata against the opaque signer and verified context, owns no key, performs no direct storage, network or key-discovery I/O, and remains absent from runtime imports. |
 | Social `src/server/messaging-device-verification-statement-v1.mjs` | Pure default-off producer for the frozen purpose-bound RS256 statement. It invokes the real Social verifier, owns no key or I/O, consumes no challenge, evaluates no current authority, and cannot grant admission. |
 | UBID `app/services/social_messaging_device_contract.py`, `social_messaging_device_storage.py` | Canonical binding-record ID, version, predecessor, current lifecycle and public X25519 binding. |
 | UBID `app/services/social_messaging_device_binding_authorization.py`, `social_messaging_device_binding_authorization_storage.py` | Participant Nostr approval/adoption, exact evidence and transaction-owned lifecycle/replay, independent Current-Full. Approval is not possession. |
@@ -392,11 +437,14 @@ The current strict Ed25519 primitive implementation is in Social. It pins
 The verifier strictly decodes both public point A and signature point R with
 ZIP-215 disabled, requires canonical byte-for-byte re-encoding, rejects identity
 and small-order points, requires both points to be torsion-free, requires the
-little-endian S scalar to be below the Ed25519 subgroup order, and then calls
-Noble verification with `{zip215:false}`. Node supplies SHA-512 only; native
-WebCrypto/OpenSSL Ed25519 verification is not used. The independent fixture pins
-RFC 8032, the C2SP low-order/noncanonical/mixed-torsion corpus, the native
-identity degeneracy and invalid S cases.
+little-endian S scalar to be below the Ed25519 subgroup order. A captured
+Node/OpenSSL Ed25519 verification must first accept module-owned exact copies of
+the public key, signature and message. Noble must then independently accept
+immutable primitive encodings derived from those same copies with
+`{zip215:false}` and the exact single `R || A || M` SHA-512 transcript. Neither
+gate can substitute for the other. The independent fixture pins RFC 8032, the
+C2SP low-order/noncanonical/mixed-torsion corpus, and the native identity
+degeneracy and invalid S cases.
 
 Successful pure verification returns separate states: canonical structure is
 `valid`, strict cryptography is `valid`, current association is `not_evaluated`,
@@ -536,6 +584,39 @@ consumption, device admission, message acceptance, routing authorization,
 ciphertext persistence, or inbox access. Those remain exclusively future UBID
 transactional decisions, and final admission remains denied.
 
+### Separate preaccepted-enrollment V2 statement
+
+`src/server/messaging-device-preaccepted-verification-statement-v2.mjs` does
+not extend, relabel or fall back to the V1 protocol above. It consumes the exact
+preaccepted-enrollment V2 input and embedded V1 context, calls the real branded
+V2 verifier, derives rather than accepts every transcript-bound payload
+identity (acceptance, association, attempt, enrollment challenge and input
+digest), and cross-checks closed trust/config metadata against the opaque signer
+and verified context. The brand can be minted only after the safely parsed
+caller-wire event passes the independent exact-byte BIP340 confirmation and the
+safely encoded caller-wire phone preimage passes both exact Ed25519 gates; live
+caller data cannot substitute those values. Selected parser, encoder, Boolean
+and backing-buffer mutation checks are non-exhaustive defense in depth within
+the trusted-process assumption. Its protected type, schema, purpose, result,
+consume audience and JTI domain are all V2-only.
+
+The producer uses a distinct opaque signer port with fixed `RS256`, `kid`,
+issuer, audience, client ID, service principal and purpose metadata. It emits
+only compact sorted-key ASCII JSON with unpadded base64url and is disabled unless
+its exact own-data gate is literal `true`. Explicit safe-integer millisecond
+time, a maximum 10,000-ms lifetime, every provable signed-transcript interval,
+and injected phone-session, approver-session, Full and exact X25519-binding
+deadlines bound the statement interval. None of those deadlines is current
+authority. Every failure is one bounded error, and pre-sign failures dispatch
+the signer zero times.
+
+The public fixture
+`tests/fixtures/social_preaccepted_enrollment_verification_statement_v2.json`
+is exactly 12,018 bytes with SHA-256
+`fdbbed748f28d1ef850ef3d82b1680e7dca12b0f7a2d863acf14dc7b75770f39`.
+It reproduces UBID's exact compact JWS and verifies using only the public JWK;
+no private RSA key or provisioning is present.
+
 ## Required verifier interfaces and selected atomic owner
 
 JSDoc interfaces `DeviceProofVerifierV1` and `DeviceAdmissionAuthorityV1` describe
@@ -630,8 +711,9 @@ never calls authority or cryptography, including with apparently valid evidence.
 
 Implement reviewed runtime integration for the dormant browser prerequisite,
 supported-browser automation, session-generation binding, the UBID atomic
-challenge/replay owner, authoritative association storage, authenticated
-statement consumer/trust registration, rotation/revocation and lifecycle races.
+challenge/replay owner, authoritative association storage, runtime trust
+registration/composition for the dormant authenticated statement consumer,
+rotation/revocation and lifecycle races.
 Then implement confidential routing-registry
 retention and recipient-self ownership, capability-bound package issuance,
 minimized operation results and cross-owner lost-response/idempotency semantics.

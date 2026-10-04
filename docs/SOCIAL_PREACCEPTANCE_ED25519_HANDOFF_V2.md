@@ -1,18 +1,19 @@
 # Social preacceptance Ed25519 handoff V2: dormant compatibility contract
 
-Status: **implemented only as dormant browser and pure server source; not wired,
-not authority, and not deployable**.
+Status: **implemented only as dormant browser and pure server source, including
+the pure V2 statement producer; not wired, not authority, and not deployable**.
 
 This slice reproduces the externally owned Social mobile pre-enrollment V2
 `register + initial` bytes while repairing the order in which a phone creates
-its dedicated messaging authentication key. It does not accept a binding,
-create an association, issue or consume a challenge, create a verification
-statement, admit a request, create a session, or activate messaging.
+its dedicated messaging authentication key. The handoff itself does not accept
+a binding, create an association, issue or consume a challenge, admit a request,
+create a session, or activate messaging. A separate dormant producer can return
+only the exact cryptographic-verification statement described below.
 
 The V2 modules are absent from browser entry, UI, BFF, composition and runtime
-import graphs. Their exported runtime constants are false. There are no routes,
-clients, feature flags, migrations, persistent server adapters or network
-operations in this slice.
+import graphs. Their exported runtime/default-enable constants are false. There
+are no routes, clients, feature flags, migrations, persistent server adapters
+or network operations in this slice.
 
 ## Exact authority boundary
 
@@ -21,9 +22,10 @@ the exact cryptographic transcript. Neither is acceptance or association
 authority.
 
 Only a future UBID transaction owner may durably accept a proposal or create an
-association after independently authenticating a separately frozen V2
-verification statement and locking/rechecking all required current state. That
-statement contract, consumer and transaction owner do not exist here.
+association after independently authenticating the separately frozen V2
+verification statement and locking/rechecking all required current state. UBID
+now owns the dormant byte contract and pure authenticated consumer; no runtime
+trust registration, route or authoritative transaction owner exists here.
 
 The following remain insufficient by themselves:
 
@@ -33,7 +35,33 @@ The following remain insufficient by themselves:
   cryptographic-verification result;
 - local expiry, cancellation, a missing response or a caller boolean.
 
-No V2 JWS bytes, producer or consumer are selected by this contract.
+The V2 JWS bytes are selected only by the separate source-level producer and
+UBID-owned public fixture. They are not a bearer grant or runtime protocol.
+
+## Trusted-process security boundary
+
+Every HTTP, network, browser and mobile value is untrusted. This includes JSON
+and canonical wire bytes; public keys, signatures, proof fields, identifiers
+and timestamps; signer outputs, exceptions, delays and malformed responses;
+and stored or public evidence later supplied to a consumer. The remote-input
+security guarantee requires all such values to pass the closed-shape,
+canonical-byte, cryptographic, deadline and private-brand checks below.
+
+The trusted computing base is the Node.js process and executable, Node/OpenSSL
+built-ins, repository source loaded from trusted deployment files, the exact
+installed dependencies selected by `package-lock.json`, and application code
+intentionally loaded into that process. Arbitrary JavaScript already executing
+inside the trusted process and rewriting `Array.prototype`,
+`RegExp.prototype`, Buffer statics, dependency internals or other process-wide
+state is process compromise. The candidate does not claim to remain secure
+after that compromise.
+
+Captured operations and selected mutation/integrity checks remain
+non-exhaustive, non-normative defense in depth for the exact paths exercised.
+They are not a complete primordial inventory, and the corresponding tests do
+not make arbitrary same-process monkey-patching part of commit readiness. A
+future requirement for mutually untrusted JavaScript would require a separately
+reviewed isolated-process architecture.
 
 ## Provisional browser key lifecycle
 
@@ -167,27 +195,80 @@ commitment/HMAC boundary and is absent from all transcript/retry DTOs.
 
 `src/server/messaging-device-preaccepted-enrollment-v2.mjs` accepts exactly one
 canonical preaccepted-enrollment V2 wire string. It bounds and reparses the
-complete nested graph before expensive cryptographic work. It independently
+complete nested graph using captured parse, descriptor, canonical-serialization
+and UTF-8 operations before expensive cryptographic work. The locally parsed
+event is confirmed by a separate module-owned exact-byte BIP340 implementation
+in addition to the existing contract verifier. Selected operations used by the
+older transitive parser and BIP340 graph are captured or observed, including the
+global Boolean decision site, array-iterator `next`, inherited `toJSON`, and
+inherited `then` on known returned-object prototypes. This is non-exhaustive
+defense in depth under the trusted-process assumption, not a supported boundary
+against arbitrary same-process mutation.
+Security-sensitive hash parts use indexed reads rather than iterator
+destructuring. Native SHA-256 results are copied into new owned `ArrayBuffer`
+values by indexed writes, receive an own non-callable `then` property before an
+async return, and use no live backing-store getters or prototype slicing. The
+local hook-free path independently
 recomputes and compares:
 
+- the signed lifecycle record semantics, exact binding-record serialization,
+  binding ID, X25519 commitment and every pre-enrollment link;
 - the pre-enrollment and outer authorization links/digests;
 - the NIP-01 event ID and actual BIP340 approval signature;
-- the acceptance-ID preimage/ID and candidate acceptance wire;
+- the acceptance-ID preimage/ID and candidate acceptance wire, with every
+  legacy async result required to equal the same local primitive;
 - the unchanged V1 verification context;
 - Enrollment V2, its digest and exact phone-proof preimage;
 - the V1 association-creation preimage/ID;
 - the V2 verification-input digest and candidate association link.
 
-Phone proof verification reuses the repository-owned Noble Ed25519 primitive
-with canonical point/scalar, small-order and torsion checks and
-`zip215:false`. WebCrypto, OpenSSL and shape-only verification are not
-substitutes.
+Phone proof verification consumes the public key, signature and preimage from
+that safely parsed caller wire. Captured Node/OpenSSL Ed25519 verification runs
+first over module-owned copies. Mandatory Noble confirmation then consumes
+immutable primitive encodings derived from those same copies, with canonical
+point/scalar, small-order and torsion checks, `zip215:false`, and the exact
+single `R || A || M` hash transcript. Native, Noble and shape-only verification
+are never substitutes for one another.
 
 Success returns a frozen object registered in a module-private `WeakSet`.
-Future consumers must pass that exact object through the exported brand-checking
+Consumers must pass that exact object through the exported brand-checking
 projection; spreads, clones, proxies, prototype lookalikes and caller-built
 objects fail. The projection expressly says `authority = not-granted`. Public
 failure has one bounded non-sensitive message.
+
+## Dormant V2 verification-statement producer
+
+`src/server/messaging-device-preaccepted-verification-statement-v2.mjs` is a
+pure, default-off producer for UBID's closed V2 statement contract. It invokes
+`verifyMessagingDevicePreacceptedEnrollmentV2()` on the exact input wire and
+accepts only the returned module-branded result through
+`projectMessagingDevicePreacceptedEnrollmentV2()`. No boolean, clone, caller
+result or independently supplied payload identity is accepted. The producer
+derives all transcript-bound payload identities from the already-verified exact
+input/context, cross-checks the branded projection, and cross-checks closed
+trust/config metadata against the opaque signer and verified context.
+
+The protected header contains only `alg`, `kid` and `typ`. The payload contains
+only the UBID-owned V2 fields and its domain-separated deterministic `jti`.
+Both are compact sorted-key ASCII JSON and canonical unpadded base64url in one
+three-segment RS256 compact JWS of at most 4,096 bytes. V1 identifiers, purpose,
+result, audience and JTI domain are not reused or accepted.
+
+The dedicated signer port exposes only frozen RS256/key/issuer/audience/client/
+service/purpose metadata. Its `signExact` callback remains module-private and
+is invoked exactly once only after the real BIP340 and strict Ed25519 verifier,
+closed configuration, canonicalization, explicit-time and deadline checks all
+succeed. Every invalid remote proof fails before that callback. The exact
+post-import parser, encoder, descriptor, backing-buffer and BIP340 mutation
+regressions exercise only non-exhaustive defense-in-depth checks and do not
+extend the trusted-process security boundary. The producer has no clock and
+performs no direct storage, network or key-discovery I/O; it intentionally
+dispatches only the injected `signExact` port. It requires an explicit
+safe-integer epoch-millisecond `now`, a positive
+lifetime no greater than 10,000 ms, and exact injected phone-session,
+approver-session, Full and X25519-binding deadlines. Those deadlines only bound
+evidence freshness; they do not prove a current session, Full entitlement or
+binding authority.
 
 ## Fixture and compatibility gate
 
@@ -202,12 +283,19 @@ Existing V1 fixtures, serializers, digests, purposes and semantics are
 unchanged. V1 and V2 are separate closed protocols: neither parser autodetects,
 adapts or falls back to the other.
 
+The UBID-owned V2 public statement fixture is copied byte-for-byte as
+`tests/fixtures/social_preaccepted_enrollment_verification_statement_v2.json`.
+It is exactly 12,018 bytes with SHA-256
+`fdbbed748f28d1ef850ef3d82b1680e7dca12b0f7a2d863acf14dc7b75770f39`.
+Its public JWK verifies the fixed RS256 signature; no private RSA key is stored.
+
 ## Deferred work
 
-Before any activation, separate reviewed increments must freeze and implement
-the V2 verification-statement consumer/producer, durable UBID V2 acceptance,
-acceptance-linked challenge issuance, and one atomic association owner with all
-current session, Full, binding, acceptance, challenge and association rechecks.
+Before any activation, separate reviewed increments must implement durable UBID
+V2 acceptance, acceptance-linked challenge issuance, and one atomic association
+owner with all current session, Full, binding, acceptance, challenge and
+association rechecks. The dormant producer and UBID consumer do not perform any
+of those actions.
 Continuation identity, ordinary request proof, ciphertext transport, inbox,
 self-read, UI and runtime activation remain deferred.
 
