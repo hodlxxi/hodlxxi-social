@@ -40,6 +40,10 @@ export function createMobileBffRoutes({ publicOrigin, manager, mobileClient, iss
       try { const c = context(header); return c.value === fence.value && !c.sessionId && !c.value.phone && !c.value.denied; } catch { return false; }
     }
   });
+  const completedLogout = (c, status) => {
+    c.logoutComplete = true;
+    return json(200, { authenticated: false, logout: status }, { "Set-Cookie": expireSessionCookie() });
+  };
   async function bindPhone(c, body) {
     const parsed = await inspectPhoneSource(body.source, manager.cryptoImpl);
     await verifyPairingScan(body.source, { qr: body.qr, possessionProof: body.possessionProof,
@@ -82,14 +86,30 @@ export function createMobileBffRoutes({ publicOrigin, manager, mobileClient, iss
     try {
       const body = parseClosedJson(request.body, { canonicalOnly: false, depth: 2 });
       if (path === SOCIAL_MOBILE_PREFIX + "/context") {
-        exact(body, []); sweep();
+        const purpose = body.purpose;
+        exact(body, purpose === undefined ? [] : ["purpose"]);
+        if (purpose !== undefined && purpose !== "login" && purpose !== "logout") unavailable();
+        sweep();
         let existing;
-        try { existing = context(request.headers.cookie); } catch {}
+        if (purpose !== "login") {
+          try { existing = context(request.headers.cookie, purpose === "logout"); } catch {}
+        }
         if (existing) return json(200, { csrf: existing.value.csrf });
-        const previousId = cookies(request.headers.cookie).get(SESSION_COOKIE_NAME);
+        const parsedCookies = cookies(request.headers.cookie);
+        const previousId = parsedCookies.get(SESSION_COOKIE_NAME);
         const sessionId = previousId && manager.retained(previousId) ? previousId : undefined;
-        if (contexts.size >= capacity) unavailable();
+        const priorId = parsedCookies.get(MOBILE_COOKIE), prior = contexts.get(priorId);
+        // Only an explicit same-origin login action can replace an abandoned
+        // ordinary OAuth context. Pairing, active sessions and pending logout
+        // keep their original ownership and cannot be reset by this action.
+        if (purpose === "login" && (sessionId || prior && !prior.logoutComplete &&
+            (prior.denied || prior.phone || prior.offer || prior.issuing || prior.orphan ||
+             [prior.sessionId, prior.alias, prior.logoutId].some((id) => id && manager.retained(id))))) unavailable();
+        const replacePrior = purpose === "login" && prior !== undefined;
+        if (contexts.size - (replacePrior ? 1 : 0) >= capacity) unavailable();
         const id = random(32).toString("base64url"), csrf = random(32).toString("hex");
+        if (contexts.has(id)) unavailable();
+        if (replacePrior) contexts.delete(priorId);
         contexts.set(id, { csrf, sessionId, until: now() + 600000, denied: false });
         const transactionCookie = serializeHostCookie(MOBILE_COOKIE, id, 600);
         return json(200, { csrf }, { "Set-Cookie": previousId && !sessionId ? [expireSessionCookie(), transactionCookie] : transactionCookie });
@@ -104,11 +124,11 @@ export function createMobileBffRoutes({ publicOrigin, manager, mobileClient, iss
           try { await manager.cancelUninstalled(c.orphan); c.orphan = undefined; c.orphanCancelled = true; }
           catch { return json(503, { authenticated: false, logout: "pending" }); }
         }
-        if (c.orphanCancelled && !c.logoutId) return json(200, { authenticated: false, logout: "confirmed" }, { "Set-Cookie": expireSessionCookie() });
-        if (!c.logoutId) return json(200, { authenticated: false, logout: "local-only" }, { "Set-Cookie": expireSessionCookie() });
+        if (c.orphanCancelled && !c.logoutId) return completedLogout(c, "confirmed");
+        if (!c.logoutId) return completedLogout(c, "local-only");
         try {
           await manager.logout(c.logoutId);
-          return json(200, { authenticated: false, logout: "confirmed" }, { "Set-Cookie": expireSessionCookie() });
+          return completedLogout(c, "confirmed");
         } catch { return json(503, { authenticated: false, logout: "pending" }); }
       }
       const { name, spec, issuance } = routes[path];

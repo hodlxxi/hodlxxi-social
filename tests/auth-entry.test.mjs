@@ -1,9 +1,9 @@
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import {
-  bindAuthenticatedEntry,
+  bindAuthenticatedEntry as bindEntry,
   buildAuthenticatedProductView,
   logoutSocialSession,
   parseAuthenticatedRoute,
@@ -61,6 +61,15 @@ const response = (
       "content-type": contentType
     }
   });
+
+// Existing entry tests describe the non-mobile runtime. New composition tests
+// exercise the real mobile entry configuration and context protocol.
+const bindAuthenticatedEntry = (root, options) => bindEntry(root, {
+  ...options,
+  fetchImpl: (path, init) => path === "/auth/entry-config"
+    ? Promise.resolve(response({ mobileContextRequired: false }))
+    : options.fetchImpl(path, init)
+});
 
 class Element {
   constructor() {
@@ -1501,7 +1510,7 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     module,
-    /from "\.\/auth-product\.mjs\?v=1\.28\.1"/
+    /from "\.\/auth-product\.mjs\?v=1\.28\.1&directory=1"/
   );
 
   assert.match(
@@ -1531,7 +1540,7 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.28\.1"/
+    /src="\.\/auth-entry\.mjs\?v=1\.28\.1&amp;entry=2"/
   );
 
   assert.match(
@@ -1591,13 +1600,13 @@ test("authenticated browser graph uses one explicit release revision and no unve
 
   const references = [
     ...html.matchAll(/(?:styles\.css|auth-entry\.mjs)\?v=([0-9.]+)/g),
-    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs|authenticated-public-read\.mjs|authenticated-public-write\.mjs|private-label-store\.mjs)\?v=([0-9.]+)/g),
+    ...module.matchAll(/(?:components\.mjs|auth-product\.mjs|shell\.mjs|authenticated-public-read\.mjs|authenticated-public-write\.mjs|private-label-store\.mjs|social-entry-actions-v1\.mjs)\?v=([0-9.]+)/g),
     ...product.matchAll(/components\.mjs\?v=([0-9.]+)/g),
     ...publicRead.matchAll(/nostr-event-verifier\.mjs\?v=([0-9.]+)/g),
     ...publicWrite.matchAll(/(?:authenticated-public-read\.mjs|nostr-event-verifier\.mjs)\?v=([0-9.]+)/g)
   ];
 
-  assert.equal(references.length, 12);
+  assert.equal(references.length, 13);
   assert.deepEqual(
     [...new Set(references.map((match) => match[1]))],
     ["1.28.1"]
@@ -1715,14 +1724,14 @@ test(
       [
         {
           alias,
-          label: "Внук Алексей"
+          label: "Grandson Alex"
         }
       ]
     );
 
     assert.match(
       view.page,
-      /Внук Алексей/
+      /Grandson Alex/
     );
 
     assert.match(
@@ -2001,7 +2010,7 @@ test(
     assert.equal(
       binding.savePrivateLabel(
         alias,
-        "Внук Алексей"
+        "Grandson Alex"
       ),
       true
     );
@@ -2016,7 +2025,7 @@ test(
       {
         subject: viewer,
         alias,
-        label: "Внук Алексей"
+        label: "Grandson Alex"
       }
     );
 
@@ -2024,7 +2033,7 @@ test(
       document.elements[
         "#app-page"
       ].innerHTML,
-      /Внук Алексей/
+      /Grandson Alex/
     );
 
     assert.match(
@@ -2038,7 +2047,7 @@ test(
       values.get(
         `${viewer}:${alias}`
       ),
-      "Внук Алексей"
+      "Grandson Alex"
     );
 
     const submit =
@@ -2056,7 +2065,7 @@ test(
         elements: {
           namedItem(name) {
             return name === "label"
-              ? { value: "Брат" }
+              ? { value: "Brother" }
               : null;
           }
         }
@@ -2080,14 +2089,14 @@ test(
       values.get(
         `${viewer}:${alias}`
       ),
-      "Брат"
+      "Brother"
     );
 
     assert.match(
       document.elements[
         "#app-page"
       ].innerHTML,
-      /Брат/
+      /Brother/
     );
 
     assert.equal(
@@ -2099,7 +2108,7 @@ test(
       values.get(
         `${viewer}:${alias}`
       ),
-      "Брат"
+      "Brother"
     );
   }
 );
@@ -2532,4 +2541,152 @@ test("canonical successful disabled messaging authorization config preserves leg
   assert.equal(controllers, 1);
   assert.equal(reconciles, 1);
   assert.match(document.elements["#app-page"].innerHTML, /This device is ready/);
+});
+
+function directoryRetryFixture(directory, { authenticated = true, full = true, page = "#/full-network" } = {}) {
+  const document = fakeDocument(), browser = fakeBrowser(page), calls = [];
+  let signerCalls = 0, publications = 0;
+  browser.nostr = {};
+  const binding = bindAuthenticatedEntry(document, {
+    browser,
+    fetchImpl: async (path, options) => {
+      calls.push(path);
+      if (path === "/auth/session") return response(authenticated ? { authenticated: true, subject } : { authenticated: false });
+      if (path === "/auth/authority") return response({ subject, status: full ? "full" : "limited", valid: true });
+      if (path === "/auth/social-read-config") return response({ enabled: false });
+      if (path === "/auth/social-publish-config") return response({ enabled: true, relayUrl: "wss://relay.example/" });
+      if (path === "/auth/full-directory") return directory(options);
+      if (path === "/auth/logout") return response({ authenticated: false });
+      return response({ enabled: false });
+    },
+    signerConnector: async () => { signerCalls++; return { state: "connected", publicKey: subject }; },
+    notePublisher: async () => { publications++; return { accepted: true }; },
+    publicReadLoader: async () => livePublicRead()
+  });
+  return { binding, document, browser, calls, counts: () => ({ signerCalls, publications }) };
+}
+const retryDirectorySuccess = () => response({ state: "available", participants: [{ alias: "private.member" }] });
+const directoryFailure = (status = 503) => response({ state: "unavailable" }, { status });
+
+test("directory retry recovers a failed request without refreshing or changing authority", async () => {
+  let count = 0;
+  const f = directoryRetryFixture(async (options) => {
+    assert.equal(options.credentials, "same-origin");
+    assert.equal(options.cache, "no-store");
+    assert.equal(options.redirect, "error");
+    assert.ok(options.signal instanceof AbortSignal);
+    return ++count === 1 ? directoryFailure() : retryDirectorySuccess();
+  });
+  await f.binding.ready;
+  const authority = f.binding.currentAuthority(), write = f.binding.currentPublicWrite();
+  assert.match(f.document.elements["#app-page"].innerHTML, /data-retry-full-directory/);
+  assert.equal(await f.binding.retryFullDirectory(), true);
+  assert.equal(count, 2);
+  assert.equal(f.binding.currentAuthority(), authority);
+  assert.equal(f.binding.currentPublicWrite(), write);
+  assert.match(f.document.elements["#app-page"].innerHTML, /private\.member/);
+  assert.doesNotMatch(f.document.elements["#app-page"].innerHTML, /data-retry-full-directory/);
+  assert.deepEqual(f.counts(), { signerCalls: 0, publications: 0 });
+});
+
+test("directory retry allows one in-flight request and does not retry automatically", async () => {
+  let count = 0, finish;
+  const f = directoryRetryFixture(async () => ++count === 1 ? directoryFailure() : new Promise(resolve => { finish = resolve; }));
+  await f.binding.ready;
+  f.browser.location.hash = "#/home"; f.browser.listeners.get("hashchange")();
+  f.browser.location.hash = "#/full-network"; f.browser.listeners.get("hashchange")();
+  assert.equal(count, 1);
+  const retry = f.binding.retryFullDirectory();
+  assert.equal(await f.binding.retryFullDirectory(), false);
+  assert.equal(count, 2);
+  assert.doesNotMatch(f.document.elements["#app-page"].innerHTML, /data-retry-full-directory/);
+  finish(retryDirectorySuccess()); assert.equal(await retry, true);
+  assert.equal(await f.binding.retryFullDirectory(), false); assert.equal(count, 2);
+});
+
+test("the delegated directory retry button works on Full Network and Messages", async () => {
+  for (const page of ["#/full-network", "#/messages"]) {
+    let count = 0;
+    const f = directoryRetryFixture(async () => ++count === 1 ? directoryFailure() : retryDirectorySuccess(), { page });
+    await f.binding.ready;
+    assert.match(f.document.elements["#app-page"].innerHTML, /data-retry-full-directory/);
+    let prevented = false;
+    f.document.listeners.get("click")({ target: { closest: () => ({ hasAttribute: name => name === "data-retry-full-directory" }) },
+      preventDefault() { prevented = true; } });
+    for (let i = 0; i < 20 && f.binding.currentFullDirectory().state === "loading"; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(prevented, true); assert.equal(count, 2);
+    assert.equal(f.binding.currentFullDirectory().state, "available");
+  }
+});
+
+test("rejected or malformed directory responses never become accepted retry data", async () => {
+  for (const makeResponse of [() => directoryFailure(401), () => directoryFailure(403),
+    () => response({ state: "available", participants: [{ publicKey: subject }] }),
+    () => response({ state: "available", participants: [{ alias: subject }] })]) {
+    const f = directoryRetryFixture(async () => makeResponse()); await f.binding.ready;
+    assert.equal(await f.binding.retryFullDirectory(), false);
+    assert.equal(f.binding.currentFullDirectory().state, "unavailable");
+    assert.deepEqual(f.binding.currentFullDirectory().participants, []);
+    assert.doesNotMatch(f.document.elements["#app-page"].innerHTML, new RegExp(subject));
+    assert.match(f.document.elements["#app-page"].innerHTML, /data-retry-full-directory/);
+  }
+});
+
+test("directory deadline aborts the request and restores an explicit retry action", async () => {
+  let count = 0, aborted = false;
+  const f = directoryRetryFixture(async (options) => {
+    if (++count === 1) return directoryFailure();
+    return new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => {
+      aborted = true; reject(new Error("private transport diagnostic"));
+    }, { once: true }));
+  });
+  await f.binding.ready;
+  const nativeTimeout = globalThis.setTimeout;
+  const timerMock = mock.method(globalThis, "setTimeout", (fn, delay, ...args) => {
+    assert.equal(delay, 10000); return nativeTimeout(fn, 5, ...args);
+  });
+  try {
+    assert.equal(await f.binding.retryFullDirectory(), false);
+    assert.equal(aborted, true);
+    assert.equal(f.binding.currentFullDirectory().state, "unavailable");
+    assert.match(f.document.elements["#app-page"].innerHTML, /data-retry-full-directory/);
+    assert.doesNotMatch(f.document.elements["#app-page"].innerHTML, /private transport diagnostic/);
+  } finally { timerMock.mock.restore(); }
+});
+
+test("logout aborts a pending directory retry and ignores a late success", async () => {
+  let count = 0, finish, signal;
+  const f = directoryRetryFixture(async (options) => {
+    if (++count === 1) return directoryFailure();
+    signal = options.signal; return new Promise(resolve => { finish = resolve; });
+  });
+  await f.binding.ready;
+  const retry = f.binding.retryFullDirectory();
+  assert.equal(await f.binding.logout(), true); assert.equal(signal.aborted, true);
+  finish(retryDirectorySuccess()); assert.equal(await retry, false);
+  assert.equal(f.binding.currentSession().authenticated, false);
+  assert.deepEqual(f.binding.currentFullDirectory().participants, []);
+  assert.doesNotMatch(f.document.elements["#app-page"].innerHTML, /private\.member|data-retry-full-directory/);
+});
+
+test("directory retry cannot start while signed out, Limited, or on Home", async () => {
+  for (const options of [{ authenticated: false }, { full: false }, { page: "#/home" }]) {
+    const f = directoryRetryFixture(async () => assert.fail("unexpected directory request"), options);
+    await f.binding.ready;
+    assert.equal(await f.binding.retryFullDirectory(), false);
+    assert.doesNotMatch(f.document.elements["#app-page"].innerHTML, /data-retry-full-directory/);
+  }
+});
+
+test("Home signer and post publication remain explicit after directory recovery", async () => {
+  let count = 0;
+  const f = directoryRetryFixture(async () => ++count === 1 ? directoryFailure() : retryDirectorySuccess());
+  await f.binding.ready; assert.equal(await f.binding.retryFullDirectory(), true);
+  assert.deepEqual(f.counts(), { signerCalls: 0, publications: 0 });
+  f.browser.location.hash = "#/home"; f.browser.listeners.get("hashchange")();
+  assert.equal(await f.binding.connectSigner(), true);
+  assert.equal(await f.binding.publishNote("Synthetic test post"), true);
+  assert.deepEqual(f.counts(), { signerCalls: 1, publications: 1 });
+  assert.equal(f.binding.currentAuthority().status, "full");
+  assert.equal(f.binding.currentPublicWrite().operation, "published-note");
 });

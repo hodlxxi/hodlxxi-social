@@ -617,6 +617,10 @@ export function createSocialOAuthBff({
     const target = parseRawRequestTarget(request.url, config.publicOrigin);
     if (!target.valid) return error();
     const cookieHeader = request.headers?.cookie;
+    if (target.path === "/auth/entry-config") {
+      if (method !== "GET" || target.query.length !== 0) return error(method === "GET" ? 400 : 405);
+      return json(200, { mobileContextRequired: Boolean(oauthGuard) });
+    }
     if (target.path === "/auth/login") {
       if (method !== "GET" || target.query.length !== 0) return error(method === "GET" ? 400 : 405);
       let fence; try { fence = oauthGuard?.begin(cookieHeader); } catch { return error(409); }

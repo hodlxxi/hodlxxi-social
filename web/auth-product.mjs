@@ -638,6 +638,9 @@ const privateAliasInitials = (alias) => {
   return visible || "H";
 };
 
+const directoryRetryButton = () =>
+  `<button class="product-action" type="button" data-retry-full-directory>Retry directory</button>`;
+
 const fullNetworkDirectory = (model) => {
   if (model.fullDirectory.state === "loading") {
     return surfaceEmpty({
@@ -650,7 +653,8 @@ const fullNetworkDirectory = (model) => {
     return surfaceEmpty({
       icon: "!",
       title: "Private directory unavailable",
-      detail: "No participant information is shown when the private directory cannot be accepted."
+      detail: "The directory could not be loaded. You can try again without refreshing the page.",
+      actions: directoryRetryButton()
     });
   }
   if (model.fullDirectory.participants.length === 0) {
@@ -792,7 +796,8 @@ const secureMessagingSnapshot = (model) => {
 };
 
 const messagesPage = (model, messagingUi) =>
-  renderSecureMessagingAuthenticatedShell(
+  (hasFullNetworkAccess(model) && model.fullDirectory.state === "unavailable"
+    ? directoryRetryButton() : "") + renderSecureMessagingAuthenticatedShell(
     secureMessagingSnapshot(model),
     messagingUi
   );
