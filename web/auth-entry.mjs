@@ -8,13 +8,14 @@ import {
   renderAuthenticatedNetworkContext,
   renderAuthenticatedProductPage,
   renderAuthenticatedProfileContext
-} from "./auth-product.mjs?v=1.28.1";
+} from "./auth-product.mjs?v=1.28.1&directory=1";
 
 import {
   createBrowserPrivateLabelStore
 } from "./private-label-store.mjs?v=1.28.1";
 
 import { renderNavigation } from "./shell.mjs?v=1.28.1";
+import { createSocialEntryActions } from "./social-entry-actions-v1.mjs?v=1.28.1";
 import { createMessagingDevice } from "./messaging-device-v128c1.mjs?v=1.28c.1";
 import {
   createNip07MessagingDeviceSigner
@@ -650,6 +651,8 @@ export function bindAuthenticatedEntry(
   );
   const signIn = requiredElement(root, "#sign-in");
   const signOut = requiredElement(root, "#sign-out");
+  const entryActions = createSocialEntryActions({ fetchImpl });
+  let signingIn = false;
   const indicator = requiredElement(
     root,
     "#session-indicator-text"
@@ -688,6 +691,7 @@ export function bindAuthenticatedEntry(
   let currentPublicWrite = DISABLED_PUBLIC_WRITE;
   let currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
   let fullDirectoryAttempted = false;
+  let fullDirectoryRequest = null;
   let currentMessagingSelectedAlias = null;
   let currentMessagingFilter = "";
   let messagingDevice = null;
@@ -714,6 +718,8 @@ export function bindAuthenticatedEntry(
   };
 
   const renderSignedOut = (unavailable = false) => {
+    fullDirectoryRequest?.abort();
+    fullDirectoryRequest = null;
     currentSession = Object.freeze({
       authenticated: false
     });
@@ -757,6 +763,8 @@ export function bindAuthenticatedEntry(
   };
 
   const renderPendingAuthority = (session) => {
+    fullDirectoryRequest?.abort();
+    fullDirectoryRequest = null;
     currentSession = session;
     currentAuthority = null;
     currentPublicRead = createPendingAuthenticatedPublicRead();
@@ -922,9 +930,11 @@ export function bindAuthenticatedEntry(
     return saved;
   };
 
-  const loadFullDirectoryForRoute = async () => {
+  const loadFullDirectoryForRoute = async (retry = false) => {
     if (
-      fullDirectoryAttempted ||
+      fullDirectoryRequest ||
+      (fullDirectoryAttempted && !retry) ||
+      (retry && currentFullDirectory.state !== "unavailable") ||
       currentSession?.authenticated !== true ||
       currentAuthority?.valid !== true ||
       currentAuthority.status !== "full" ||
@@ -939,19 +949,37 @@ export function bindAuthenticatedEntry(
     fullDirectoryAttempted = true;
     const session = currentSession;
     const authority = currentAuthority;
+    const controller = new AbortController();
+    fullDirectoryRequest = controller;
+    const timer = setTimeout(() => controller.abort(), 10000);
+    const stillCurrent = () => currentSession === session && currentAuthority === authority &&
+      fullDirectoryRequest === controller && !controller.signal.aborted;
     currentFullDirectory = LOADING_FULL_DIRECTORY;
     paintProduct();
     try {
-      const directory = await readSocialFullDirectory(fetchImpl);
-      if (currentSession === session && currentAuthority === authority) {
+      const directory = await readSocialFullDirectory((path, options) =>
+        fetchImpl(path, { ...options, signal: controller.signal }));
+      if (stillCurrent()) {
         currentFullDirectory = directory;
         paintProduct();
         return true;
       }
     } catch {
-      if (currentSession === session && currentAuthority === authority) {
+      if (currentSession === session && currentAuthority === authority &&
+          fullDirectoryRequest === controller) {
         currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
         paintProduct();
+      }
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+      if (fullDirectoryRequest === controller) {
+        fullDirectoryRequest = null;
+        if (currentSession === session && currentAuthority === authority &&
+            currentFullDirectory.state === "loading") {
+          currentFullDirectory = UNAVAILABLE_FULL_DIRECTORY;
+          paintProduct();
+        }
       }
     }
     return false;
@@ -1202,7 +1230,7 @@ export function bindAuthenticatedEntry(
     indicator.textContent = "Signing out";
 
     try {
-      await logoutSocialSession(fetchImpl);
+      await entryActions.logout();
 
       try {
         browser?.history?.replaceState?.(
@@ -1226,12 +1254,35 @@ export function bindAuthenticatedEntry(
       return true;
     } catch {
       signOut.disabled = false;
-      indicator.textContent = "Authenticated";
+      indicator.textContent = "Sign out not confirmed";
       sessionDetail.textContent =
-        "Sign out was not completed. The authenticated session remains active.";
+        "Sign out was not confirmed. Retry Sign out to complete it.";
       return false;
     }
   };
+
+  const login = async () => {
+    if (signingIn || currentSession?.authenticated === true) return false;
+    signingIn = true;
+    signIn.setAttribute?.("aria-disabled", "true");
+    indicator.textContent = "Starting sign in";
+    try {
+      const path = await entryActions.login();
+      browser.location.assign(path);
+      return true;
+    } catch {
+      indicator.textContent = "Signed out";
+      sessionDetail.textContent = "Sign in could not start. Please try again.";
+      return false;
+    } finally {
+      signingIn = false;
+      signIn.removeAttribute?.("aria-disabled");
+    }
+  };
+  signIn.addEventListener?.("click", (event) => {
+    event.preventDefault?.();
+    void login();
+  });
 
   signOut.addEventListener?.("click", () => {
     void logout();
@@ -1241,6 +1292,12 @@ export function bindAuthenticatedEntry(
     const button = event.target?.closest?.("button");
 
     if (!button) return;
+
+    if (button.hasAttribute?.("data-retry-full-directory")) {
+      event.preventDefault?.();
+      void loadFullDirectoryForRoute(true);
+      return;
+    }
 
     if (button.id === "connect-authenticated-signer") {
       event.preventDefault?.();
@@ -1453,6 +1510,7 @@ export function bindAuthenticatedEntry(
 
   return Object.freeze({
     ready,
+    login,
     logout,
     connectSigner,
     publishNote: (content) => publish("note", { content }),
@@ -1461,6 +1519,7 @@ export function bindAuthenticatedEntry(
       { displayName, about }
     ),
     savePrivateLabel,
+    retryFullDirectory: () => loadFullDirectoryForRoute(true),
     repaint: paintProduct,
     currentSession: () => currentSession,
     currentAuthority: () => currentAuthority,
