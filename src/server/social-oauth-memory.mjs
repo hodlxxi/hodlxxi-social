@@ -27,16 +27,17 @@ export const createPendingTransactionStore = createBoundedStore;
 // Mobile entries are presentations of UBID authority, with absolute deadlines.
 // Retain an expired original credential for at most five minutes solely so an
 // explicit logout can cancel it. get() never exposes that retention as authority.
-export function createSessionStore({ ttlSeconds, capacity, now = Date.now }) {
+export function createSessionStore({ ttlSeconds, capacity, now = Date.now, nativeV2Enabled = false }) {
   check(ttlSeconds, "ttl"); check(capacity, "capacity");
   if (typeof now !== "function") throw new TypeError("invalid clock");
+  if (typeof nativeV2Enabled !== "boolean") throw new TypeError("invalid native session configuration");
   const entries = new Map();
   const mobile = (v) => Object.hasOwn(v, "kind") || Object.hasOwn(v, "issuanceId");
   const sweep = () => {
     const time = now();
     for (const [key, entry] of entries) {
       const deadline = entry.logout?.until ??
-        entry.record.expiresAt + (entry.record.kind === "ubid-mobile-v1" ? 300000 : 0);
+        entry.record.expiresAt + (["ubid-mobile-v1", "ubid-mobile-v2"].includes(entry.record.kind) ? 300000 : 0);
       if (deadline <= time) entries.delete(key);
     }
   };
@@ -47,10 +48,14 @@ export function createSessionStore({ ttlSeconds, capacity, now = Date.now }) {
     let record;
     if (mobile(value)) {
       const d = Object.getOwnPropertyDescriptors(value);
-      const fields = ["kind", "subject", "viewerAccessToken", "issuanceId", "issuedAt", "expiresAt"];
+      const native = nativeV2Enabled && d.kind?.value === "ubid-mobile-v2";
+      const fields = ["kind", "subject", "viewerAccessToken", "issuanceId", "issuedAt", "expiresAt",
+        ...(native ? ["issuanceRevision", "acceptanceId"] : [])];
       if (Object.getPrototypeOf(value) !== Object.prototype || Reflect.ownKeys(d).length !== fields.length ||
           fields.some((f) => !d[f]?.enumerable || !Object.hasOwn(d[f], "value")) ||
-          value.kind !== "ubid-mobile-v1" || typeof value.subject !== "string" || typeof value.issuanceId !== "string" ||
+          value.kind !== (native ? "ubid-mobile-v2" : "ubid-mobile-v1") ||
+          native && (![value.issuanceRevision, value.acceptanceId].every((v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v)) || value.issuedAt < 0) ||
+          typeof value.subject !== "string" || typeof value.issuanceId !== "string" ||
           !/^[0-9a-f]{64}$/.test(value.subject) || !/^[0-9a-f]{64}$/.test(value.issuanceId) ||
           typeof value.viewerAccessToken !== "string" || value.viewerAccessToken.length > 8192 ||
           !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value.viewerAccessToken) ||
@@ -70,7 +75,9 @@ export function createSessionStore({ ttlSeconds, capacity, now = Date.now }) {
     const entry = entries.get(key);
     if (!entry) return null;
     // Fixed, non-renewable cancellation-only retention; never authentication.
-    if (!entry.logout) entry.logout = { original: entry.record, until: now() + 300000, confirmed: false };
+    if (!entry.logout) entry.logout = { original: entry.record,
+      until: entry.record.kind === "ubid-mobile-v2" ? Math.min(now() + 300000, entry.record.expiresAt + 300000) : now() + 300000,
+      confirmed: false };
     return entry.logout;
   };
   const get = (key) => {

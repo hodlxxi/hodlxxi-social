@@ -120,3 +120,7 @@ a native issuance endpoint, install a BFF route, admit a device or enable DMs.
 Canonical Social crypto remains in
 [the preacceptance handoff](SOCIAL_PREACCEPTANCE_ED25519_HANDOFF_V2.md) and
 [the exact admission contract](EXACT_MESSAGING_DEVICE_ADMISSION_V1.md).
+
+## Separate native phone-session source
+
+The [native V2 session bridge](SOCIAL_NATIVE_SESSION_V2_BRIDGE_V1.md) supplies a separate default-off issuance client and presentation manager. The active V1 browser/BFF remains unchanged; it cannot relabel an existing V1 credential.
