@@ -604,11 +604,30 @@ The producer uses a distinct opaque signer port with fixed `RS256`, `kid`,
 issuer, audience, client ID, service principal and purpose metadata. It emits
 only compact sorted-key ASCII JSON with unpadded base64url and is disabled unless
 its exact own-data gate is literal `true`. Explicit safe-integer millisecond
-time, a maximum 10,000-ms lifetime, every provable signed-transcript interval,
+time, a default maximum 10,000-ms lifetime, every provable signed-transcript interval,
 and injected phone-session, approver-session, Full and exact X25519-binding
 deadlines bound the statement interval. None of those deadlines is current
 authority. Every failure is one bounded error, and pre-sign failures dispatch
 the signer zero times.
+
+The signer constructor accepts a separate, closed trusted-server options object:
+`{ freshnessProfile: "legacy-10s" }` (the default), or
+`{ freshnessProfile: "native-v2-60s-v1" }`. The latter permits at most 60,000 ms
+and adds the exact `freshnessProfile` field to the sorted payload, covered by
+both the JTI preimage and RS256 signature. It remains marked even below ten
+seconds. The profile is retained privately with the opaque signer; neither
+request input, producer enable options nor an inferred duration selects it.
+Unknown profiles and additional configuration members deny. Legacy callers,
+metadata, unmarked payloads and fixed vector bytes remain unchanged.
+
+This profile must match UBID's explicitly selected evidence and statement
+configs and its additive native freshness SQL guard. Every original transcript,
+session, Full, binding, evidence and signing-trust deadline still applies; the
+profile never renews an expired artifact. The pure producer still has no clock
+or current-authority lookup, so the future caller must authenticate UBID's
+deadline evidence, cap the interval to it, resample a real clock after slow
+work, and publish only within the original exclusive interval. Historical
+receipt recovery grants no new authority. No route or runtime is activated.
 
 The public fixture
 `tests/fixtures/social_preaccepted_enrollment_verification_statement_v2.json`
@@ -722,3 +741,20 @@ retention and sender-copy/history policy, default-off ingress/runtime wiring,
 and complete offline lifecycle rehearsal. Phase 4 encryption/reception UI and
 any activation remain separate. These prerequisite tests do not claim admission,
 delivery, decryption or full messaging completion.
+## Separate dormant V2 server transport
+
+The [Social enrollment V2 client](SOCIAL_ENROLLMENT_V2_CLIENT_V1.md) is a
+default-off server-only adapter to external UBID's confidential registration
+commands. Its publication results preserve denied final admission and no bearer
+authority. It does not replace this contract's current-authority checks,
+cryptographic verifier, statement producer or browser key lifecycle.
+
+A separate disposable rehearsal exercises that client's default Node HTTP
+transport through a real temporary Unix listener, Flask confidential ingress
+and actual PostgreSQL owners with genuine clocks. Restricted roles, durable
+assertion replay, original challenge/revision and atomic effect/history writes
+remain real. Wrong viewers, issuance selectors and damaged signatures deny;
+an exact committed retry returns identical receipt bytes with no extra effects.
+The native fixture trusts a synthetic Social statement and shape-only phone
+proof, so the separate real BIP340/Ed25519 producer checks and browser upgrade
+obligations remain distinct. This evidence enables no runtime or messaging.

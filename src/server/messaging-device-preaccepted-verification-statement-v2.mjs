@@ -29,6 +29,9 @@ export const PREACCEPTED_ENROLLMENT_VERIFICATION_STATEMENT_V2_SCHEMA =
 export const MAX_PREACCEPTED_ENROLLMENT_VERIFICATION_STATEMENT_V2_LIFETIME_MS =
   10_000;
 export const MAX_PREACCEPTED_ENROLLMENT_VERIFICATION_STATEMENT_V2_BYTES = 4_096;
+export const PREACCEPTED_ENROLLMENT_FRESHNESS_LEGACY_10S = "legacy-10s";
+export const PREACCEPTED_ENROLLMENT_FRESHNESS_NATIVE_60S_V1 =
+  "native-v2-60s-v1";
 
 const VERSION = 2;
 const CONSUME_PATH = "/internal/v2/social/device-admission/consume";
@@ -104,6 +107,7 @@ const SIGNER_FIELDS = [
 const GATE_FIELDS = [
   "preacceptedEnrollmentVerificationStatementsV2Enabled"
 ];
+const FRESHNESS_CONFIG_FIELDS = ["freshnessProfile"];
 // Security boundary: caller/network bytes, signer behavior, and later-supplied
 // public evidence are untrusted. The Node process/executable, Node/OpenSSL
 // built-ins, trusted deployment source, package-lock-selected dependencies,
@@ -421,6 +425,14 @@ function signerState(value) {
   return safeApply(safeWeakMapGet, signerStates, [value]);
 }
 
+function freshnessMaximum(profile) {
+  if (profile === PREACCEPTED_ENROLLMENT_FRESHNESS_LEGACY_10S) {
+    return MAX_PREACCEPTED_ENROLLMENT_VERIFICATION_STATEMENT_V2_LIFETIME_MS;
+  }
+  if (profile === PREACCEPTED_ENROLLMENT_FRESHNESS_NATIVE_60S_V1) return 60_000;
+  fail();
+}
+
 function assertConfigured(input, context, signer) {
   if (
     issuer(input.expectedIssuer) !== context.audience ||
@@ -493,6 +505,9 @@ function payloadWires(value) {
     `,"clientId":${jsonPrimitive(value.clientId)}` +
     `,"enrollmentChallengeId":${jsonPrimitive(value.challengeId)}` +
     `,"expiresAt":${jsonPrimitive(value.expiresAt)}` +
+    (value.freshnessProfile === PREACCEPTED_ENROLLMENT_FRESHNESS_NATIVE_60S_V1
+      ? `,"freshnessProfile":${jsonPrimitive(value.freshnessProfile)}`
+      : "") +
     `,"inputDigest":${jsonPrimitive(value.inputDigest)}` +
     `,"iss":${jsonPrimitive(value.issuer)}` +
     `,"issuedAt":${jsonPrimitive(value.issuedAt)}`;
@@ -526,9 +541,16 @@ function protectedHeaderWire(kid) {
  * frozen object exposes immutable binding metadata and no signing operation.
  */
 export function createMessagingDevicePreacceptedEnrollmentVerificationStatementSignerV2(
-  input = {}
+  input = {},
+  options = {
+    freshnessProfile: PREACCEPTED_ENROLLMENT_FRESHNESS_LEGACY_10S
+  }
 ) {
   try {
+    // Trusted server configuration belongs to this opaque signer, never to
+    // request bytes or a duration inferred from them. Legacy callers omit it.
+    const { freshnessProfile } = ownData(options, FRESHNESS_CONFIG_FIELDS);
+    freshnessMaximum(freshnessProfile);
     const value = ownData(input, SIGNER_FIELDS);
     if (
       value.algorithm !==
@@ -555,6 +577,7 @@ export function createMessagingDevicePreacceptedEnrollmentVerificationStatementS
       kid: metadata.kid,
       purpose: metadata.purpose,
       servicePrincipal: metadata.servicePrincipal,
+      freshnessProfile,
       signExact: value.signExact
     });
     safeApply(safeWeakMapSet, signerStates, [metadata, state]);
@@ -663,8 +686,7 @@ export async function produceMessagingDevicePreacceptedEnrollmentVerificationSta
     const bindingValidFrom = seconds(binding.bindingValidFrom) * 1_000;
     const bindingExpiresAt = seconds(binding.bindingExpiresAt) * 1_000;
     if (
-      lifetime >
-        MAX_PREACCEPTED_ENROLLMENT_VERIFICATION_STATEMENT_V2_LIFETIME_MS ||
+      lifetime > freshnessMaximum(signer.freshnessProfile) ||
       bindingDeadline !== bindingExpiresAt
     ) fail();
     const expiresAt = now + lifetime;
@@ -706,6 +728,7 @@ export async function produceMessagingDevicePreacceptedEnrollmentVerificationSta
       challengeId: enrollment.enrollmentChallengeId,
       clientId: value.expectedClientId,
       expiresAt,
+      freshnessProfile: signer.freshnessProfile,
       inputDigest: derivedInputDigest,
       issuedAt: now,
       issuer: value.expectedIssuer,

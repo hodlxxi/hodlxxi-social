@@ -3,6 +3,10 @@
 Status: **implemented only as dormant browser and pure server source, including
 the pure V2 statement producer; not wired, not authority, and not deployable**.
 
+The separate [confidential UBID enrollment client](SOCIAL_ENROLLMENT_V2_CLIENT_V1.md)
+provides default-off server transport to UBID's challenge/reservation/finalization
+owners. It does not install this browser slice or upgrade legacy mobile sessions.
+
 This slice reproduces the externally owned Social mobile pre-enrollment V2
 `register + initial` bytes while repairing the order in which a phone creates
 its dedicated messaging authentication key. The handoff itself does not accept
@@ -21,11 +25,15 @@ The browser may prepare public candidate evidence. The Social server may verify
 the exact cryptographic transcript. Neither is acceptance or association
 authority.
 
-Only a future UBID transaction owner may durably accept a proposal or create an
-association after independently authenticating the separately frozen V2
-verification statement and locking/rechecking all required current state. UBID
-now owns the dormant byte contract and pure authenticated consumer; no runtime
-trust registration, route or authoritative transaction owner exists here.
+Only UBID's separate authoritative transaction owners may durably accept a
+proposal or create an association after independently authenticating the frozen
+V2 verification statement and locking/rechecking all required current state.
+External UBID source includes dormant reservation, native challenge,
+finalization and caller/ingress composition. A disposable rehearsal crosses the
+real Social client, Unix HTTP, Flask and native PostgreSQL commit/history
+boundary using a trusted synthetic Social statement. Those external owners do
+not live in this pure browser/producer slice; runtime trust registration and
+browser/session wiring remain absent here.
 
 The following remain insufficient by themselves:
 
@@ -265,10 +273,21 @@ extend the trusted-process security boundary. The producer has no clock and
 performs no direct storage, network or key-discovery I/O; it intentionally
 dispatches only the injected `signExact` port. It requires an explicit
 safe-integer epoch-millisecond `now`, a positive
-lifetime no greater than 10,000 ms, and exact injected phone-session,
+lifetime no greater than 10,000 ms by default, and exact injected phone-session,
 approver-session, Full and X25519-binding deadlines. Those deadlines only bound
 evidence freshness; they do not prove a current session, Full entitlement or
 binding authority.
+
+A separate trusted-server signer option explicitly selects the signed
+`native-v2-60s-v1` freshness profile with a maximum of 60,000 ms. It is not a
+browser or producer-request option. The frozen private signer state retains
+this policy, and the payload's exact marker is covered by the JTI and RSA
+signature, even for shorter intervals. The default `legacy-10s` retains the
+original unmarked wire bytes. Unknown policies deny, all independent original
+deadlines remain exclusive, and no expired proof is refreshed. See the
+[statement contract](EXACT_MESSAGING_DEVICE_ADMISSION_V1.md#separate-preaccepted-enrollment-v2-statement)
+for the matching UBID configuration and future caller obligations. This source
+change alone installs no HTTP handler or runtime composition.
 
 ## Fixture and compatibility gate
 
@@ -291,11 +310,15 @@ Its public JWK verifies the fixed RS256 signature; no private RSA key is stored.
 
 ## Deferred work
 
-Before any activation, separate reviewed increments must implement durable UBID
-V2 acceptance, acceptance-linked challenge issuance, and one atomic association
-owner with all current session, Full, binding, acceptance, challenge and
-association rechecks. The dormant producer and UBID consumer do not perform any
-of those actions.
+External UBID source provides dormant durable V2 reservation/finalization,
+acceptance-linked original challenge issuance and the native atomic association
+owner with current session, Full, binding, acceptance, challenge and association
+rechecks. The separate client/Unix/Flask/PostgreSQL rehearsal covers their
+transport and durable effects, using a synthetic trusted statement and
+shape-only phone proof. Before activation, reviewed operational composition
+must connect the real Social cryptographic producer, trusted native phone
+session bridge and browser lifecycle to those owners. This producer does not
+itself perform durable acceptance or grant current admission.
 Continuation identity, ordinary request proof, ciphertext transport, inbox,
 self-read, UI and runtime activation remain deferred.
 
