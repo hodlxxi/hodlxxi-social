@@ -1,17 +1,40 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { generateKeyPairSync, verify } from "node:crypto";
+import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createUbidSocialEnrollmentV2Client as createClient, ENROLLMENT_PREFIX as PREFIX,
   ENROLLMENT_TOKEN_PATH as TOKEN_PATH, ENROLLMENT_SCOPES as SCOPES,
-  SOCIAL_ENROLLMENT_V2_CLIENT_ENABLED } from "../src/server/ubid-social-enrollment-v2-client.mjs";
+  FinalizeOutcomeUnknown, SOCIAL_ENROLLMENT_V2_CLIENT_ENABLED } from "../src/server/ubid-social-enrollment-v2-client.mjs";
 import { canonical } from "../web/social-mobile-protocol-v1.mjs";
 
 const vector = JSON.parse(readFileSync(new URL("./fixtures/social_preacceptance_ed25519_handoff_v2.json", import.meta.url))).vector;
 const enrollment = JSON.parse(vector.enrollmentWire), context = JSON.parse(vector.verificationContextWire);
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const denied = { message: "social enrollment v2 unavailable" };
+const reservationId = "a".repeat(64), issuanceId = "c".repeat(64), effectId = "e".repeat(64);
+const inputWire = vector.preacceptedEnrollmentVerificationInputWire;
+const digest = (domain, wire) => createHash("sha256").update(domain + "\0" + wire, "ascii").digest("hex");
+const tagged = (label, domain, wire) => `${label}-sha256:${digest(domain, wire)}`;
+const inputDigest = tagged("hodlxxi-social-preaccepted-enrollment-verification-input-v2",
+  "HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_VERIFICATION_INPUT_V2", inputWire);
+const inputPayloadDigest = tagged("hodlxxi-social-messaging-device-verification-deadline-input-payload-v1",
+  "HODLXXI_SOCIAL_MESSAGING_DEVICE_VERIFICATION_DEADLINE_INPUT_PAYLOAD_V1", inputWire);
+const evidenceCompactJws = `header.${Buffer.from(canonical({ inputDigest, inputPayloadDigest,
+  socialSessionIssuanceId: issuanceId, reservationId, reservationRevision: 1 })).toString("base64url")}.signature`;
+const statementCompactJws = "other.payload.signature";
+const evidenceDigest = tagged("hodlxxi-social-preaccepted-enrollment-v2-deadline-evidence-v1",
+  "HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_V2_DEADLINE_EVIDENCE_V1", evidenceCompactJws);
+const statementDigest = tagged("hodlxxi-social-preaccepted-enrollment-v2-verification-statement-v1",
+  "HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_V2_VERIFICATION_STATEMENT_V1", statementCompactJws);
+const finalizationRequestDigest = tagged("hodlxxi-social-preaccepted-enrollment-v2-finalization-request-v1",
+  "HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_V2_FINALIZATION_REQUEST_V1", canonical({ evidenceDigest,
+    inputDigest, inputPayloadDigest, reservationId, reservationRevision: 1, statementDigest }));
+const effectDigest = "hodlxxi-social-preaccepted-enrollment-v2-effect-v1-sha256:" + "d".repeat(64);
+const receiptId = digest("HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_V2_RECEIPT_ID_V1", canonical({
+  effectDigest, effectId, finalizationRequestDigest, reservationId, reservationRevision: 1,
+  schema: "hodlxxi.social_preaccepted_enrollment_v2_receipt_id_preimage.v1", version: 1,
+}));
 const common = (name) => ({ schema: `hodlxxi.social_enrollment_v2_${name}_publication.v1`, version: 1,
   publicationStatus: "committed", finalAdmission: "denied", bearerAuthority: "none" });
 const responseFor = (name) => name === "challenge" ? { ...common(name), contextWire: vector.verificationContextWire,
@@ -21,14 +44,14 @@ const responseFor = (name) => name === "challenge" ? { ...common(name), contextW
       observedAt: enrollment.issuedAt, expiresAt: enrollment.expiresAt }
   : { ...common(name), historicalRecovery: true, receiptWire: canonical({
       schema: "hodlxxi.social_preaccepted_enrollment_v2_acceptance_receipt.v1", version: 1, status: "committed",
-      reservationId: "a".repeat(64), reservationRevision: 1, receiptId: "b".repeat(64),
-      acceptanceId: JSON.parse(vector.preacceptedEnrollmentVerificationInputWire).acceptanceId,
+      reservationId, reservationRevision: 1, receiptId, effectId, effectDigest, evidenceDigest, inputDigest,
+      statementDigest, finalizationRequestDigest, acceptanceId: JSON.parse(inputWire).acceptanceId,
       challengeId: context.challengeId, associationId: context.associationId, decidedAt: enrollment.issuedAt }) };
 function body(name) {
-  const value = { issuanceId: "c".repeat(64) };
-  if (name !== "challenge") value.verificationInputWire = vector.preacceptedEnrollmentVerificationInputWire;
-  if (name === "finalize") Object.assign(value, { reservationId: "a".repeat(64), reservationRevision: "1",
-    evidenceCompactJws: "header.payload.signature", statementCompactJws: "other.payload.signature" });
+  const value = { issuanceId };
+  if (name !== "challenge") value.verificationInputWire = inputWire;
+  if (name === "finalize") Object.assign(value, { reservationId, reservationRevision: "1",
+    evidenceCompactJws, statementCompactJws });
   return value;
 }
 function setup(patch = {}) {
@@ -165,10 +188,14 @@ test("response clocks cannot move backwards or extend an expired interval", asyn
   const s = setup({ change: (v, token) => { if (token) s.state.now--; return v; } });
   await assert.rejects(s.client.challenge(args("challenge")), denied); assert.equal(s.calls.length, 1);
 });
-test("receipt mismatch or nonboolean historical flag denies", async () => {
-  for (const change of [{ historicalRecovery: 1 }, { receiptWire: canonical({ ...JSON.parse(responseFor("finalize").receiptWire), reservationId: "f".repeat(64) }) }]) {
+test("invalid finalize publications leave the already dispatched outcome unknown", async () => {
+  const receipt = JSON.parse(responseFor("finalize").receiptWire);
+  for (const change of [{ historicalRecovery: 1 },
+    { receiptWire: canonical({ ...receipt, reservationId: "f".repeat(64) }) },
+    { receiptWire: canonical({ ...receipt, receiptId: "f".repeat(64) }) }]) {
     const s = setup({ change: (v, token) => token ? v : { ...v, ...change } });
-    await assert.rejects(s.client.finalize(args("finalize")), denied);
+    await assert.rejects(s.client.finalize(args("finalize")), FinalizeOutcomeUnknown);
+    assert.equal(s.calls.length, 2);
   }
 });
 test("transport failure text is sanitized and contains no provider error", async () => {
