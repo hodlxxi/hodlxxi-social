@@ -274,10 +274,9 @@ export function createUbidUnixSocketTransport(configuration, dependencies) {
             try {
               if (
                 !response ||
-                !Number.isSafeInteger(response.statusCode) ||
-                response.statusCode < 100 ||
-                response.statusCode > 599 ||
-                (response.statusCode >= 300 && response.statusCode <= 399) ||
+                // Error bodies are never consumed by the directory client.
+                // Close them before creating a Web Stream.
+                response.statusCode !== 200 ||
                 typeof response.once !== "function" ||
                 typeof response.destroy !== "function"
               ) failure();

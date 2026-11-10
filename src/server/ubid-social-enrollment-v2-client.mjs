@@ -1,7 +1,7 @@
 // Default-off server transport for UBID's existing V2 enrollment owners.
 // Returned documents are publication evidence, never current admission.
 import http from "node:http";
-import { KeyObject, randomBytes, sign } from "node:crypto";
+import { KeyObject, randomBytes, sign, createHash } from "node:crypto";
 import { types } from "node:util";
 import { canonicalUnixSocketPath } from "./social-oauth-config.mjs";
 import { canonical, exact, parseClosedJson, hex64 } from "../../web/social-mobile-protocol-v1.mjs";
@@ -18,8 +18,15 @@ const BODY_FIELDS = Object.freeze({ challenge: ["issuanceId"], reserve: ["issuan
 const COMMON_FIELDS = ["schema", "version", "publicationStatus", "finalAdmission", "bearerAuthority"];
 const RESULT_FIELDS = Object.freeze({ challenge: ["contextWire", "enrollmentWire", "approvalEventWire", "challengeRevision", "issuedAt", "expiresAt"],
   reserve: ["evidenceCompactJws", "reservationId", "observedAt", "expiresAt"], finalize: ["receiptWire", "historicalRecovery"] });
+// Transport wait only; signed deadlines and all publication checks remain unchanged.
+export const ENROLLMENT_FINALIZE_TIMEOUT_MS = 45000;
 const MAXIMUM = 65536;
 const fail = () => { throw new TypeError("social enrollment v2 unavailable"); };
+export class FinalizeOutcomeUnknown extends Error {
+  constructor() { super("finalize outcome unknown"); }
+}
+const digest = (domain, wire) => createHash("sha256").update(domain + "\0" + wire, "ascii").digest("hex");
+const tagged = (prefix, domain, wire) => prefix + digest(domain, wire);
 const integer = (v) => Number.isSafeInteger(v) && v >= 0;
 const ascii = (v, maximum) => typeof v === "string" && v.length > 0 && v.length <= maximum && /^[\x20-\x7e]+$/.test(v);
 const compact = (v, maximum = 16384) => ascii(v, maximum) && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v);
@@ -64,12 +71,39 @@ function publication(command, source, body, at) {
     if (!hex64(value.reservationId) || !compact(value.evidenceCompactJws)) fail();
   } else {
     if (typeof value.historicalRecovery !== "boolean") fail();
-    const receipt = json(value.receiptWire, 4096), input = json(body.verificationInputWire, 24576);
-    const context = json(input.context, 4096);
+    const receipt = own(json(value.receiptWire, 4096), ["schema", "version", "status", "reservationId", "reservationRevision",
+      "receiptId", "acceptanceId", "challengeId", "associationId", "decidedAt", "effectId", "effectDigest",
+      "evidenceDigest", "inputDigest", "statementDigest", "finalizationRequestDigest"]);
+    if (canonical(receipt) !== value.receiptWire) fail();
+    const input = json(body.verificationInputWire, 24576), context = json(input.context, 4096);
+    const evidence = json(Buffer.from(body.evidenceCompactJws.split(".")[1], "base64url").toString("ascii"), 12288);
+    const inputDigest = tagged("hodlxxi-social-preaccepted-enrollment-verification-input-v2-sha256:",
+      "HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_VERIFICATION_INPUT_V2", body.verificationInputWire);
+    const inputPayloadDigest = tagged("hodlxxi-social-messaging-device-verification-deadline-input-payload-v1-sha256:",
+      "HODLXXI_SOCIAL_MESSAGING_DEVICE_VERIFICATION_DEADLINE_INPUT_PAYLOAD_V1", body.verificationInputWire);
+    if (evidence.inputDigest !== inputDigest || evidence.inputPayloadDigest !== inputPayloadDigest ||
+        evidence.socialSessionIssuanceId !== body.issuanceId || evidence.reservationId !== body.reservationId ||
+        evidence.reservationRevision !== 1) fail();
+    const evidenceDigest = tagged("hodlxxi-social-preaccepted-enrollment-v2-deadline-evidence-v1-sha256:",
+      "HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_V2_DEADLINE_EVIDENCE_V1", body.evidenceCompactJws);
+    const statementDigest = tagged("hodlxxi-social-preaccepted-enrollment-v2-verification-statement-v1-sha256:",
+      "HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_V2_VERIFICATION_STATEMENT_V1", body.statementCompactJws);
+    const requestDigest = tagged("hodlxxi-social-preaccepted-enrollment-v2-finalization-request-v1-sha256:",
+      "HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_V2_FINALIZATION_REQUEST_V1", canonical({ evidenceDigest,
+        inputDigest: evidence.inputDigest, inputPayloadDigest: evidence.inputPayloadDigest, reservationId: body.reservationId,
+        reservationRevision: 1, statementDigest }));
+    const receiptId = digest("HODLXXI_SOCIAL_PREACCEPTED_ENROLLMENT_V2_RECEIPT_ID_V1", canonical({
+      effectDigest: receipt.effectDigest, effectId: receipt.effectId, finalizationRequestDigest: requestDigest,
+      reservationId: body.reservationId, reservationRevision: 1,
+      schema: "hodlxxi.social_preaccepted_enrollment_v2_receipt_id_preimage.v1", version: 1 }));
     if (receipt.schema !== "hodlxxi.social_preaccepted_enrollment_v2_acceptance_receipt.v1" || receipt.version !== 1 ||
         receipt.status !== "committed" || receipt.reservationRevision !== 1 || receipt.reservationId !== body.reservationId ||
         receipt.acceptanceId !== input.acceptanceId || receipt.challengeId !== context.challengeId ||
-        receipt.associationId !== context.associationId || !hex64(receipt.receiptId) || !integer(receipt.decidedAt)) fail();
+        receipt.associationId !== context.associationId || receipt.receiptId !== receiptId || !hex64(receipt.effectId) ||
+        !/^hodlxxi-social-preaccepted-enrollment-v2-effect-v1-sha256:[0-9a-f]{64}$/.test(receipt.effectDigest) ||
+        receipt.evidenceDigest !== evidenceDigest || receipt.inputDigest !== evidence.inputDigest ||
+        receipt.statementDigest !== statementDigest || receipt.finalizationRequestDigest !== requestDigest ||
+        !integer(receipt.decidedAt)) fail();
   }
   // All nested protocol objects remain primitive exact strings. They are NOT
   // a rebranded cryptographic result or a substitute for UBID/Social verifiers.
@@ -98,7 +132,8 @@ function responseLength(response, maximum) {
 function unixPost(config, requestImpl, path, headers, body, maximum = MAXIMUM) {
   return new Promise((resolve, reject) => {
     let outgoing, incoming, finished = false;
-    const timer = setTimeout(deny, config.timeoutMs);
+    const timer = setTimeout(deny, path === ENROLLMENT_PREFIX + "/finalize"
+      ? ENROLLMENT_FINALIZE_TIMEOUT_MS : config.timeoutMs);
     function deny() {
       if (finished) return;
       finished = true; clearTimeout(timer);
@@ -164,6 +199,7 @@ export function createUbidSocialEnrollmentV2Client(value, dependencies) {
     if (![deps.requestImpl, deps.now, deps.random].every((v) => typeof v === "function")) fail();
     const methods = {};
     for (const command of Object.keys(BODY_FIELDS)) methods[command] = async (input) => {
+      let sent = false;
       try {
         const args = own(input, ["body", "viewerAccessToken"]), body = requestBody(command, args.body);
         if (!compact(args.viewerAccessToken) || Buffer.byteLength(canonical(body)) > MAXIMUM) fail();
@@ -185,13 +221,14 @@ export function createUbidSocialEnrollmentV2Client(value, dependencies) {
           ["access_token", "token_type", "expires_in", "scope"]);
         if (!compact(token.access_token) || token.access_token === args.viewerAccessToken || token.token_type !== "Bearer" ||
             token.expires_in !== 60 || token.scope !== ENROLLMENT_SCOPES[command] || now() >= assertionDeadline) fail();
+        if (command === "finalize") sent = true;
         const result = await unixPost(config, deps.requestImpl, ENROLLMENT_PREFIX + "/" + command,
           { Accept: "application/json", "Content-Type": "application/json", Authorization: "Bearer " + token.access_token,
             [VIEWER_HEADER]: "Bearer " + args.viewerAccessToken }, canonical(body));
         const deliveredAt = now();
         if (deliveredAt >= assertionDeadline) fail();
         return publication(command, result, body, deliveredAt);
-      } catch { fail(); }
+      } catch { if (sent) throw new FinalizeOutcomeUnknown(); fail(); }
     };
     return Object.freeze(methods);
   } catch { fail(); }

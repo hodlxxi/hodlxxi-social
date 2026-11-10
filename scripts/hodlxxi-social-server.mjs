@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { MOBILE_POST_ROUTES } from "../src/server/social-mobile-bff-v1.mjs";
+import { ENROLLMENT_BROWSER_POST_ROUTES } from "../src/server/social-enrollment-v2-routes.mjs";
 import http from "node:http";
 import { pathToFileURL } from "node:url";
 import { configFromEnvironment } from "../src/server/social-oauth-config.mjs";
@@ -246,7 +247,7 @@ const messagingBodyFraming = (
       const name = String(raw[i]).toLowerCase();
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
-    if (["host", "origin", "content-type", "cookie", "x-hodlxxi-mobile-csrf"].some((n) => (counts.get(n) ?? 0) > 1) ||
+    if (["host", "origin", "content-type", "cookie", "x-hodlxxi-mobile-csrf", "x-hodlxxi-enrollment-csrf"].some((n) => (counts.get(n) ?? 0) > 1) ||
         counts.has("content-encoding") || counts.has("authorization") || counts.has("x-hodlxxi-viewer-authorization") ||
         lengths.length !== 1 || !/^[1-9][0-9]*$/.test(lengths[0]) || Number(lengths[0]) > 65536) return false;
     return true;
@@ -347,7 +348,7 @@ export function createHttpHandler({
   bff,
   mobilePostRoutes = []
 }) {
-  if (!Array.isArray(mobilePostRoutes) || mobilePostRoutes.some((p) => !MOBILE_POST_ROUTES.includes(p))) throw new TypeError("invalid mobile routes");
+  if (!Array.isArray(mobilePostRoutes) || mobilePostRoutes.some((p) => !MOBILE_POST_ROUTES.includes(p) && !ENROLLMENT_BROWSER_POST_ROUTES.includes(p))) throw new TypeError("invalid mobile routes");
   mobilePostRoutes = Object.freeze([...mobilePostRoutes]);
   return async (incoming, outgoing) => {
     const target =
@@ -488,11 +489,11 @@ export function createHttpHandler({
   };
 }
 
-export async function runServer({ env = process.env, stdout = console.log, stderr = console.error, createServer = http.createServer, mobileRuntimeFactory = createSocialMobileRuntime } = {}) {
+export async function runServer({ env = process.env, stdout = console.log, stderr = console.error, createServer = http.createServer, mobileRuntimeFactory = createSocialMobileRuntime, sessionStoreFactory } = {}) {
   let config;
   try { config = configFromEnvironment(env); } catch { stderr("invalid configuration"); return 2; }
   const pendingTransactions = createBoundedStore({ ttlSeconds: config.transactionTtlSeconds, capacity: config.maxPendingTransactions });
-  const sessions = (config.mobile.enabled ? createSessionStore : createBoundedStore)({
+  const sessions = (sessionStoreFactory ?? (config.mobile.enabled ? createSessionStore : createBoundedStore))({
     ttlSeconds: config.sessionTtlSeconds, capacity: config.maxSessions
   });
   const oauthClient = createHodlxxiOAuthClient(config);

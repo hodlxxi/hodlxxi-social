@@ -1,3 +1,25 @@
+
+function v2BoundaryTrace(stage, error, status = null) {
+  try {
+    const allowed = new Set([
+      "social-enrollment-v2-bff.mjs",
+      "social-enrollment-v2-finalizer.mjs",
+      "ubid-social-enrollment-v2-client.mjs",
+      "messaging-device-preaccepted-verification-statement-v2.mjs"
+    ]);
+    const frames = [];
+    const stack = typeof error?.stack === "string" ? error.stack : "";
+    for (const line of stack.split("\n")) {
+      const m = /\/([A-Za-z0-9_-]+\.mjs):(\d+):(\d+)\)?$/.exec(line);
+      if (m && allowed.has(m[1]) && frames.length < 5)
+        frames.push({file:m[1], line:Number(m[2]), column:Number(m[3])});
+    }
+    console.error("V2_ENROLLMENT_BOUNDARY " + JSON.stringify({
+      v:1, utc:new Date().toISOString(), stage,
+      http:Number.isInteger(status) ? status : null, frames
+    }));
+  } catch {}
+}
 // Dormant pure producer for UBID's exact preaccepted-enrollment V2 statement.
 // This module owns no key or direct storage, network or key-discovery I/O,
 // grants no authority, consumes no challenge, mutates no association, and is
@@ -174,9 +196,11 @@ const ISO_SECOND = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 const signerStates = new WeakMap();
 const fail = () => {
-  throw new safeTypeError(
+  const error = new safeTypeError(
     "messaging device preaccepted enrollment verification statement v2 unavailable"
   );
+  v2BoundaryTrace("statement-check", error);
+  throw error;
 };
 
 function regexpMatches(pattern, value) {
