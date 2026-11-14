@@ -1,4 +1,4 @@
-import test from "node:test"; import assert from "node:assert/strict"; import { classifyRequestTarget, createFullDirectoryIntegration, createHttpHandler, createRecipientCapabilityIntegration } from "../scripts/hodlxxi-social-server.mjs"; import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
+import test from "node:test"; import assert from "node:assert/strict"; import { classifyRequestTarget, createFullDirectoryIntegration, createHttpHandler, createRecipientCapabilityIntegration, createStagingOAuthDiagnosticReporter } from "../scripts/hodlxxi-social-server.mjs"; import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 const invoke=async({url,method="GET",headers={},rawHeaders=[]},bff=async()=>{throw new Error("must not route");})=>{const incoming={url,method,headers,rawHeaders}; const result={headers:{},setHeader(k,v){this.headers[k]=v;},end(body){this.body=body;}}; await createHttpHandler({publicOrigin:"https://social.example",bff})(incoming,result); return result;};
 test("request-target recognition is bounded and exact",()=>{assert.deepEqual(classifyRequestTarget("/auth/callback?code=x&state=y","https://social.example"),{valid:true,callback:true}); for(const target of ["/auth/callback-extra","/auth/callback/","/auth/callback%2fextra","/x/%2e%2e/auth/callback","/auth/callback#x","//auth/callback","https://foreign.example/auth/callback","/bad target","/"+"a".repeat(4097)]) assert.equal(classifyRequestTarget(target,"https://social.example").callback,false);});
 test("framed exact callback rejects, clears transaction cookie, sanitizes, and performs zero routing",async()=>{let calls=0; for(const url of ["/auth/callback","/auth/callback?code=secret&state=hidden"]){const result=await invoke({url,headers:{"content-length":"1"},rawHeaders:["Content-Length","1"]},async()=>{calls++;}); assert.equal(result.statusCode,413); assert.equal(result.headers["Set-Cookie"],expireTransactionCookie()); assert.equal(result.headers["Cache-Control"],"no-store"); assert.doesNotMatch(result.body,/secret|hidden|Content-Length/);} assert.equal(calls,0);});
@@ -6,6 +6,45 @@ test("framed non-callback and near matches never clear OAuth cookie",async()=>{f
 test("fragment-bearing callback targets are malformed with no callback behavior",async()=>{let calls=0; for(const framed of [false,true]){const result=await invoke({url:"/auth/callback#secret",headers:framed?{"content-length":"1"}:{},rawHeaders:framed?["Content-Length","1"]:[]},async()=>{calls++;}); assert.equal(result.statusCode,framed?413:400); assert.equal(result.headers["Set-Cookie"],undefined); assert.doesNotMatch(result.body,/secret/);} assert.equal(calls,0);});
 test("encoded dot-segment callback targets are malformed with no callback behavior",async()=>{let calls=0; for(const framed of [false,true]){const result=await invoke({url:"/x/%2e%2e/auth/callback",headers:framed?{"content-length":"1"}:{},rawHeaders:framed?["Content-Length","1"]:[]},async()=>{calls++;}); assert.equal(result.statusCode,framed?413:400); assert.equal(result.headers["Set-Cookie"],undefined);} assert.equal(calls,0);});
 test("duplicate and conflicting framing fails closed without reflection",async()=>{for(const input of [{headers:{"content-length":"1"},rawHeaders:["Content-Length","1","Content-Length","2"]},{headers:{"transfer-encoding":"chunked"},rawHeaders:["Transfer-Encoding","hostile-secret"]}]){const result=await invoke({url:"/auth/callback",...input}); assert.equal(result.statusCode,413); assert.doesNotMatch(result.body,/hostile|secret|chunked/);}});
+
+test("OAuth postForm diagnostics are default-off and cannot emit in production",()=>{
+  const bomb=()=>assert.fail("diagnostic output must remain disabled");
+  for(const env of [
+    {},
+    {SOCIAL_DEPLOYMENT_ENVIRONMENT:"staging"},
+    {SOCIAL_OAUTH_POST_FORM_DIAGNOSTICS_ENABLED:"true"},
+    {SOCIAL_DEPLOYMENT_ENVIRONMENT:"production",SOCIAL_OAUTH_POST_FORM_DIAGNOSTICS_ENABLED:"true"},
+    {SOCIAL_DEPLOYMENT_ENVIRONMENT:"staging",SOCIAL_OAUTH_POST_FORM_DIAGNOSTICS_ENABLED:true}
+  ]) assert.equal(createStagingOAuthDiagnosticReporter(env,bomb),undefined);
+});
+
+test("staging OAuth diagnostics serialize only allowlisted bounded fields",()=>{
+  const secret="server-diagnostic-secret-private";
+  const output=[];
+  const reporter=createStagingOAuthDiagnosticReporter({
+    SOCIAL_DEPLOYMENT_ENVIRONMENT:"staging",
+    SOCIAL_OAUTH_POST_FORM_DIAGNOSTICS_ENABLED:"true",
+    SECRET_ENV_VALUE:secret
+  },(value)=>output.push(value));
+  assert.equal(typeof reporter,"function");
+  reporter({
+    endpoint:"introspection",stage:"status",status:502,elapsedMs:60000,
+    declaredBytes:16385,receivedBytes:0,timedOut:false,aborted:false,
+    url:`https://${secret}.example/oauth/introspect`,headers:{authorization:secret},
+    body:secret,message:secret,code:secret,state:secret,cookie:secret,token:secret,identifier:secret,
+    env:secret
+  });
+  assert.deepEqual(output.map(JSON.parse),[{
+    endpoint:"introspection",stage:"status",elapsedMs:60000,receivedBytes:0,
+    timedOut:false,aborted:false,status:502,declaredBytes:16385
+  }]);
+  assert.doesNotMatch(output[0],new RegExp(secret));
+
+  reporter({endpoint:secret,stage:"status",elapsedMs:0,receivedBytes:0,timedOut:false,aborted:false});
+  reporter({endpoint:"token",stage:"status",elapsedMs:60001,receivedBytes:0,timedOut:false,aborted:false});
+  reporter({endpoint:"token",stage:"status",elapsedMs:0,receivedBytes:16386,timedOut:false,aborted:false});
+  assert.equal(output.length,1);
+});
 
 const framed={headers:{"content-length":"1"},rawHeaders:["Content-Length","1"]};
 const rejectedBody=JSON.stringify({error:"request_rejected"});
