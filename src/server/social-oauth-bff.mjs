@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { parseCanonicalMessageEnvelopeWireV1 } from "./message-envelope-v128f1.mjs";
+import { parseDeviceProofV1 } from "./messaging-device-proof-profile-v1.mjs";
 import { createPkceChallenge, createPkceVerifier, base64url } from "./hodlxxi-oauth-client.mjs";
 import { TRANSACTION_COOKIE_NAME, SESSION_COOKIE_NAME, parseCookieHeader, serializeHostCookie, expireTransactionCookie, expireSessionCookie } from "./social-oauth-cookie.mjs";
 import { canonicalWssRelayUrl } from "./social-oauth-config.mjs";
@@ -44,6 +46,10 @@ export const SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE =
 
 export const SOCIAL_MESSAGING_RECIPIENT_PACKAGE_ROUTE =
   "/auth/messaging-recipient-package";
+export const SOCIAL_MESSAGE_TRANSPORT_ROUTE = "/auth/messages";
+export const SOCIAL_MESSAGE_INBOX_ROUTE = "/auth/messages/inbox";
+const MESSAGE_DEVICE_HANDLE = /^d_[A-Za-z0-9_-]{22}$/;
+const MESSAGE_TRANSPORT_UNAVAILABLE = Object.freeze({state: "unavailable"});
 
 const MESSAGING_DEVICE_UNAVAILABLE =
   Object.freeze({ state: "unavailable" });
@@ -471,6 +477,7 @@ export function createSocialOAuthBff({
   messagingDeviceClient,
   messagingDeviceAuthorizationClient,
   messagingRecipientClient,
+  messagingTransportClient,
   random = randomBytes,
   now = Date.now
 }) {
@@ -497,6 +504,9 @@ export function createSocialOAuthBff({
           messagingRecipientClient,
           "resolveForViewer"
         );
+
+  const messageSubmit = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient, "submitForViewer");
+  const messageInbox = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient, "listForViewer");
 
   const messagingDeviceRead =
     messagingDeviceClient === undefined
@@ -547,6 +557,7 @@ export function createSocialOAuthBff({
         undefined &&
       !messagingRecipientResolve
     ) ||
+    (messagingTransportClient !== undefined && (!messageSubmit || !messageInbox)) ||
     (
       messagingDeviceClient !==
         undefined &&
@@ -1245,6 +1256,103 @@ export function createSocialOAuthBff({
           503,
           MESSAGING_DEVICE_UNAVAILABLE
         );
+      }
+    }
+
+
+    // No built-in delivery authority: the injected transport must independently
+    // verify device ownership, recipient capability, package binding and Full.
+    if ([SOCIAL_MESSAGE_TRANSPORT_ROUTE, SOCIAL_MESSAGE_INBOX_ROUTE].includes(target.path)) {
+      const inboxRequest = target.path === SOCIAL_MESSAGE_INBOX_ROUTE;
+      if (method !== "POST" || target.query.length !== 0) {
+        return json(method === "POST" ? 400 : 405, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      if (method === "POST" && request.headers?.origin !== config.publicOrigin) {
+        return json(403, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      const context = await authenticatedSessionContext(cookieHeader);
+      if (!context) return json(401, MESSAGE_TRANSPORT_UNAVAILABLE);
+      const viewerAccessToken = context.session.viewerAccessToken;
+      if (typeof viewerAccessToken !== "string" ||
+          viewerAccessToken.length < 1 || viewerAccessToken.length > 8192 ||
+          /[\u0000-\u0020\u007f]/.test(viewerAccessToken)) {
+        return json(403, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      let projection = failClosedAuthority(context.session.subject);
+      if (authorityReader) {
+        try {
+          projection = normalizeAuthorityProjection(
+            context.session.subject,
+            await authorityReader(context.session.subject)
+          );
+        } catch { projection = failClosedAuthority(context.session.subject); }
+      }
+      if (projection.valid !== true || projection.status !== "full") {
+        return json(403, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      if (!messageSubmit || !messageInbox) {
+        return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      try {
+        const contentType = request.headers?.["content-type"];
+        if (typeof contentType !== "string" ||
+            !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(contentType) ||
+            typeof request.body !== "string" ||
+            Buffer.byteLength(request.body, "utf8") < 1 ||
+            Buffer.byteLength(request.body, "utf8") > (inboxRequest ? 256 : 32768)) {
+          return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
+        }
+        // These are untrusted proof bytes. Only UBID may verify the stored
+        // challenge, current exact key association and atomic consumption.
+        const deviceProofWire = request.headers?.["x-hodlxxi-message-device-proof"];
+        try { parseDeviceProofV1(deviceProofWire); }
+        catch { return json(403, MESSAGE_TRANSPORT_UNAVAILABLE); }
+        if (!inboxRequest) {
+          let envelope;
+          try { envelope = parseCanonicalMessageEnvelopeWireV1(request.body); }
+          catch { return json(400, MESSAGE_TRANSPORT_UNAVAILABLE); }
+          const capability = request.headers?.["x-hodlxxi-recipient-capability"];
+          if (typeof capability !== "string" || !RECIPIENT_CAPABILITY.test(capability)) {
+            return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
+          }
+          const accepted = await messageSubmit.call(messagingTransportClient, {
+            viewerAccessToken,
+            expectedSubject: context.session.subject,
+            recipientCapability: capability,
+            envelopeWire: request.body,
+            deviceProofWire
+          });
+          if (accepted?.state !== "accepted" ||
+              accepted?.messageId !== envelope.messageId) {
+            return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
+          }
+          return json(200, {state: "accepted", messageId: envelope.messageId});
+        }
+        const self = JSON.parse(request.body);
+        const deviceHandle = self?.deviceHandle;
+        if (self?.schema !== "hodlxxi.social_messaging_recipient_self_request.v1" || self?.version !== 1 ||
+            typeof deviceHandle !== "string" || !MESSAGE_DEVICE_HANDLE.test(deviceHandle) ||
+            JSON.stringify({deviceHandle, schema: self.schema, version: 1}) !== request.body) {
+          return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
+        }
+        const result = await messageInbox.call(messagingTransportClient, {
+          viewerAccessToken,
+          expectedSubject: context.session.subject,
+          deviceHandle,
+          deviceProofWire,
+          requestWire: request.body
+        });
+        if (result?.state !== "available" || !Array.isArray(result.messages) ||
+            result.messages.length > 25 ||
+            result.messages.some((item) => {
+              try {
+                return typeof item !== "string" || item.length > 32768 ||
+                  !parseCanonicalMessageEnvelopeWireV1(item).recipientDeviceHandles.includes(deviceHandle);
+              } catch { return true; }
+            })) return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
+        return json(200, {state: "available", messages: result.messages});
+      } catch {
+        return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
       }
     }
 

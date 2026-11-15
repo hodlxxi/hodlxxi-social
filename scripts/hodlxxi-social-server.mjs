@@ -13,7 +13,9 @@ import {
   SECURITY_HEADERS,
   SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE,
   SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
-  SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+  SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
+  SOCIAL_MESSAGE_TRANSPORT_ROUTE,
+  SOCIAL_MESSAGE_INBOX_ROUTE
 } from "../src/server/social-oauth-bff.mjs";
 import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 import { createUbidFullDirectoryClient } from "../src/server/ubid-full-directory-client.mjs";
@@ -257,7 +259,9 @@ const messagingBodyFraming = (
     [
       SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE,
       SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
-      SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+      SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
+      SOCIAL_MESSAGE_TRANSPORT_ROUTE,
+      SOCIAL_MESSAGE_INBOX_ROUTE
     ].includes(parsedTarget.path) &&
     request.method === "POST";
 
@@ -270,10 +274,11 @@ const messagingBodyFraming = (
     }
 
     const size = Number(lengths[0]);
-    const maximum = parsedTarget.path ===
-      SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
-      ? 16 * 1024
-      : 8192;
+    const maximum = parsedTarget.path === SOCIAL_MESSAGE_INBOX_ROUTE ? 256 : parsedTarget.path === SOCIAL_MESSAGE_TRANSPORT_ROUTE
+      ? 32768
+      : parsedTarget.path === SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+        ? 16 * 1024
+        : 8192;
 
     return (
       Number.isSafeInteger(size) &&
@@ -444,17 +449,20 @@ export function createHttpHandler({
         [
           SOCIAL_MESSAGING_DEVICE_BINDINGS_ROUTE,
           SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
-          SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+          SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
+          SOCIAL_MESSAGE_TRANSPORT_ROUTE,
+          SOCIAL_MESSAGE_INBOX_ROUTE
         ].includes(parsedTarget.path) &&
         incoming.method === "POST"
       ) {
         body =
           await readMessagingBody(
             incoming,
-            parsedTarget.path ===
-              SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
-              ? 16 * 1024
-              : 8192
+            parsedTarget.path === SOCIAL_MESSAGE_INBOX_ROUTE ? 256 : parsedTarget.path === SOCIAL_MESSAGE_TRANSPORT_ROUTE
+              ? 32768
+              : parsedTarget.path === SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
+                ? 16 * 1024
+                : 8192
           );
       }
 

@@ -612,7 +612,7 @@ test("all public failures use one non-sensitive error contract", () => {
   }
 });
 
-test("V1.28F.1 remains absent from server, BFF, config, and browser composition", async () => {
+test("V1.28F.1 is parsed at the authenticated BFF but not activated in runtime or browser", async () => {
   const [server, bff, config, authEntry, authProduct] = await Promise.all([
     readFile(new URL("../scripts/hodlxxi-social-server.mjs", import.meta.url), "utf8"),
     readFile(new URL("../src/server/social-oauth-bff.mjs", import.meta.url), "utf8"),
@@ -620,8 +620,12 @@ test("V1.28F.1 remains absent from server, BFF, config, and browser composition"
     readFile(new URL("../web/auth-entry.mjs", import.meta.url), "utf8"),
     readFile(new URL("../web/auth-product.mjs", import.meta.url), "utf8")
   ]);
-  assert.doesNotMatch(server, /message-envelope-v128f1/);
-  assert.doesNotMatch(bff, /message-envelope-v128f1|\/auth\/(?:message|messages|inbox|ciphertext)(?:[/?"']|$)/);
+  // The feature now has strict HTTP/BFF ingress, but still no trusted
+  // transport composition, browser send UI or live persistence activation.
+  assert.match(server, /SOCIAL_MESSAGE_TRANSPORT_ROUTE/);
+  assert.match(bff, /parseCanonicalMessageEnvelopeWireV1/);
+  assert.match(bff, /SOCIAL_MESSAGE_TRANSPORT_ROUTE/);
+  assert.doesNotMatch(server, /createCiphertextMailboxV1|message-ciphertext-mailbox-v1/);
   assert.doesNotMatch(
     config,
     /SOCIAL_(?:MESSAGE_STORAGE|MESSAGES|INBOX|POSTGRES|DATABASE)|DATABASE_URL|POSTGRESQL|\bPG(?:HOST|PORT|DATABASE|USER|PASSWORD)\b/
