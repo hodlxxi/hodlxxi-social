@@ -5,13 +5,15 @@ import { createBoundedStore } from "../src/server/social-oauth-memory.mjs";
 import { SESSION_COOKIE_NAME } from "../src/server/social-oauth-cookie.mjs";
 import {
   createSocialOAuthBff,
-  SOCIAL_MESSAGE_TRANSPORT_ROUTE
+  SOCIAL_MESSAGE_TRANSPORT_ROUTE,
+  SOCIAL_MESSAGE_INBOX_ROUTE
 } from "../src/server/social-oauth-bff.mjs";
 
 const fixture = JSON.parse(readFileSync(
   new URL("./fixtures/social_messaging_phase3_routing_v1.json", import.meta.url),
   "utf8"
 ));
+const deviceProofWire = JSON.parse(readFileSync(new URL("./fixtures/social_messaging_device_proof_profile_v1.json", import.meta.url), "utf8")).proofVector.proofWire;
 const wire = fixture.envelopeWire;
 const envelope = JSON.parse(wire);
 const deviceHandle = envelope.recipientDeviceHandles[0];
@@ -52,12 +54,13 @@ const make = ({level = "full", transport, authorityError = false} = {}) => {
 const post = (headers = {}, body = wire) => ({
   method: "POST", url: SOCIAL_MESSAGE_TRANSPORT_ROUTE,
   headers: {cookie, origin, "content-type": "application/json",
-    "x-hodlxxi-recipient-capability": capability, ...headers},
+    "x-hodlxxi-recipient-capability": capability, "x-hodlxxi-message-device-proof": deviceProofWire, ...headers},
   body
 });
 const get = (headers = {}) => ({
-  method: "GET", url: SOCIAL_MESSAGE_TRANSPORT_ROUTE,
-  headers: {cookie, "x-hodlxxi-message-device-handle": deviceHandle, ...headers}
+  method: "POST", url: SOCIAL_MESSAGE_INBOX_ROUTE,
+  headers: {cookie, origin, "content-type": "application/json", "x-hodlxxi-message-device-proof": deviceProofWire, ...headers},
+  body: JSON.stringify({deviceHandle, schema: "hodlxxi.social_messaging_recipient_self_request.v1", version: 1})
 });
 
 test("authenticated Full sends only exact canonical encrypted wire to backend", async () => {
@@ -69,7 +72,8 @@ test("authenticated Full sends only exact canonical encrypted wire to backend", 
     viewerAccessToken: "human-private-token",
     expectedSubject: subject,
     recipientCapability: capability,
-    envelopeWire: wire
+    envelopeWire: wire,
+    deviceProofWire
   }]]);
   assert.equal(result.headers["Cache-Control"], "no-store");
   assert.doesNotMatch(result.body, /human-private-token|rc_b/);
@@ -83,7 +87,9 @@ test("inbox delegates exact device authorization and returns only ciphertext", a
   assert.deepEqual(calls, [["inbox", {
     viewerAccessToken: "human-private-token",
     expectedSubject: subject,
-    deviceHandle
+    deviceHandle,
+    deviceProofWire,
+    requestWire: get().body
   }]]);
   assert.doesNotMatch(result.body, /human-private-token/);
 });
@@ -102,7 +108,7 @@ test("no backend, Limited, authority failure, or anonymous session never reaches
   }
   const {bff} = make();
   assert.equal((await bff({...post(), headers: {origin}})).status, 401);
-  assert.equal((await bff({...get(), headers: {}})).status, 401);
+  assert.equal((await bff({...get(), headers: {origin}})).status, 401);
 });
 
 test("cross-origin post, malformed wire, wrong capability and malformed device all deny", async () => {
@@ -112,7 +118,7 @@ test("cross-origin post, malformed wire, wrong capability and malformed device a
     post({}, "{}"),
     post({"x-hodlxxi-recipient-capability": "bad"}),
     post({"content-type": "text/plain"}),
-    get({"x-hodlxxi-message-device-handle": "not-a-device"})
+    {...get(), body: "{}"}
   ]) {
     const response = await bff(request);
     assert.ok([400, 403].includes(response.status));
@@ -134,5 +140,20 @@ test("malformed or cross-device backend output cannot be reported as success", a
     async listForViewer() { return {state: "available", messages: [wire]}; }
   }});
   const differentDevice = "d_" + "z".repeat(22);
-  assert.equal((await other(get({"x-hodlxxi-message-device-handle": differentDevice}))).status, 503);
+  assert.equal((await other({...get(), body: JSON.stringify({deviceHandle: differentDevice, schema: "hodlxxi.social_messaging_recipient_self_request.v1", version: 1})})).status, 503);
+});
+
+test("a session plus device handle cannot read an inbox; both operations carry exact proof bytes", async () => {
+  const {bff, calls} = make();
+  assert.equal((await bff({method: "GET", url: SOCIAL_MESSAGE_TRANSPORT_ROUTE,
+    headers: {cookie, "x-hodlxxi-message-device-handle": deviceHandle}})).status, 405);
+  for (const request of [post(), get()]) {
+    for (const proof of [undefined, "{}", deviceProofWire + "\n"]) {
+      const response = await bff({...request, headers: {...request.headers,
+        "x-hodlxxi-message-device-proof": proof}});
+      assert.equal(response.status, 403);
+    }
+  }
+  assert.equal(calls.length, 0);
+  assert.equal((await bff(get({origin: "https://foreign.example"}))).status, 403);
 });

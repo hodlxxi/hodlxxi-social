@@ -10,20 +10,22 @@ const fixture = JSON.parse(readFileSync(
   new URL("./fixtures/social_messaging_phase3_routing_v1.json", import.meta.url),
   "utf8"
 ));
+const deviceProofWire = JSON.parse(readFileSync(new URL("./fixtures/social_messaging_device_proof_profile_v1.json", import.meta.url), "utf8")).proofVector.proofWire;
 const wire = fixture.envelopeWire;
 const parsed = JSON.parse(wire);
 const deviceHandle = parsed.recipientDeviceHandles[0];
 const ctx = {
   expectedSubject: "a".repeat(64),
-  viewerAccessToken: "server-only-OAuth-bearer"
+  viewerAccessToken: "server-only-OAuth-bearer",
+  deviceProofWire
 };
 const submit = {
   ...ctx, recipientCapability: "rc_" + "c".repeat(43), envelopeWire: wire
 };
-const inbox = {...ctx, deviceHandle};
-const make = (directory, {send = true, read = true} = {}) =>
+const inbox = {...ctx, deviceHandle, requestWire: JSON.stringify({deviceHandle, schema: "hodlxxi.social_messaging_recipient_self_request.v1", version: 1})};
+const make = (directory, {send = true, read = true, maximumRecords} = {}) =>
   createCiphertextMailboxV1({
-    directory, now: () => 1234,
+    directory, now: () => 1234, ...(maximumRecords === undefined ? {} : {maximumRecords}),
     authorizeSubmission: async ({envelope}) =>
       send ? {
         allowed: true, recipientPackageSnapshotId: envelope.recipientPackageSnapshotId,
@@ -100,5 +102,38 @@ test("malformed plaintext or missing backend authorization never writes", async 
       await assert.rejects(store.submitForViewer({...submit, envelopeWire: text}), /transport unavailable/);
     }
     assert.deepEqual((await readdir(directory).catch(() => [])).filter(x => x.endsWith(".msg")), []);
+  });
+});
+
+test("bare device handles and malformed device proofs cannot reach an authorizer", async () => {
+  await temp(async directory => {
+    let calls = 0;
+    const store = createCiphertextMailboxV1({directory,
+      authorizeSubmission: async () => { calls += 1; throw Error(); },
+      authorizeInbox: async () => { calls += 1; throw Error(); }});
+    for (const proof of [undefined, "{}", deviceProofWire + "\n"]) {
+      await assert.rejects(store.submitForViewer({...submit, deviceProofWire: proof}));
+      await assert.rejects(store.listForViewer({...inbox, deviceProofWire: proof}));
+    }
+    assert.equal(calls, 0);
+  });
+});
+
+test("concurrent store instances enforce a fixed quota and exact retries after restart", async () => {
+  await temp(async directory => {
+    const stores = Array.from({length: 8}, () => make(directory, {maximumRecords: 2}));
+    const results = await Promise.all(stores.map(store => store.submitForViewer(submit)));
+    assert.ok(results.every(result => result.messageId === parsed.messageId));
+    const message = structuredClone(parsed);
+    message.messageId = "m_" + "A".repeat(43);
+    const second = {...submit, envelopeWire: JSON.stringify(message)};
+    await stores[0].submitForViewer(second);
+    const third = structuredClone(message);
+    third.messageId = "m_" + "B".repeat(42) + "A";
+    await assert.rejects(stores[1].submitForViewer({...submit, envelopeWire: JSON.stringify(third)}));
+    assert.equal((await readdir(directory)).filter(name => name.endsWith(".msg")).length, 2);
+    const restarted = make(directory, {maximumRecords: 2});
+    assert.deepEqual(await restarted.submitForViewer(submit), results[0]);
+    assert.equal((await restarted.listForViewer(inbox)).messages.length, 2);
   });
 });
