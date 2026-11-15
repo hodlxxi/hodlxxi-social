@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { parseCanonicalMessageEnvelopeWireV1 } from "./message-envelope-v128f1.mjs";
 import { createPkceChallenge, createPkceVerifier, base64url } from "./hodlxxi-oauth-client.mjs";
 import { TRANSACTION_COOKIE_NAME, SESSION_COOKIE_NAME, parseCookieHeader, serializeHostCookie, expireTransactionCookie, expireSessionCookie } from "./social-oauth-cookie.mjs";
 import { canonicalWssRelayUrl } from "./social-oauth-config.mjs";
@@ -44,6 +45,9 @@ export const SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE =
 
 export const SOCIAL_MESSAGING_RECIPIENT_PACKAGE_ROUTE =
   "/auth/messaging-recipient-package";
+export const SOCIAL_MESSAGE_TRANSPORT_ROUTE = "/auth/messages";
+const MESSAGE_DEVICE_HANDLE = /^d_[A-Za-z0-9_-]{22}$/;
+const MESSAGE_TRANSPORT_UNAVAILABLE = Object.freeze({state: "unavailable"});
 
 const MESSAGING_DEVICE_UNAVAILABLE =
   Object.freeze({ state: "unavailable" });
@@ -471,6 +475,7 @@ export function createSocialOAuthBff({
   messagingDeviceClient,
   messagingDeviceAuthorizationClient,
   messagingRecipientClient,
+  messagingTransportClient,
   random = randomBytes,
   now = Date.now
 }) {
@@ -497,6 +502,9 @@ export function createSocialOAuthBff({
           messagingRecipientClient,
           "resolveForViewer"
         );
+
+  const messageSubmit = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient, "submitForViewer");
+  const messageInbox = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient, "listForViewer");
 
   const messagingDeviceRead =
     messagingDeviceClient === undefined
@@ -547,6 +555,7 @@ export function createSocialOAuthBff({
         undefined &&
       !messagingRecipientResolve
     ) ||
+    (messagingTransportClient !== undefined && (!messageSubmit || !messageInbox)) ||
     (
       messagingDeviceClient !==
         undefined &&
