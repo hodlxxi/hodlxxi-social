@@ -1257,6 +1257,91 @@ export function createSocialOAuthBff({
       }
     }
 
+
+    // No built-in delivery authority: the injected transport must independently
+    // verify device ownership, recipient capability, package binding and Full.
+    if (target.path === SOCIAL_MESSAGE_TRANSPORT_ROUTE) {
+      if (!["GET", "POST"].includes(method) || target.query.length !== 0) {
+        return json(["GET", "POST"].includes(method) ? 400 : 405, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      if (method === "POST" && request.headers?.origin !== config.publicOrigin) {
+        return json(403, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      const context = await authenticatedSessionContext(cookieHeader);
+      if (!context) return json(401, MESSAGE_TRANSPORT_UNAVAILABLE);
+      const viewerAccessToken = context.session.viewerAccessToken;
+      if (typeof viewerAccessToken !== "string" ||
+          viewerAccessToken.length < 1 || viewerAccessToken.length > 8192 ||
+          /[\u0000-\u0020\u007f]/.test(viewerAccessToken)) {
+        return json(403, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      let projection = failClosedAuthority(context.session.subject);
+      if (authorityReader) {
+        try {
+          projection = normalizeAuthorityProjection(
+            context.session.subject,
+            await authorityReader(context.session.subject)
+          );
+        } catch { projection = failClosedAuthority(context.session.subject); }
+      }
+      if (projection.valid !== true || projection.status !== "full") {
+        return json(403, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      if (!messageSubmit || !messageInbox) {
+        return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+      try {
+        if (method === "POST") {
+          const contentType = request.headers?.["content-type"];
+          if (typeof contentType !== "string" ||
+              !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(contentType) ||
+              typeof request.body !== "string" ||
+              Buffer.byteLength(request.body, "utf8") < 1 ||
+              Buffer.byteLength(request.body, "utf8") > 32768) {
+            return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
+          }
+          let envelope;
+          try { envelope = parseCanonicalMessageEnvelopeWireV1(request.body); }
+          catch { return json(400, MESSAGE_TRANSPORT_UNAVAILABLE); }
+          const capability = request.headers?.["x-hodlxxi-recipient-capability"];
+          if (typeof capability !== "string" || !RECIPIENT_CAPABILITY.test(capability)) {
+            return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
+          }
+          const accepted = await messageSubmit.call(messagingTransportClient, {
+            viewerAccessToken,
+            expectedSubject: context.session.subject,
+            recipientCapability: capability,
+            envelopeWire: request.body
+          });
+          if (accepted?.state !== "accepted" ||
+              accepted?.messageId !== envelope.messageId) {
+            return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
+          }
+          return json(200, {state: "accepted", messageId: envelope.messageId});
+        }
+        const deviceHandle = request.headers?.["x-hodlxxi-message-device-handle"];
+        if (typeof deviceHandle !== "string" || !MESSAGE_DEVICE_HANDLE.test(deviceHandle)) {
+          return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
+        }
+        const result = await messageInbox.call(messagingTransportClient, {
+          viewerAccessToken,
+          expectedSubject: context.session.subject,
+          deviceHandle
+        });
+        if (result?.state !== "available" || !Array.isArray(result.messages) ||
+            result.messages.length > 25 ||
+            result.messages.some((item) => {
+              try {
+                return typeof item !== "string" || item.length > 32768 ||
+                  !parseCanonicalMessageEnvelopeWireV1(item).recipientDeviceHandles.includes(deviceHandle);
+              } catch { return true; }
+            })) return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
+        return json(200, {state: "available", messages: result.messages});
+      } catch {
+        return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
+      }
+    }
+
     if (target.path === "/auth/logout") {
       if (method !== "POST") return error(405);
       if (request.headers?.origin !== config.publicOrigin || target.query.length !== 0) return error(403);
