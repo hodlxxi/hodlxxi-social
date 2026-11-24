@@ -50,6 +50,7 @@ const base=async()=>({status:200,headers:{'Content-Type':'application/json'},bod
 const bff=createRegisteredDeviceSessionBffV1({config,base,transport:{registeredSessionClient:client,
  registeredStatement:input=>produceRegisteredDeviceSessionStatementV1(input,{kid:'chromium-test',privateKey:rsa.privateKey})}});
 const browser=await chromium.launch({headless:true,args:['--disable-dev-shm-usage']});
+const failureFrames=[];
 try{
  const context=await browser.newContext();
  await context.route('**/*',async route=>{
@@ -65,7 +66,16 @@ try{
   assert.equal(url.pathname,'/web/'+basename(url.pathname));
   return route.fulfill({status:200,contentType:'text/javascript',body:await readFile(resolve(root,url.pathname.slice(1)),'utf8')});
  });
- const page=await context.newPage();await page.goto(origin);
+ const page=await context.newPage();
+ const cdp=await context.newCDPSession(page),scripts=new Map();
+ cdp.on('Debugger.scriptParsed',value=>scripts.set(value.scriptId,value.url));
+ cdp.on('Debugger.paused',async value=>{
+  const frames=value.callFrames.map(f=>({name:f.functionName,url:scripts.get(f.location.scriptId),line:f.location.lineNumber+1})).filter(f=>f.url?.startsWith(origin+'/web/'));
+  if(frames.length)failureFrames.push(frames);
+  await cdp.send('Debugger.resume');
+ });
+ await cdp.send('Debugger.enable');await cdp.send('Debugger.setPauseOnExceptions',{state:'all'});
+ await page.goto(origin);
  registration=await page.evaluate(async content=>{
   const {createMessagingDeviceStore}=await import('/web/messaging-device-v128c1.mjs');
   const {createMessagingDeviceEd25519KeyV2}=await import('/web/messaging-device-ed25519-key-v2.mjs');
@@ -107,4 +117,5 @@ try{
  console.log('CHROMIUM_RETAINED_KEY_RESUME=PASS');console.log('CHROMIUM_RELOAD_WITHOUT_REPAIRING=PASS');
  console.log('CHROMIUM_HTTPONLY_LOGOUT_AND_EXPLICIT_RELOGIN=PASS');console.log('CHROMIUM_ED25519_X25519_NONEXTRACTABLE=PASS');
  console.log('AUTHORITY_FIXTURE=SYNTHETIC_NOT_LIVE_ACCEPTANCE');
-}finally{await browser.close();}
+}catch(error){console.error('BROWSER_THROW_LOCATIONS',JSON.stringify(failureFrames.slice(-12)));throw error;}
+finally{await browser.close();}
