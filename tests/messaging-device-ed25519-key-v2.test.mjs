@@ -1412,11 +1412,12 @@ test("registered-device session proof signs with the exact original local key wi
     "./fixtures/social_registered_device_session_v1.json", import.meta.url
   )));
   const template = JSON.parse(challengeWire);
-  const at = template.issuedAt + 1000;
+  const at = fixturePre.issuedAt + 1000;
   const { boundary, idb } = setup({ now: () => at, messageAudience: template.audience });
   const prepared = await boundary.prepare(fixtureOuter.content);
   const pins = { issuer: template.issuer, clientId: template.clientId, contextCommitment: template.contextCommitment };
-  const challenge = { ...template, subject, deviceId: prepared.deviceId, bindingId: prepared.x25519BindingId,
+  const challenge = { ...template, issuedAt: at, expiresAt: at + 60000,
+    subject, deviceId: prepared.deviceId, bindingId: prepared.x25519BindingId,
     bindingVersion: prepared.x25519BindingVersion, x25519PublicKeyCommitment: prepared.x25519PublicKeyCommitment,
     ed25519PublicKey: prepared.ed25519PublicKey };
   const wire = value => JSON.stringify(value, Object.keys(value).sort());
