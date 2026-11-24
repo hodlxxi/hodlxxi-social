@@ -115,6 +115,8 @@ export function createCiphertextMailboxV1({
       const envelope = parseCanonicalMessageEnvelopeWireV1(input.envelopeWire);
       parseDeviceProofV1(input.deviceProofWire);
       const authorized = await authorizeSubmission({
+        ...(input.issuanceId ? {issuanceId:input.issuanceId} : {}),
+        ...(input.recipientAlias ? {recipientAlias:input.recipientAlias} : {}),
         viewerAccessToken: input.viewerAccessToken,
         expectedSubject: input.expectedSubject,
         recipientCapability: input.recipientCapability,
@@ -169,6 +171,8 @@ export function createCiphertextMailboxV1({
         schema: "hodlxxi.social_messaging_recipient_self_request.v1", version: 1});
       if (input.requestWire !== requestWire) deny();
       const authorized = await authorizeInbox({
+        ...(input.issuanceId ? {issuanceId:input.issuanceId} : {}),
+        ...(input.recipientAlias ? {recipientAlias:input.recipientAlias} : {}),
         viewerAccessToken: input.viewerAccessToken,
         expectedSubject: input.expectedSubject,
         deviceHandle: input.deviceHandle,

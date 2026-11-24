@@ -1399,7 +1399,7 @@ test("source has no promotion, accepted state, private export, transport or old 
     /hodlxxi-social-messaging-device-ed25519-key-v2|STORE_KEY|localStorage|sessionStorage|fetch\(|XMLHttpRequest|WebSocket|pkcs8|jwk/);
   assert.doesNotMatch(source, /\bpromote\b|state:\s*["']ready|state:\s*["']accepted/);
   assert.deepEqual(Object.keys(setup().boundary).sort(), [
-    "claimSigningAttempt", "createEnrollmentProofV2", "persistSignedAttempt",
+    "claimSigningAttempt", "createDeviceRequestProofV1", "createEnrollmentProofV2", "persistSignedAttempt",
     "prepare", "readSignedAttempt"
   ]);
 });

@@ -13,7 +13,13 @@ export function createSocialMobileComposition({ enabled = false, mobileClient, i
   if (nativeManager !== undefined && ["capabilityRead", "read", "logout"].some((name) => typeof nativeManager[name] !== "function")) throw new TypeError("invalid native session manager");
   const native = (id) => dependencies.sessions.getForLogout(id)?.kind === "ubid-mobile-v2";
   const read = (id) => nativeManager && native(id) ? nativeManager.capabilityRead(id) : manager.read(id);
-  const capabilityRead = (id) => nativeManager && native(id) ? nativeManager.capabilityRead(id) : manager.capabilityRead(id);
+  const capabilityRead = async (id) => {
+    if (!nativeManager || !native(id)) return manager.capabilityRead(id);
+    const record = await nativeManager.capabilityRead(id);
+    if (!record) return null;
+    const { subject, viewerAccessToken, issuedAt, expiresAt } = record;
+    return Object.freeze({ subject, viewerAccessToken, issuedAt, expiresAt });
+  };
   const old = createSocialOAuthBff({ ...dependencies, sessionReader: read, oauthGuard: mobile.oauthGuard });
   return Object.freeze({ bff: async (request) => await mobile.handle(request) ?? await old(request),
     mobilePostRoutes: MOBILE_POST_ROUTES, manager, capabilitySessionReader: capabilityRead });

@@ -354,6 +354,7 @@ test("production browser read boundary stays read-only and cannot select either 
     "/auth/authority",
     "/auth/full-directory",
     "/auth/logout",
+    "/auth/messages/config",
     "/auth/session",
     "/auth/social-publish-config",
     "/auth/social-read-config"

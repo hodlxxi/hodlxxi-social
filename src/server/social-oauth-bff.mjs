@@ -48,6 +48,7 @@ export const SOCIAL_MESSAGING_RECIPIENT_PACKAGE_ROUTE =
   "/auth/messaging-recipient-package";
 export const SOCIAL_MESSAGE_TRANSPORT_ROUTE = "/auth/messages";
 export const SOCIAL_MESSAGE_INBOX_ROUTE = "/auth/messages/inbox";
+export const SOCIAL_MESSAGE_CHALLENGE_ROUTE = "/auth/messages/challenge";
 const MESSAGE_DEVICE_HANDLE = /^d_[A-Za-z0-9_-]{22}$/;
 const MESSAGE_TRANSPORT_UNAVAILABLE = Object.freeze({state: "unavailable"});
 
@@ -497,14 +498,17 @@ export function createSocialOAuthBff({
           "resolve"
         );
 
-  const messagingRecipientResolve =
+  const deliveryRecipientResolve = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient,"resolveRecipientForViewer");
+  const messagingRecipientResolve = deliveryRecipientResolve ?? (
     messagingRecipientClient === undefined
       ? undefined
       : ownDataMethod(
           messagingRecipientClient,
           "resolveForViewer"
-        );
+        ));
 
+  const messageDevice = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient,"currentDeviceForViewer");
+  const messageChallenge = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient,"challengeForViewer");
   const messageSubmit = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient, "submitForViewer");
   const messageInbox = messagingTransportClient === undefined ? undefined : ownDataMethod(messagingTransportClient, "listForViewer");
 
@@ -628,6 +632,10 @@ export function createSocialOAuthBff({
     const target = parseRawRequestTarget(request.url, config.publicOrigin);
     if (!target.valid) return error();
     const cookieHeader = request.headers?.cookie;
+    if (target.path === "/auth/messages/config") {
+      if(method!=="GET" || target.query.length!==0) return error(405);
+      return json(200,{enabled:Boolean(messageChallenge)});
+    }
     if (target.path === "/auth/entry-config") {
       if (method !== "GET" || target.query.length !== 0) return error(method === "GET" ? 400 : 405);
       return json(200, { mobileContextRequired: Boolean(oauthGuard) });
@@ -971,8 +979,9 @@ export function createSocialOAuthBff({
         const packageResult =
           normalizeMessagingRecipientPackage(
             await messagingRecipientResolve.call(
-              messagingRecipientClient,
+              deliveryRecipientResolve ? messagingTransportClient : messagingRecipientClient,
               {
+                ...(deliveryRecipientResolve ? {issuanceId:context.session.issuanceId,expectedSubject:context.session.subject} : {}),
                 viewerAccessToken,
                 recipientAlias:
                   resolved.alias
@@ -1262,10 +1271,12 @@ export function createSocialOAuthBff({
 
     // No built-in delivery authority: the injected transport must independently
     // verify device ownership, recipient capability, package binding and Full.
-    if ([SOCIAL_MESSAGE_TRANSPORT_ROUTE, SOCIAL_MESSAGE_INBOX_ROUTE].includes(target.path)) {
+    if ([SOCIAL_MESSAGE_TRANSPORT_ROUTE, SOCIAL_MESSAGE_INBOX_ROUTE, SOCIAL_MESSAGE_CHALLENGE_ROUTE, "/auth/messages/device"].includes(target.path)) {
+      const deviceRequest = target.path === "/auth/messages/device";
       const inboxRequest = target.path === SOCIAL_MESSAGE_INBOX_ROUTE;
-      if (method !== "POST" || target.query.length !== 0) {
-        return json(method === "POST" ? 400 : 405, MESSAGE_TRANSPORT_UNAVAILABLE);
+      const challengeRequest = target.path === SOCIAL_MESSAGE_CHALLENGE_ROUTE;
+      if (method !== (deviceRequest ? "GET" : "POST") || target.query.length !== 0) {
+        return json(405, MESSAGE_TRANSPORT_UNAVAILABLE);
       }
       if (method === "POST" && request.headers?.origin !== config.publicOrigin) {
         return json(403, MESSAGE_TRANSPORT_UNAVAILABLE);
@@ -1294,13 +1305,36 @@ export function createSocialOAuthBff({
         return json(503, MESSAGE_TRANSPORT_UNAVAILABLE);
       }
       try {
+        if(deviceRequest) {
+          if(!messageDevice) return json(503,MESSAGE_TRANSPORT_UNAVAILABLE);
+          return json(200,await messageDevice.call(messagingTransportClient,{issuanceId:context.session.issuanceId,viewerAccessToken,expectedSubject:context.session.subject}));
+        }
         const contentType = request.headers?.["content-type"];
         if (typeof contentType !== "string" ||
             !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(contentType) ||
             typeof request.body !== "string" ||
             Buffer.byteLength(request.body, "utf8") < 1 ||
-            Buffer.byteLength(request.body, "utf8") > (inboxRequest ? 256 : 32768)) {
+            Buffer.byteLength(request.body, "utf8") > (challengeRequest ? 65536 : inboxRequest ? 256 : 32768)) {
           return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
+        }
+        const deliveryIdentity = messageChallenge ? {issuanceId:context.session.issuanceId} : {};
+        const aliasFor = async capability => {
+          if (!recipientCapabilityResolve || typeof capability !== "string" || !RECIPIENT_CAPABILITY.test(capability)) throw new Error("unavailable");
+          const resolved=normalizeResolvedRecipientCapability(await recipientCapabilityResolve.call(recipientCapabilityIssuer,{sessionId:context.sessionId,capability}));
+          if(!resolved) throw new Error("unavailable");
+          return resolved.alias;
+        };
+        if(challengeRequest) {
+          if(!messageChallenge) return json(503,MESSAGE_TRANSPORT_UNAVAILABLE);
+          const value=JSON.parse(request.body);
+          if(!value || Object.keys(value).sort().join(",")!=="bodyWire,operation,recipientCapability" ||
+              typeof value.bodyWire!=="string" || value.bodyWire.length>32768 ||
+              !["ciphertext-submit","recipient-self-read"].includes(value.operation) ||
+              value.operation==="recipient-self-read" && value.recipientCapability!==null) return json(400,MESSAGE_TRANSPORT_UNAVAILABLE);
+          const recipientAlias=value.operation==="ciphertext-submit" ? await aliasFor(value.recipientCapability) : null;
+          const result=await messageChallenge.call(messagingTransportClient,{...deliveryIdentity,
+            viewerAccessToken,expectedSubject:context.session.subject,operation:value.operation,bodyWire:value.bodyWire,recipientAlias});
+          return json(200,result);
         }
         // These are untrusted proof bytes. Only UBID may verify the stored
         // challenge, current exact key association and atomic consumption.
@@ -1315,7 +1349,9 @@ export function createSocialOAuthBff({
           if (typeof capability !== "string" || !RECIPIENT_CAPABILITY.test(capability)) {
             return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
           }
+          const recipientAlias=messageChallenge ? await aliasFor(capability) : undefined;
           const accepted = await messageSubmit.call(messagingTransportClient, {
+            ...deliveryIdentity, ...(recipientAlias ? {recipientAlias} : {}),
             viewerAccessToken,
             expectedSubject: context.session.subject,
             recipientCapability: capability,
@@ -1336,6 +1372,7 @@ export function createSocialOAuthBff({
           return json(400, MESSAGE_TRANSPORT_UNAVAILABLE);
         }
         const result = await messageInbox.call(messagingTransportClient, {
+          ...deliveryIdentity,
           viewerAccessToken,
           expectedSubject: context.session.subject,
           deviceHandle,

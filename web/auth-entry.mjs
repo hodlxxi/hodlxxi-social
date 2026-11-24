@@ -14,6 +14,8 @@ import {
   createBrowserPrivateLabelStore
 } from "./private-label-store.mjs?v=1.28.1";
 
+import {createMessagesControllerV1,mountMessagesUIV1} from "./messages-controller-v1.mjs";
+
 import { renderNavigation } from "./shell.mjs?v=1.28.1";
 import { createSocialEntryActions } from "./social-entry-actions-v1.mjs?v=1.28.1";
 import { createMessagingDevice } from "./messaging-device-v128c1.mjs?v=1.28c.1";
@@ -694,11 +696,14 @@ export function bindAuthenticatedEntry(
   let fullDirectoryRequest = null;
   let currentMessagingSelectedAlias = null;
   let currentMessagingFilter = "";
+  let messagesController = null;
+  let deliveryEnabled = false;
   let messagingDevice = null;
   let currentMessagingAuthorizationConfig = null;
   let messagingDeviceView = Object.freeze({ state: "unavailable", busy: false });
 
   const clearMessagingDevice = () => {
+    messagesController?.cancel(); messagesController=null;
     messagingDevice?.cancel();
     messagingDevice = null;
     messagingDeviceView = Object.freeze({ state: "unavailable", busy: false });
@@ -870,6 +875,12 @@ export function bindAuthenticatedEntry(
       view.mobileNavigation;
 
     appPage.innerHTML = view.page;
+    if(deliveryEnabled && currentAuthority?.status==="full" && browser?.location?.hash==="#/messages") {
+      messagesController ??= createMessagesControllerV1({fetchImpl,getContext:()=>({subject:currentSession?.subject,
+        access:currentAuthority?.valid===true ? currentAuthority.status : null})});
+      const container=appPage.querySelector?.("[data-secure-v128-thread-panel]");
+      if(container) mountMessagesUIV1({container,controller:messagesController,selectedAlias:currentMessagingSelectedAlias});
+    }
     contextProfile.innerHTML = view.profile;
     contextNetwork.innerHTML = view.networkContext;
 
@@ -1011,6 +1022,11 @@ export function bindAuthenticatedEntry(
     });
     messagingDevice = device;
     await device.reconcile();
+    try {
+      const response=await fetchImpl("/auth/messages/config",{credentials:"same-origin",cache:"no-store",redirect:"error"});
+      deliveryEnabled=response.status===200 && (await response.json()).enabled===true;
+      if(deliveryEnabled && currentSession===session) paintProduct();
+    } catch { deliveryEnabled=false; }
   };
 
   const ready = readSocialSession(fetchImpl)

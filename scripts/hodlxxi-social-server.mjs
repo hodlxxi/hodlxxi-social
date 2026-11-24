@@ -2,6 +2,9 @@
 import { MOBILE_POST_ROUTES } from "../src/server/social-mobile-bff-v1.mjs";
 import { ENROLLMENT_BROWSER_POST_ROUTES } from "../src/server/social-enrollment-v2-routes.mjs";
 import http from "node:http";
+import {createMessageDeliveryRuntimeV1} from "../src/server/social-message-delivery-v1.mjs";
+import {enrollmentRuntimeFactory,readEnrollmentRuntimeManifest} from "../src/server/social-enrollment-v2-runtime.mjs";
+import {createNativeV2SessionStore} from "../src/server/social-native-session-v2.mjs";
 import { pathToFileURL } from "node:url";
 import { configFromEnvironment } from "../src/server/social-oauth-config.mjs";
 import { createBoundedStore, createSessionStore } from "../src/server/social-oauth-memory.mjs";
@@ -15,7 +18,8 @@ import {
   SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
   SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
   SOCIAL_MESSAGE_TRANSPORT_ROUTE,
-  SOCIAL_MESSAGE_INBOX_ROUTE
+  SOCIAL_MESSAGE_INBOX_ROUTE,
+  SOCIAL_MESSAGE_CHALLENGE_ROUTE
 } from "../src/server/social-oauth-bff.mjs";
 import { expireTransactionCookie } from "../src/server/social-oauth-cookie.mjs";
 import { createUbidFullDirectoryClient } from "../src/server/ubid-full-directory-client.mjs";
@@ -261,7 +265,8 @@ const messagingBodyFraming = (
       SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
       SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
       SOCIAL_MESSAGE_TRANSPORT_ROUTE,
-      SOCIAL_MESSAGE_INBOX_ROUTE
+      SOCIAL_MESSAGE_INBOX_ROUTE,
+  SOCIAL_MESSAGE_CHALLENGE_ROUTE
     ].includes(parsedTarget.path) &&
     request.method === "POST";
 
@@ -274,7 +279,7 @@ const messagingBodyFraming = (
     }
 
     const size = Number(lengths[0]);
-    const maximum = parsedTarget.path === SOCIAL_MESSAGE_INBOX_ROUTE ? 256 : parsedTarget.path === SOCIAL_MESSAGE_TRANSPORT_ROUTE
+    const maximum = parsedTarget.path === SOCIAL_MESSAGE_CHALLENGE_ROUTE ? 65536 : parsedTarget.path === SOCIAL_MESSAGE_INBOX_ROUTE ? 256 : parsedTarget.path === SOCIAL_MESSAGE_TRANSPORT_ROUTE
       ? 32768
       : parsedTarget.path === SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
         ? 16 * 1024
@@ -451,14 +456,15 @@ export function createHttpHandler({
           SOCIAL_MESSAGING_DEVICE_AUTHORIZATION_INTENTS_ROUTE,
           SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE,
           SOCIAL_MESSAGE_TRANSPORT_ROUTE,
-          SOCIAL_MESSAGE_INBOX_ROUTE
+          SOCIAL_MESSAGE_INBOX_ROUTE,
+  SOCIAL_MESSAGE_CHALLENGE_ROUTE
         ].includes(parsedTarget.path) &&
         incoming.method === "POST"
       ) {
         body =
           await readMessagingBody(
             incoming,
-            parsedTarget.path === SOCIAL_MESSAGE_INBOX_ROUTE ? 256 : parsedTarget.path === SOCIAL_MESSAGE_TRANSPORT_ROUTE
+            parsedTarget.path === SOCIAL_MESSAGE_CHALLENGE_ROUTE ? 65536 : parsedTarget.path === SOCIAL_MESSAGE_INBOX_ROUTE ? 256 : parsedTarget.path === SOCIAL_MESSAGE_TRANSPORT_ROUTE
               ? 32768
               : parsedTarget.path === SOCIAL_MESSAGING_DEVICE_AUTHORIZATIONS_ROUTE
                 ? 16 * 1024
@@ -500,6 +506,12 @@ export function createHttpHandler({
 export async function runServer({ env = process.env, stdout = console.log, stderr = console.error, createServer = http.createServer, mobileRuntimeFactory = createSocialMobileRuntime, sessionStoreFactory } = {}) {
   let config;
   try { config = configFromEnvironment(env); } catch { stderr("invalid configuration"); return 2; }
+  if(env.HODLXXI_MESSAGE_DELIVERY_CONFIG_PATH!==undefined && mobileRuntimeFactory===createSocialMobileRuntime) {
+    try {
+      mobileRuntimeFactory=enrollmentRuntimeFactory(await readEnrollmentRuntimeManifest(env.SOCIAL_ENROLLMENT_V2_CONFIG_PATH));
+      sessionStoreFactory ??= options=>createNativeV2SessionStore({...options,now:Date.now});
+    } catch { stderr("invalid native messaging configuration"); return 2; }
+  }
   const pendingTransactions = createBoundedStore({ ttlSeconds: config.transactionTtlSeconds, capacity: config.maxPendingTransactions });
   const sessions = (sessionStoreFactory ?? (config.mobile.enabled ? createSessionStore : createBoundedStore))({
     ttlSeconds: config.sessionTtlSeconds, capacity: config.maxSessions
@@ -586,6 +598,10 @@ export async function runServer({ env = process.env, stdout = console.log, stder
     }
   }
 
+  let messagingTransportClient;
+  try { messagingTransportClient = await createMessageDeliveryRuntimeV1(env.HODLXXI_MESSAGE_DELIVERY_CONFIG_PATH,config); }
+  catch { stderr("invalid configuration"); return 2; }
+
   try {
     composition = await mobileRuntimeFactory({
       config,
@@ -597,7 +613,8 @@ export async function runServer({ env = process.env, stdout = console.log, stder
       recipientCapabilityIssuer,
       messagingDeviceClient,
       messagingDeviceAuthorizationClient,
-      messagingRecipientClient
+      messagingRecipientClient,
+      messagingTransportClient
     });
   } catch {
     stderr("invalid configuration");
