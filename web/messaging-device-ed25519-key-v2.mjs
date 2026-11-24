@@ -19,6 +19,12 @@ import {
   preEnrollmentDigestV2
 } from "./mobile-device-authorization-contract-v2.mjs";
 
+import {
+  createRegisteredDeviceSessionProofWireV1,
+  registeredDeviceSessionSigningPreimageV1,
+  requireCurrentRegisteredDeviceSessionChallengeV1
+} from "./registered-device-session-v1.mjs";
+
 export const MESSAGING_DEVICE_ED25519_KEY_V2_RUNTIME_ENABLED = false;
 
 const DATABASE_NAME = MESSAGING_DEVICE_DATABASE_NAME;
@@ -1323,10 +1329,45 @@ export function createMessagingDeviceEd25519KeyV2(input = {}) {
     return canonical({algorithm:"Ed25519",challengeId:challenge.challengeId,profile:PROFILE,publicKey:record.ed25519PublicKey,
       schema:"hodlxxi.social_messaging_device_proof.v1",signature:toHex(signature),version:1});
   };
+  // Source-only login possession proof. The browser's provisional record is
+  // not evidence of server admission. UBID must authenticate committed native
+  // history and current authority before issuing or consuming this challenge.
+  const createRegisteredDeviceSessionProofV1 = async (challengeWire, pins) => {
+    try {
+      const initial = currentContext(getContext);
+      const expected = plainData(pins, ["issuer", "clientId", "contextCommitment"], true);
+      const currentChallenge = () => requireCurrentRegisteredDeviceSessionChallengeV1(challengeWire, {
+        ...expected, audience: messageAudience, now: now()
+      });
+      const challenge = currentChallenge();
+      if (challenge.subject !== initial.subjectHint || challenge.associationVersion !== 1 ||
+          challenge.authorityEpoch !== 1) unavailable();
+      const { pending, record } = await loadBound(initial);
+      check(initial);
+      if (challenge.deviceId !== record.deviceId ||
+          challenge.bindingId !== record.x25519BindingId ||
+          challenge.bindingVersion !== record.x25519BindingVersion ||
+          challenge.x25519PublicKeyCommitment !== record.x25519PublicKeyCommitment ||
+          challenge.ed25519PublicKey !== record.ed25519PublicKey) unavailable();
+      currentChallenge();
+      const signature = await cryptoImpl.subtle.sign(
+        { name: "Ed25519" }, record.privateKey, registeredDeviceSessionSigningPreimageV1(challengeWire)
+      );
+      check(initial);
+      await assertPending(initial, pending);
+      const after = await readStored(initial, record.deviceId);
+      check(initial);
+      if (!after || !sameIdentity(record, after) ||
+          !(signature instanceof ArrayBuffer) || signature.byteLength !== 64) unavailable();
+      currentChallenge();
+      return createRegisteredDeviceSessionProofWireV1(challengeWire, toHex(signature));
+    } catch { unavailable(); }
+  };
   return Object.freeze({
     claimSigningAttempt,
     createEnrollmentProofV2,
     createDeviceRequestProofV1,
+    createRegisteredDeviceSessionProofV1,
     persistSignedAttempt,
     prepare,
     readSignedAttempt
