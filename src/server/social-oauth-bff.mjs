@@ -606,7 +606,15 @@ export function createSocialOAuthBff({
 
     const session =
       sessionId
-        ? await (sessionReader ? sessionReader(sessionId) : Promise.resolve(sessions.get(sessionId)).then((s) => s && (Object.hasOwn(s, "kind") || Object.hasOwn(s, "issuanceId")) ? null : s))
+        ? await (sessionReader ? sessionReader(sessionId) : Promise.resolve(sessions.get(sessionId)).then(async (s) => {
+            if (!s || Object.hasOwn(s, "kind") || Object.hasOwn(s, "issuanceId")) return null;
+            if (typeof oauthClient.revalidate !== "function") return s;
+            try {
+              if (await oauthClient.revalidate({ accessToken: s.viewerAccessToken, subject: s.subject }) !== s.subject ||
+                  sessions.get(sessionId) !== s) return null;
+              return s;
+            } catch { return null; }
+          }))
         : null;
 
     return (

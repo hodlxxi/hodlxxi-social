@@ -493,3 +493,25 @@ test("public failures disclose no secret, token, body, status, header, URL, or c
   assert.equal(rejected.state.cancelCalls, 1);
   for (const marker of markers) assert.equal(String(error).includes(marker), false);
 });
+
+
+test("desktop revalidation introspects the original token without exchanging it", async () => {
+  const subject = "a".repeat(64);
+  let active = true;
+  const calls = [];
+  const client = clientWith(async (url, init) => {
+    calls.push([url, init]);
+    return reply({ active, sub: subject, client_id: config.clientId, scope: config.scope });
+  });
+  assert.equal(await client.revalidate({ accessToken: "original-token", subject }), subject);
+  active = false;
+  await expectOAuthFailure(client.revalidate({ accessToken: "original-token", subject }));
+  active = true;
+  await expectOAuthFailure(client.revalidate({ accessToken: "original-token", subject: "b".repeat(64) }));
+  assert.equal(calls.length, 3);
+  for (const [url, init] of calls) {
+    assert.equal(url, "https://authority.example/oauth/introspect");
+    assert.equal(new URLSearchParams(init.body).get("token"), "original-token");
+    assert.equal(new URLSearchParams(init.body).get("client_id"), config.clientId);
+  }
+});
