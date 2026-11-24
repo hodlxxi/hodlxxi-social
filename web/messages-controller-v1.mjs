@@ -8,7 +8,7 @@ const fail=()=>{throw new Error("encrypted messaging unavailable");};
 const canonical=value=>JSON.stringify(Object.fromEntries(Object.keys(value).sort().map(key=>[key,value[key]])));
 
 export function createMessagesControllerV1({getContext,fetchImpl=globalThis.fetch,indexedDBImpl,
-  cryptoImpl=globalThis.crypto,CryptoKeyImpl=globalThis.CryptoKey}={}) {
+  cryptoImpl=globalThis.crypto,CryptoKeyImpl=globalThis.CryptoKey,sessionRenewal}={}) {
   const revision=[...cryptoImpl.getRandomValues(new Uint8Array(32))].map(b=>b.toString(16).padStart(2,"0")).join("");
   const local=createMessagingDeviceStore(indexedDBImpl);
   const authentication=createMessagingDeviceEd25519KeyV2({indexedDBImpl,cryptoImpl,CryptoKeyImpl,
@@ -17,6 +17,7 @@ export function createMessagesControllerV1({getContext,fetchImpl=globalThis.fetc
   const check=()=>{const c=getContext(); if(stopped || c.access!=="full" || !/^[0-9a-f]{64}$/.test(c.subject??"")) fail(); return c.subject;};
   const call=async (path,{method="GET",body,headers={}}={})=>{
     const subject=check();
+    if(sessionRenewal) {await sessionRenewal.ensure({expectedSubject:subject});if(check()!==subject) fail();}
     const response=await fetchImpl(path,{method,body,headers:{...(body?{"content-type":"application/json"}:{}),...headers},
       credentials:"same-origin",redirect:"error",cache:"no-store"});
     if(check()!==subject || response.status!==200 || !/^application\/json(?:;.*)?$/i.test(response.headers.get("content-type")??"")) fail();

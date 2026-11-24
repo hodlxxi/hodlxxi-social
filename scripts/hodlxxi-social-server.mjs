@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { MOBILE_POST_ROUTES } from "../src/server/social-mobile-bff-v1.mjs";
 import { ENROLLMENT_BROWSER_POST_ROUTES } from "../src/server/social-enrollment-v2-routes.mjs";
+import { REGISTERED_SESSION_POST_ROUTES } from "../src/server/registered-device-session-bff-v1.mjs";
 import http from "node:http";
 import {createMessageDeliveryRuntimeV1} from "../src/server/social-message-delivery-v1.mjs";
 import {enrollmentRuntimeFactory,readEnrollmentRuntimeManifest} from "../src/server/social-enrollment-v2-runtime.mjs";
@@ -358,7 +359,7 @@ export function createHttpHandler({
   bff,
   mobilePostRoutes = []
 }) {
-  if (!Array.isArray(mobilePostRoutes) || mobilePostRoutes.some((p) => !MOBILE_POST_ROUTES.includes(p) && !ENROLLMENT_BROWSER_POST_ROUTES.includes(p))) throw new TypeError("invalid mobile routes");
+  if (!Array.isArray(mobilePostRoutes) || mobilePostRoutes.some((p) => !MOBILE_POST_ROUTES.includes(p) && !ENROLLMENT_BROWSER_POST_ROUTES.includes(p) && !REGISTERED_SESSION_POST_ROUTES.includes(p))) throw new TypeError("invalid mobile routes");
   mobilePostRoutes = Object.freeze([...mobilePostRoutes]);
   return async (incoming, outgoing) => {
     const target =

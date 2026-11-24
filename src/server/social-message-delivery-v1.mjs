@@ -12,14 +12,26 @@ import {createMessagingDeviceVerificationStatementSignerV1, produceMessagingDevi
 import {canonical, exact} from "../../web/social-mobile-protocol-v1.mjs";
 
 const fail=()=>{throw new Error("message delivery unavailable");};
-export function createMessageDeliveryTransportV1({client,signer,directory,socialOrigin,issuerOrigin,clientId,servicePrincipal}) {
+export function createMessageDeliveryTransportV1({client,signer,directory,socialOrigin,issuerOrigin,clientId,servicePrincipal,registeredDeviceSessions=false}) {
   const identity = input => {
+    if (input.registeredSession !== undefined) {
+      if (!registeredDeviceSessions || input.viewerAccessToken !== undefined || input.issuanceId !== undefined ||
+          !/^[0-9a-f]{64}$/.test(input.registeredCredential ?? "") || !/^[0-9a-f]{64}$/.test(input.expectedSubject ?? "")) fail();
+      exact(input.registeredSession, ["sessionId", "contextCommitment"]);
+      if (!Object.values(input.registeredSession).every(v=>typeof v === "string" && /^[0-9a-f]{64}$/.test(v))) fail();
+      return { registeredSession: input.registeredSession };
+    }
     if(!/^[0-9a-f]{64}$/.test(input.issuanceId??"") || !/^[0-9a-f]{64}$/.test(input.expectedSubject??"")) fail();
-    return input.issuanceId;
+    return { issuanceId: input.issuanceId };
+  };
+  const invoke = (command, input, body={}) => {
+    const auth=identity(input), registered=auth.registeredSession!==undefined;
+    const name=registered ? ({challenge:"registered-message-challenge",consume:"registered-message-consume"}[command] ?? "registered-"+command) : command;
+    return client.invoke(name,{...auth,...body},registered?input.registeredCredential:input.viewerAccessToken);
   };
   const inspect = async (input) => {
     const proof=parseDeviceProofV1(input.deviceProofWire);
-    const stored=await client.invoke("inspect",{issuanceId:identity(input),challengeId:proof.challengeId},input.viewerAccessToken);
+    const stored=await invoke("inspect",input,{challengeId:proof.challengeId});
     const context=JSON.parse(stored.contextWire);
     if(context.subject!==input.expectedSubject || context.audience!==socialOrigin) fail();
     return stored;
@@ -34,18 +46,18 @@ export function createMessageDeliveryTransportV1({client,signer,directory,social
       statementLifetimeMs:Math.min(10000,expires-now),expectedAudience:issuerOrigin+"/internal/v1/social/device-admission/consume",
       expectedClientId:clientId,expectedIssuer:socialOrigin,expectedPurpose:VERIFICATION_STATEMENT_PURPOSE,
       expectedServicePrincipal:servicePrincipal},{verificationStatementsEnabled:true});
-    return client.invoke("consume",{issuanceId:identity(input),proofWire:input.deviceProofWire,
-      statement,bodyWire,recipientAlias},input.viewerAccessToken);
+    return invoke("consume",input,{proofWire:input.deviceProofWire,statement,bodyWire,recipientAlias});
   };
   const mailbox=createCiphertextMailboxV1({directory,
     authorizeSubmission:input=>authorize(input,input.envelopeWire,input.recipientAlias),
     authorizeInbox:input=>authorize(input,input.requestWire)});
   return Object.freeze({...mailbox,
+    ...(registeredDeviceSessions ? { registeredSessionClient: client } : {}),
     async currentDeviceForViewer(input) {
-      return client.invoke("self",{issuanceId:identity(input)},input.viewerAccessToken);
+      return invoke("self",input);
     },
     async resolveRecipientForViewer(input) {
-      return client.invoke("package",{issuanceId:identity(input),recipientAlias:input.recipientAlias},input.viewerAccessToken);
+      return invoke("package",input,{recipientAlias:input.recipientAlias});
     },
     async challengeForViewer(input) {
       const operation=input.operation;
@@ -56,8 +68,8 @@ export function createMessageDeliveryTransportV1({client,signer,directory,social
           messageId:envelope.messageId,envelopeDigest:digestCanonicalMessageEnvelopeV1(envelope),
           recipientPackageSnapshotId:envelope.recipientPackageSnapshotId,recipientDeviceHandles:envelope.recipientDeviceHandles});
       } else if(operation!=="recipient-self-read") fail();
-      const result=await client.invoke("challenge",{issuanceId:identity(input),operation,bodyWire:input.bodyWire,routingWire,
-        recipientAlias:input.recipientAlias??null},input.viewerAccessToken);
+      const result=await invoke("challenge",input,{operation,bodyWire:input.bodyWire,routingWire,
+        recipientAlias:input.recipientAlias??null});
       const context=JSON.parse(result.contextWire);
       if(context.subject!==input.expectedSubject || context.audience!==socialOrigin) fail();
       return {challengeWire:result.challengeWire,publicKey:context.ed25519PublicKey};
@@ -68,7 +80,10 @@ export function createMessageDeliveryTransportV1({client,signer,directory,social
 export async function createMessageDeliveryRuntimeV1(path,config) {
   if(path===undefined) return undefined;
   const m=await readEnrollmentRuntimeManifest(path);
-  exact(m,["schema","enabled","issuerOrigin","socialOrigin","socketPath","backendId","clientId","servicePrincipal",
+  const registeredDeviceSessions = m.registeredDeviceSessions ?? false;
+  if (typeof registeredDeviceSessions !== "boolean") fail();
+  const {registeredDeviceSessions: _enabled, ...baseManifest}=m;
+  exact(baseManifest,["schema","enabled","issuerOrigin","socialOrigin","socketPath","backendId","clientId","servicePrincipal",
     "clientSigningKeyId","clientSigningKeyPath","statementSigningKeyId","statementSigningKeyPath","mailboxDirectory","timeoutMs"]);
   if(m.schema!=="hodlxxi.social.message_delivery.runtime.v1" || m.enabled!==true || m.issuerOrigin!==config.authorityOrigin ||
       m.socialOrigin!==config.publicOrigin || m.clientId!==config.clientId || config.mobile.enabled!==true) fail();
@@ -81,5 +96,5 @@ export async function createMessageDeliveryRuntimeV1(path,config) {
     clientId:m.clientId,issuer:m.socialOrigin,kid:m.statementSigningKeyId,purpose:VERIFICATION_STATEMENT_PURPOSE,
     servicePrincipal:m.servicePrincipal,signExact:bytes=>sign("RSA-SHA256",bytes,key)});
   return createMessageDeliveryTransportV1({client,signer,directory:m.mailboxDirectory,socialOrigin:m.socialOrigin,
-    issuerOrigin:m.issuerOrigin,clientId:m.clientId,servicePrincipal:m.servicePrincipal});
+    issuerOrigin:m.issuerOrigin,clientId:m.clientId,servicePrincipal:m.servicePrincipal,registeredDeviceSessions});
 }

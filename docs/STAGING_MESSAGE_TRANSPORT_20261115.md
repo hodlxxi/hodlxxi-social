@@ -45,3 +45,38 @@ admission and lost-response recovery, Enrollment V2 device lifecycle wiring,
 the Messages UI, recipient discovery and packages, real independent browser
 sessions, and the phone Legacy/QR flow. UBID must supply canonical Current
 Full; Social does not grant or override entitlement.
+
+## Registered-device session continuation (2026-11-24)
+
+Paired with UBID #597. The explicitly selected native runtime now composes a
+registered-device BFF when both delivery manifests opt into
+`registeredDeviceSessions: true`. The browser can prove possession of its retained
+Ed25519 key after the original enrollment issuance expires, restore after reload,
+and renew before use without pairing again. The credential is scoped to messaging,
+kept on the server behind an opaque HttpOnly cookie, and is not an OAuth token.
+Current Full and exact device authority remain external UBID decisions.
+
+The registered scope serves the private directory, session-bound recipient
+capabilities, recipient packages, exact message challenges, ciphertext send and
+inbox. Messages still need their independent Ed25519 request proofs. Registered
+login statements use the native Enrollment V2 server statement key/trust with a
+new domain; message statements retain their separate configured trust.
+
+Logout revokes the exact scoped session even after Full loss, preserves the
+ordinary entry/mobile-CSRF response contract, cancels pending login completion,
+and retains a separate HttpOnly denial preference until explicit sign-in (cookie
+lifetime one year). No browser storage is cleared and no device key is replaced.
+The context and local session maps are bounded. The normal default stays disabled.
+
+Before enabling, apply the two new UBID registered-device migrations and their
+closed finalizer permissions; see `docs/social-registered-device-session-v1-plan.md`
+in the paired UBID PR. Native finalizer INSERT on the generic challenge table
+remains prohibited; a narrow attested definer function stores only scoped device
+message challenges. Long-term history retention remains a release prerequisite.
+
+Tests in this repository exercise synthetic service responses plus real Ed25519
+proofs, request framing and ordinary entry integration. The paired PG16 workflow
+also runs strict Social proof verification against real native SQL history and
+registered-session message authorization. Neither test is real Alice/Bob browser
+acceptance. Keep #73 and UBID #597 draft and issue #588 open until the complete
+funded Full + encrypted chat + phone/independent-browser acceptance succeeds.

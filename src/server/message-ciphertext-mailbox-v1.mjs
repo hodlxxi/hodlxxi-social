@@ -28,10 +28,12 @@ const deny = () => { throw error(); };
 
 const validContext = (value) =>
   value && typeof value === "object" && !Array.isArray(value) &&
-  typeof value.viewerAccessToken === "string" &&
-  value.viewerAccessToken.length > 0 &&
-  value.viewerAccessToken.length <= 8192 &&
-  !/[\u0000-\u0020\u007f]/.test(value.viewerAccessToken) &&
+  (value.registeredSession !== undefined
+    ? value.viewerAccessToken === undefined && /^[0-9a-f]{64}$/.test(value.registeredCredential ?? "") &&
+      value.registeredSession && Object.keys(value.registeredSession).sort().join(",") === "contextCommitment,sessionId" &&
+      [value.registeredSession.sessionId, value.registeredSession.contextCommitment].every(v => typeof v === "string" && /^[0-9a-f]{64}$/.test(v))
+    : typeof value.viewerAccessToken === "string" && value.viewerAccessToken.length > 0 &&
+      value.viewerAccessToken.length <= 8192 && !/[\u0000-\u0020\u007f]/.test(value.viewerAccessToken)) &&
   typeof value.expectedSubject === "string" &&
   SUBJECT.test(value.expectedSubject);
 
@@ -116,6 +118,7 @@ export function createCiphertextMailboxV1({
       parseDeviceProofV1(input.deviceProofWire);
       const authorized = await authorizeSubmission({
         ...(input.issuanceId ? {issuanceId:input.issuanceId} : {}),
+        ...(input.registeredSession ? {registeredSession:input.registeredSession, registeredCredential:input.registeredCredential} : {}),
         ...(input.recipientAlias ? {recipientAlias:input.recipientAlias} : {}),
         viewerAccessToken: input.viewerAccessToken,
         expectedSubject: input.expectedSubject,
@@ -172,6 +175,7 @@ export function createCiphertextMailboxV1({
       if (input.requestWire !== requestWire) deny();
       const authorized = await authorizeInbox({
         ...(input.issuanceId ? {issuanceId:input.issuanceId} : {}),
+        ...(input.registeredSession ? {registeredSession:input.registeredSession, registeredCredential:input.registeredCredential} : {}),
         ...(input.recipientAlias ? {recipientAlias:input.recipientAlias} : {}),
         viewerAccessToken: input.viewerAccessToken,
         expectedSubject: input.expectedSubject,

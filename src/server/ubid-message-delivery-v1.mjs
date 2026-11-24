@@ -32,7 +32,9 @@ export function createUbidMessageDeliveryClient(config) {
     request.on("error",()=>reject(new Error("message delivery unavailable"))); request.end(wire);
   });
   const invoke = async (command, body, viewer) => {
-    if(typeof viewer!=="string" || viewer.length<1 || viewer.length>8192 || /[\x00-\x20\x7f]/.test(viewer)) fail();
+    const uncredentialed = ["registered-challenge", "registered-consume"].includes(command);
+    if (uncredentialed ? viewer !== undefined :
+        typeof viewer!=="string" || viewer.length<1 || viewer.length>8192 || /[\x00-\x20\x7f]/.test(viewer)) fail();
     const now=Math.floor(Date.now()/1000);
     const header=Buffer.from(JSON.stringify({alg:"RS256",typ:"JWT",kid:config.clientSigningKeyId})).toString("base64url");
     const payload=Buffer.from(JSON.stringify({iss:config.clientId,sub:config.clientId,
