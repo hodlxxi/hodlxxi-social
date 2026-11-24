@@ -4,7 +4,7 @@ import { canonical, exact, milliseconds, validateIssuanceResponse, unavailable }
 import { closedServerValue } from "./ubid-social-mobile-client-v1.mjs";
 
 export const isMobileSession = (v) => v && (Object.hasOwn(v, "kind") || Object.hasOwn(v, "issuanceId"));
-export function createMobileSessionManager({ sessions, issuanceClient, mobileClient, now = Date.now, random = randomBytes, capacity = 1024 }) {
+export function createMobileSessionManager({ sessions, issuanceClient, mobileClient, oauthClient, now = Date.now, random = randomBytes, capacity = 1024 }) {
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 10000 ||
       ["get", "getForLogout", "getLogoutState", "beginLogout", "create", "delete"].some((name) => typeof Object.getOwnPropertyDescriptor(sessions ?? {}, name)?.value !== "function")) unavailable();
   const aliases = new Map(), cancellations = new Map(), locks = new Map();
@@ -31,7 +31,16 @@ export function createMobileSessionManager({ sessions, issuanceClient, mobileCli
     sweep();
     const original = sessions.get(id);
     if (!original || cancellations.has(id)) return null;
-    if (!isMobileSession(original)) return original;
+    if (!isMobileSession(original)) {
+      // The concrete OAuth client revalidates the exact bearer on every desktop
+      // read. Legacy injected clients without this method retain their existing seam.
+      if (typeof oauthClient?.revalidate !== "function") return original;
+      try {
+        if (await oauthClient.revalidate({ accessToken: original.viewerAccessToken, subject: original.subject }) !== original.subject ||
+            sessions.get(id) !== original || cancellations.has(id)) return null;
+        return original;
+      } catch { return null; }
+    }
     try {
       if (types.isProxy(original)) unavailable();
       exact(original, ["kind", "subject", "viewerAccessToken", "issuanceId", "issuedAt", "expiresAt"]);

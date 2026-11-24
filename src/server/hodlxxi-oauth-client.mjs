@@ -148,16 +148,25 @@ export function createHodlxxiOAuthClient(config, dependencies = {}) {
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new TypeError("invalid transport");
   const transport = { fetchImpl, timeoutMs: config.outboundTimeoutMs, setTimeoutImpl: dependencies.setTimeoutImpl, clearTimeoutImpl: dependencies.clearTimeoutImpl };
+  const introspect = (token) => {
+    if (!bounded(token, 8192)) failure();
+    return postForm(`${config.authorityOrigin}/oauth/introspect`, {
+      token, client_id: config.clientId, client_secret: config.clientSecret
+    }, (value) => validateIntrospectionResponse(value, config), transport);
+  };
   return Object.freeze({
+    async revalidate({ accessToken, subject }) {
+      if (typeof subject !== "string" || !/^[0-9a-f]{64}$/.test(subject)) failure();
+      if (await introspect(accessToken) !== subject) failure();
+      return subject;
+    },
     async authenticate({ code, verifier }) {
       if (!bounded(code, 2048) || !bounded(verifier, 128)) failure();
       const token = await postForm(`${config.authorityOrigin}/oauth/token`, {
         grant_type: "authorization_code", code, redirect_uri: config.callbackUri, client_id: config.clientId,
         client_secret: config.clientSecret, code_verifier: verifier
       }, validateTokenResponse, transport);
-      const subject = await postForm(`${config.authorityOrigin}/oauth/introspect`, {
-        token, client_id: config.clientId, client_secret: config.clientSecret
-      }, (value) => validateIntrospectionResponse(value, config), transport);
+      const subject = await introspect(token);
       return Object.freeze({
         subject,
         accessToken: token

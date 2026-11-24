@@ -14,6 +14,9 @@ import {
   createBrowserPrivateLabelStore
 } from "./private-label-store.mjs?v=1.28.1";
 
+import {createMessagesControllerV1,mountMessagesUIV1} from "./messages-controller-v1.mjs";
+import {createRegisteredDeviceSessionClientV1} from "./registered-device-session-client-v1.mjs";
+
 import { renderNavigation } from "./shell.mjs?v=1.28.1";
 import { createSocialEntryActions } from "./social-entry-actions-v1.mjs?v=1.28.1";
 import { createMessagingDevice } from "./messaging-device-v128c1.mjs?v=1.28c.1";
@@ -629,6 +632,7 @@ export function bindAuthenticatedEntry(
   const labelStore =
     privateLabelStore ??
     createBrowserPrivateLabelStore(browser);
+  const deviceSessions=createRegisteredDeviceSessionClientV1({fetchImpl,audience:browser?.location?.origin});
 
   if (
     typeof publicReadLoader !== "function" ||
@@ -694,11 +698,14 @@ export function bindAuthenticatedEntry(
   let fullDirectoryRequest = null;
   let currentMessagingSelectedAlias = null;
   let currentMessagingFilter = "";
+  let messagesController = null;
+  let deliveryEnabled = false;
   let messagingDevice = null;
   let currentMessagingAuthorizationConfig = null;
   let messagingDeviceView = Object.freeze({ state: "unavailable", busy: false });
 
   const clearMessagingDevice = () => {
+    messagesController?.cancel(); messagesController=null;
     messagingDevice?.cancel();
     messagingDevice = null;
     messagingDeviceView = Object.freeze({ state: "unavailable", busy: false });
@@ -870,6 +877,12 @@ export function bindAuthenticatedEntry(
       view.mobileNavigation;
 
     appPage.innerHTML = view.page;
+    if(deliveryEnabled && currentAuthority?.status==="full" && browser?.location?.hash==="#/messages") {
+      messagesController ??= createMessagesControllerV1({fetchImpl,sessionRenewal:deviceSessions,getContext:()=>({subject:currentSession?.subject,
+        access:currentAuthority?.valid===true ? currentAuthority.status : null})});
+      const container=appPage.querySelector?.("[data-secure-v128-thread-panel]");
+      if(container) mountMessagesUIV1({container,controller:messagesController,selectedAlias:currentMessagingSelectedAlias});
+    }
     contextProfile.innerHTML = view.profile;
     contextNetwork.innerHTML = view.networkContext;
 
@@ -1011,10 +1024,18 @@ export function bindAuthenticatedEntry(
     });
     messagingDevice = device;
     await device.reconcile();
+    try {
+      const response=await fetchImpl("/auth/messages/config",{credentials:"same-origin",cache:"no-store",redirect:"error"});
+      deliveryEnabled=response.status===200 && (await response.json()).enabled===true;
+      if(deliveryEnabled && currentSession===session) paintProduct();
+    } catch { deliveryEnabled=false; }
   };
 
   const ready = readSocialSession(fetchImpl)
     .then(async (session) => {
+      if(await deviceSessions.ensure({expectedSubject:session.authenticated?session.subject:undefined})) {
+        session=await readSocialSession(fetchImpl);
+      }
       if (!session.authenticated) {
         renderSignedOut(false);
         return currentSession;
@@ -1220,6 +1241,7 @@ export function bindAuthenticatedEntry(
   };
 
   const logout = async () => {
+    deviceSessions.suspend();
     clearMessagingDevice();
     if (currentSession?.authenticated !== true) {
       renderSignedOut(false);
@@ -1267,6 +1289,7 @@ export function bindAuthenticatedEntry(
     signIn.setAttribute?.("aria-disabled", "true");
     indicator.textContent = "Starting sign in";
     try {
+      if(await deviceSessions.ensure({explicit:true})) {browser.location.assign("/");return true;}
       const path = await entryActions.login();
       browser.location.assign(path);
       return true;

@@ -1183,7 +1183,7 @@ test("builtin bindings and both native Hash prototypes are captured before expor
   assert.doesNotMatch(afterCaptures, /\.(?:update|digest)\s*\(/);
 });
 
-test("proof and enrollment modules remain absent from runtime imports", async () => {
+test("runtime uses only proof parsing; enrollment and final device admission remain unwired", async () => {
   for (const path of [
     "../scripts/hodlxxi-social-server.mjs",
     "../src/server/social-oauth-bff.mjs",
@@ -1192,6 +1192,11 @@ test("proof and enrollment modules remain absent from runtime imports", async ()
     "../web/auth-entry.mjs"
   ]) {
     const source = await readFile(new URL(path, import.meta.url), "utf8");
-    assert.doesNotMatch(source, /messaging-device-proof-profile-v1/);
+    if (path.endsWith("social-oauth-bff.mjs")) {
+      assert.match(source, /import \{ parseDeviceProofV1 \} from "\.\/messaging-device-proof-profile-v1\.mjs"/);
+      assert.doesNotMatch(source, /verifyMessagingDeviceProofV1|verifyEnrollmentV2Authorization|createEnrollmentV2/);
+    } else {
+      assert.doesNotMatch(source, /messaging-device-proof-profile-v1/);
+    }
   }
 });

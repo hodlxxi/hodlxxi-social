@@ -1540,7 +1540,7 @@ test("normal authenticated entry imports pure product UI but never synthetic app
 
   assert.match(
     html,
-    /src="\.\/auth-entry\.mjs\?v=1\.28\.1&amp;entry=2"/
+    /src="\.\/auth-entry\.mjs\?v=1\.28\.1&amp;entry=2&amp;release=588-message-v1"/
   );
 
   assert.match(

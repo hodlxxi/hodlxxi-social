@@ -1,9 +1,11 @@
 import { createEnrollmentBrowserApi, createDesktopEnrollmentController, createPhoneEnrollmentController }
   from "./social-enrollment-v2-browser.mjs";
+import { makePrivatePhoneLink, takePrivatePairingFragment } from "./device-registration-v2-private-link.mjs";
 
 const panel = document.querySelector("#panel"), status = document.querySelector("#status"), actions = document.querySelector("#actions");
 const input = document.querySelector("#input"), locator = document.querySelector("#locator"), timer = document.querySelector("#timer");
 let controller, deadline, busy = false, watching = false, nextPoll = 0, onFinished;
+let privateLocator, privateLink;
 const message = (value) => { status.textContent = value; };
 const execute = async (work) => {
     if (busy) return; busy = true;
@@ -24,21 +26,48 @@ document.querySelector("#desktop").addEventListener("click", async () => {
       resolveProvider: () => globalThis.nostr });
     document.querySelector("#roles").hidden = true; panel.hidden = false;
     document.querySelector("#input-label").textContent = "Comparison code shown on your phone";
-    action("Create pairing", async () => { const p = await controller.create(); locator.textContent = p.qr; locator.hidden = false;
-      deadline = Date.parse(p.offer.expiresAt); message("Share this locator privately with your phone. The approval timer has started."); });
+    action("Create pairing", async () => { const p = await controller.create();
+      privateLocator = p.qr;
+      privateLink = makePrivatePhoneLink(p.qr, location.origin + location.pathname);
+      locator.textContent = "Pairing secret hidden. Share the private link or explicitly reveal the manual locator.";
+      locator.hidden = false;
+      deadline = Date.parse(p.offer.expiresAt);
+      message("Share the private link only with your phone. Compare codes before approving."); });
+    action("Share private phone link", async () => {
+      if (!privateLink) throw new Error("create pairing first");
+      if (typeof navigator.share === "function") {
+        await navigator.share({ title: "HODLXXI private device pairing", url: privateLink });
+      } else if (typeof navigator.clipboard?.writeText === "function") {
+        await navigator.clipboard.writeText(privateLink);
+        message("Private phone link copied. Send it only to your phone; it expires with the pairing.");
+      } else throw new Error("private share unavailable");
+    });
+    action("Copy private phone link", async () => {
+      if (!privateLink || typeof navigator.clipboard?.writeText !== "function") throw new Error();
+      await navigator.clipboard.writeText(privateLink);
+      message("Private phone link copied. Open it in your phone's browser, not this signed-in profile.");
+    });
+    action("Show manual locator", () => {
+      if (!privateLocator) throw new Error("create pairing first");
+      locator.textContent = privateLocator;
+      message("This locator is secret. Do not screenshot or share it publicly.");
+    });
     action("Inspect phone", async () => { const s = await controller.inspect(); message(s.comparisonCode
       ? "Check that the phone shows " + s.comparisonCode + ". Enter that code above before approval." : "Waiting for the phone proposal."); });
     action("Approve matching code", async () => { await controller.approve(input.value.trim()); message("Approved. Finish registration on the phone."); });
-    action("Cancel pairing", async () => { await controller.cancel(); message("Pairing cancelled."); });
+    action("Cancel pairing", async () => { await controller.cancel(); privateLocator = privateLink = undefined; locator.textContent = ""; locator.hidden = true; message("Pairing cancelled."); });
   } catch { message("Sign in to your Full account on this laptop first."); panel.hidden = false; }
 });
-document.querySelector("#phone").addEventListener("click", () => {
+function activatePhone() {
   controller = createPhoneEnrollmentController({ api: createEnrollmentBrowserApi() });
   document.querySelector("#roles").hidden = true; panel.hidden = false;
   document.querySelector("#input-label").textContent = "Pairing locator from your laptop";
-  action("Use locator", async () => { const qr = input.value.trim(); const s = await controller.scan(qr); input.value = "";
+  const useLocator = async qr => {
+    const s = await controller.scan(qr); input.value = "";
     deadline = Date.parse(s.expiresAt); watching = true; nextPoll = 0;
-    message("Compare this code with the laptop: " + s.comparisonCode + ". Registration finishes automatically after approval."); });
+    message("Compare this code with the laptop: " + s.comparisonCode + ". Registration finishes automatically after approval.");
+  };
+  action("Use locator", async () => useLocator(input.value.trim()));
   action("Check approval", async () => { const s = await controller.status(); message(s.status === "approved"
     ? "Approved. You can finish registration." : "Pairing status: " + s.status); });
   const finished = (s) => { watching = false; message(s.registered ? "Device registration confirmed. Messaging is not ready yet." : "Registration is pending or its outcome is unknown. Keep this page and use Recover original result."); };
@@ -46,7 +75,15 @@ document.querySelector("#phone").addEventListener("click", () => {
   action("Finish registration", async () => finished(await controller.complete()));
   action("Recover original result", async () => finished(await controller.complete(true)));
   action("Log out", async () => { watching = false; await controller.logout(); message("Signed out."); });
-});
+  return useLocator;
+}
+document.querySelector("#phone").addEventListener("click", () => { activatePhone(); });
+// A deep link is NOT authentication: normal phone/context/approval checks apply.
+// Clear the fragment before any request and do not include locator in logs.
+try {
+  const linked = takePrivatePairingFragment(location.href, path => history.replaceState(null, "", path));
+  if (linked) { const useLocator = activatePhone(); void execute(() => useLocator(linked)); }
+} catch { message("Invalid private pairing link. Request a new link from the laptop."); panel.hidden = false; }
 setInterval(() => { if (deadline) { const seconds = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
   timer.textContent = seconds ? `Approval window: ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : "The original approval window has ended."; } }, 1000);
 

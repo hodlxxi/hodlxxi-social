@@ -1,0 +1,35 @@
+name: Registered Device Browser
+
+on:
+  pull_request:
+    paths:
+      - "web/**"
+      - "src/server/**"
+      - "scripts/verify-registered-device-browser-smoke-v1.mjs"
+      - ".github/workflows/registered-device-browser.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  registered-device-chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install locked application dependencies
+        run: npm ci
+      - name: Install isolated pinned browser tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/hxxi-browser" --no-save --ignore-scripts playwright@1.62.1
+          "$RUNNER_TEMP/hxxi-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify real retained keys and HttpOnly session lifecycle
+        env:
+          HXXI_BROWSER_TEST_NODE_MODULES: ${{ runner.temp }}/hxxi-browser/node_modules
+        run: node scripts/verify-registered-device-browser-smoke-v1.mjs

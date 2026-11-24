@@ -11,6 +11,8 @@ import { createUbidSocialEnrollmentV2Client } from "./ubid-social-enrollment-v2-
 import { createNativeV2SessionManager } from "./social-native-session-v2.mjs";
 import { createEnrollmentBrowserRoutes } from "./social-enrollment-v2-bff.mjs";
 import { createEnrollmentFinalizer } from "./social-enrollment-v2-finalizer.mjs";
+import { createRegisteredDeviceSessionBffV1 } from "./registered-device-session-bff-v1.mjs";
+import { produceRegisteredDeviceSessionStatementV1 } from "./registered-device-session-statement-v1.mjs";
 import { createMessagingDevicePreacceptedEnrollmentVerificationStatementSignerV2 as createStatementSigner }
   from "./messaging-device-preaccepted-verification-statement-v2.mjs";
 
@@ -78,8 +80,15 @@ export function enrollmentRuntimeFactory(manifest) {
       const enrollment = createEnrollmentBrowserRoutes({ publicOrigin: config.publicOrigin, sessions,
         desktopManager: base.manager, nativeManager: manager, sessionClient, enrollmentClient, finalizer,
         authorityReader: dependencies.authorityReader, bindingLifetimeSeconds: m.bindingLifetimeSeconds, capacity: config.maxSessions });
-      return Object.freeze({ ...base, bff: async (request) => await enrollment.handle(request) ?? await base.bff(request),
-        mobilePostRoutes: Object.freeze([...new Set([...base.mobilePostRoutes, ...enrollment.postRoutes])]) });
+      const enrolledBff=async request=>await enrollment.handle(request) ?? await base.bff(request);
+      const registered=dependencies.messagingTransportClient?.registeredSessionClient
+        ? createRegisteredDeviceSessionBffV1({config,transport:{...dependencies.messagingTransportClient,
+            registeredStatement: input=>produceRegisteredDeviceSessionStatementV1(input,
+              {kid:m.statementSigningKeyId,privateKey:statementKey})},
+            base:enrolledBff,capacity:config.maxSessions}) : undefined;
+      return Object.freeze({ ...base, bff: async request=>await registered?.handle(request) ?? await enrolledBff(request),
+        mobilePostRoutes: Object.freeze([...new Set([...base.mobilePostRoutes, ...enrollment.postRoutes,
+          ...(registered?.postRoutes??[])])]) });
     } catch { fail(); }
   };
 }

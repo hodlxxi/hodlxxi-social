@@ -19,6 +19,12 @@ import {
   preEnrollmentDigestV2
 } from "./mobile-device-authorization-contract-v2.mjs";
 
+import {
+  createRegisteredDeviceSessionProofWireV1,
+  registeredDeviceSessionSigningPreimageV1,
+  requireCurrentRegisteredDeviceSessionChallengeV1
+} from "./registered-device-session-v1.mjs";
+
 export const MESSAGING_DEVICE_ED25519_KEY_V2_RUNTIME_ENABLED = false;
 
 const DATABASE_NAME = MESSAGING_DEVICE_DATABASE_NAME;
@@ -623,7 +629,7 @@ export function createMessagingDeviceEd25519KeyV2(input = {}) {
   let options;
   try {
     options = optionalData(input, [
-      "CryptoKeyImpl", "cryptoImpl", "getContext", "indexedDBImpl", "now"
+      "CryptoKeyImpl", "cryptoImpl", "getContext", "indexedDBImpl", "now", "messageAudience"
     ]);
   } catch {
     unavailable();
@@ -631,6 +637,7 @@ export function createMessagingDeviceEd25519KeyV2(input = {}) {
   const {
     getContext,
     indexedDBImpl,
+    messageAudience = globalThis.location?.origin,
     cryptoImpl = globalThis.crypto,
     CryptoKeyImpl = globalThis.CryptoKey,
     now = Date.now
@@ -1296,9 +1303,71 @@ export function createMessagingDeviceEd25519KeyV2(input = {}) {
       unavailable();
     }
   };
+  const createDeviceRequestProofV1 = async (challengeWire, bodyWire) => {
+    const initial=currentContext(getContext);
+    const challenge=JSON.parse(challengeWire), request=JSON.parse(challenge.request);
+    if(canonical(challenge)!==challengeWire || canonical(request)!==challenge.request ||
+        challenge.schema!=="hodlxxi.social_messaging_device_challenge_candidate.v1" || challenge.version!==1 ||
+        challenge.domain!=="HODLXXI_SOCIAL_MESSAGING_DEVICE_REQUEST_CHALLENGE_V1" || !isHex64(challenge.challengeId) ||
+        !Number.isSafeInteger(challenge.issuedAt) || !Number.isSafeInteger(challenge.expiresAt) ||
+        challenge.expiresAt-challenge.issuedAt>60000 || !(challenge.issuedAt<=now() && now()<challenge.expiresAt) ||
+        request.schema!=="hodlxxi.social_messaging_device_request_candidate.v1" || request.version!==1 ||
+        request.subject!==initial.subjectHint || request.audience!==messageAudience || request.method!=="POST" ||
+        !["ciphertext-submit","recipient-self-read"].includes(request.operation) ||
+        request.path!==(request.operation==="ciphertext-submit" ? "/messaging/v1/ciphertext-submit" : "/messaging/v1/recipient-self-read")) unavailable();
+    const record=await readStored(initial,request.deviceId);
+    if(!record || record.signedAttempt===null || request.bindingId!==record.x25519BindingId ||
+        request.bindingVersion!==record.x25519BindingVersion ||
+        request.bodyDigest!=="hodlxxi-social-device-request-body-v1-sha256:"+
+          await sha256Hex(cryptoImpl,"HODLXXI_SOCIAL_DEVICE_REQUEST_BODY_V1",bodyWire)) unavailable();
+    check(initial);
+    const preimage=canonical({challenge:challengeWire,domain:"HODLXXI_SOCIAL_MESSAGING_DEVICE_PROOF_ED25519_WEBCRYPTO_V1",
+      profile:PROFILE,publicKey:record.ed25519PublicKey,schema:"hodlxxi.social_messaging_device_proof_preimage.v1",version:1});
+    const signature=await cryptoImpl.subtle.sign({name:"Ed25519"},record.privateKey,encoder.encode(preimage));
+    const after=await readStored(initial,request.deviceId); check(initial);
+    if(!sameIdentity(record,after) || now()>=challenge.expiresAt) unavailable();
+    return canonical({algorithm:"Ed25519",challengeId:challenge.challengeId,profile:PROFILE,publicKey:record.ed25519PublicKey,
+      schema:"hodlxxi.social_messaging_device_proof.v1",signature:toHex(signature),version:1});
+  };
+  // Source-only login possession proof. The browser's provisional record is
+  // not evidence of server admission. UBID must authenticate committed native
+  // history and current authority before issuing or consuming this challenge.
+  const createRegisteredDeviceSessionProofV1 = async (challengeWire, pins) => {
+    try {
+      const initial = currentContext(getContext);
+      const expected = plainData(pins, ["issuer", "clientId", "contextCommitment"], true);
+      const currentChallenge = () => requireCurrentRegisteredDeviceSessionChallengeV1(challengeWire, {
+        ...expected, audience: messageAudience, now: now()
+      });
+      const challenge = currentChallenge();
+      if (challenge.subject !== initial.subjectHint || challenge.associationVersion !== 1 ||
+          challenge.authorityEpoch !== 1) unavailable();
+      const { pending, record } = await loadBound(initial);
+      check(initial);
+      if (challenge.deviceId !== record.deviceId ||
+          challenge.bindingId !== record.x25519BindingId ||
+          challenge.bindingVersion !== record.x25519BindingVersion ||
+          challenge.x25519PublicKeyCommitment !== record.x25519PublicKeyCommitment ||
+          challenge.ed25519PublicKey !== record.ed25519PublicKey) unavailable();
+      currentChallenge();
+      const signature = await cryptoImpl.subtle.sign(
+        { name: "Ed25519" }, record.privateKey, registeredDeviceSessionSigningPreimageV1(challengeWire)
+      );
+      check(initial);
+      await assertPending(initial, pending);
+      const after = await readStored(initial, record.deviceId);
+      check(initial);
+      if (!after || !sameIdentity(record, after) ||
+          !(signature instanceof ArrayBuffer) || signature.byteLength !== 64) unavailable();
+      currentChallenge();
+      return createRegisteredDeviceSessionProofWireV1(challengeWire, toHex(signature));
+    } catch { unavailable(); }
+  };
   return Object.freeze({
     claimSigningAttempt,
     createEnrollmentProofV2,
+    createDeviceRequestProofV1,
+    createRegisteredDeviceSessionProofV1,
     persistSignedAttempt,
     prepare,
     readSignedAttempt

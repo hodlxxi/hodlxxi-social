@@ -463,14 +463,15 @@ function setup({
   contextState = { subjectHint: subject, revision },
   getContext,
   cryptoImpl = webcrypto,
-  now = () => fixturePre.issuedAt + 1_000
+  now = () => fixturePre.issuedAt + 1_000,
+  messageAudience
 } = {}) {
   const boundary = createMessagingDeviceEd25519KeyV2({
     getContext: getContext ?? (() => ({ ...contextState })),
     indexedDBImpl: idb.factory,
     cryptoImpl,
     CryptoKeyImpl: NativeCryptoKey,
-    now
+    now, messageAudience
   });
   return { boundary, contextState, idb };
 }
@@ -1399,7 +1400,41 @@ test("source has no promotion, accepted state, private export, transport or old 
     /hodlxxi-social-messaging-device-ed25519-key-v2|STORE_KEY|localStorage|sessionStorage|fetch\(|XMLHttpRequest|WebSocket|pkcs8|jwk/);
   assert.doesNotMatch(source, /\bpromote\b|state:\s*["']ready|state:\s*["']accepted/);
   assert.deepEqual(Object.keys(setup().boundary).sort(), [
-    "claimSigningAttempt", "createEnrollmentProofV2", "persistSignedAttempt",
+    "claimSigningAttempt", "createDeviceRequestProofV1", "createEnrollmentProofV2",
+    "createRegisteredDeviceSessionProofV1", "persistSignedAttempt",
     "prepare", "readSignedAttempt"
   ]);
+});
+
+test("registered-device session proof signs with the exact original local key without re-enrollment", async () => {
+  const { verifyRegisteredDeviceSessionProofV1 } = await import("../src/server/registered-device-session-proof-v1.mjs");
+  const { challengeWire } = JSON.parse(await readFile(new URL(
+    "./fixtures/social_registered_device_session_v1.json", import.meta.url
+  )));
+  const template = JSON.parse(challengeWire);
+  const at = fixturePre.issuedAt + 1000;
+  const { boundary, idb } = setup({ now: () => at, messageAudience: template.audience });
+  const prepared = await boundary.prepare(fixtureOuter.content);
+  const pins = { issuer: template.issuer, clientId: template.clientId, contextCommitment: template.contextCommitment };
+  const challenge = { ...template, issuedAt: at, expiresAt: at + 60000,
+    subject, deviceId: prepared.deviceId, bindingId: prepared.x25519BindingId,
+    bindingVersion: prepared.x25519BindingVersion, x25519PublicKeyCommitment: prepared.x25519PublicKeyCommitment,
+    ed25519PublicKey: prepared.ed25519PublicKey };
+  const wire = value => JSON.stringify(value, Object.keys(value).sort());
+  // Real phone preparation does not run the desktop signer-claim path.
+  assert.equal(idb.stored().signedAttempt, null);
+  const proofWire = await boundary.createRegisteredDeviceSessionProofV1(wire(challenge), pins);
+  assert.equal(verifyRegisteredDeviceSessionProofV1({ ...pins, challengeWire: wire(challenge), proofWire,
+    audience: template.audience, now: at }), true);
+  assert.equal(idb.stored().recordRevision, prepared.recordRevision);
+  assert.equal(idb.stored().signedAttempt, null);
+  for (const changed of [
+    { ...challenge, bindingId: "ff".repeat(32) },
+    { ...challenge, authorityEpoch: 2 },
+    { ...challenge, subject: "99".repeat(32) },
+    { ...challenge, ed25519PublicKey: "aa".repeat(32) },
+    { ...challenge, expiresAt: at }
+  ]) await assert.rejects(boundary.createRegisteredDeviceSessionProofV1(wire(changed), pins), unavailable);
+  await assert.rejects(boundary.createRegisteredDeviceSessionProofV1(wire(challenge),
+    { ...pins, contextCommitment: "99".repeat(32) }), unavailable);
 });
