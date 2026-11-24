@@ -83,7 +83,7 @@ try{
   const key=await crypto.subtle.generateKey({name:'X25519'},false,['deriveBits']);
   const publicKey=[...new Uint8Array(await crypto.subtle.exportKey('raw',key.publicKey))].map(v=>v.toString(16).padStart(2,'0')).join('');
   content.authorization.publicKey=publicKey;
-  const iso=ms=>new Date(Math.floor(ms/1000)*1000).toISOString().replace('.000Z','');
+  const iso=ms=>new Date(Math.floor(ms/1000)*1000).toISOString().replace('.000Z','Z');
   const now=Date.now();content.authorization.issuedAt=content.authorization.bindingValidFrom=iso(now-600000);
   content.authorization.expiresAt=iso(now-300000);content.authorization.bindingExpiresAt=iso(now+3600000);
   const a=content.authorization, proposal={deviceId:a.deviceId,expectedBindingId:null,operation:'register',publicKey,requestId:a.requestId};
